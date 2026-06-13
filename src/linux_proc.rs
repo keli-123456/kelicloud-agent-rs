@@ -833,10 +833,8 @@ pub fn parse_soc_gpu_model(driver_name: &str, raw_bytes: &[u8]) -> Option<String
 }
 
 pub fn parse_nvidia_smi_xml(contents: &str) -> Vec<GpuMetric> {
-    contents
-        .split("<gpu>")
-        .skip(1)
-        .filter_map(|chunk| chunk.split_once("</gpu>").map(|(gpu, _)| gpu))
+    nvidia_gpu_xml_chunks(contents)
+        .into_iter()
         .map(|gpu| GpuMetric {
             name: xml_tag_text(gpu, "product_name").unwrap_or_default(),
             memory_total: parse_mib_value(&xml_tag_text(gpu, "total").unwrap_or_default()),
@@ -847,6 +845,35 @@ pub fn parse_nvidia_smi_xml(contents: &str) -> Vec<GpuMetric> {
             ),
         })
         .collect()
+}
+
+fn nvidia_gpu_xml_chunks(contents: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut search_start = 0;
+    while let Some(relative_start) = contents[search_start..].find("<gpu") {
+        let tag_start = search_start + relative_start;
+        let after_name = tag_start + "<gpu".len();
+        let Some(next_byte) = contents.as_bytes().get(after_name) else {
+            break;
+        };
+        if !matches!(next_byte, b'>' | b' ' | b'\t' | b'\r' | b'\n') {
+            search_start = after_name;
+            continue;
+        }
+
+        let Some(relative_tag_end) = contents[after_name..].find('>') else {
+            break;
+        };
+        let body_start = after_name + relative_tag_end + 1;
+        let Some(relative_body_end) = contents[body_start..].find("</gpu>") else {
+            break;
+        };
+        let body_end = body_start + relative_body_end;
+        chunks.push(&contents[body_start..body_end]);
+        search_start = body_end + "</gpu>".len();
+    }
+
+    chunks
 }
 
 pub fn parse_amd_rocm_smi_json(contents: &str) -> Vec<GpuMetric> {

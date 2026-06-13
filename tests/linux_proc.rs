@@ -613,6 +613,36 @@ fn parse_nvidia_smi_xml_extracts_detailed_gpu_metrics() {
 }
 
 #[test]
+fn parse_nvidia_smi_xml_accepts_gpu_tags_with_attributes_like_go_agent() {
+    let xml = r#"
+<nvidia_smi_log>
+  <gpu id="00000000:01:00.0">
+    <product_name>NVIDIA GeForce RTX 4090</product_name>
+    <fb_memory_usage>
+      <total>24564 MiB</total>
+      <used>2048 MiB</used>
+    </fb_memory_usage>
+    <utilization>
+      <gpu_util>17 %</gpu_util>
+    </utilization>
+    <temperature>
+      <gpu_temp>42 C</gpu_temp>
+    </temperature>
+  </gpu>
+</nvidia_smi_log>
+"#;
+
+    let metrics = parse_nvidia_smi_xml(xml);
+
+    assert_eq!(metrics.len(), 1);
+    assert_eq!(metrics[0].name, "NVIDIA GeForce RTX 4090");
+    assert_eq!(metrics[0].memory_total, 24_564 * 1024 * 1024);
+    assert_eq!(metrics[0].memory_used, 2048 * 1024 * 1024);
+    assert_eq!(metrics[0].utilization, 17.0);
+    assert_eq!(metrics[0].temperature, 42);
+}
+
+#[test]
 fn parse_amd_rocm_smi_json_extracts_detailed_gpu_metrics() {
     let json = r#"
 {
