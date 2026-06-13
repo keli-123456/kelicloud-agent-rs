@@ -11,6 +11,8 @@ use std::fmt;
 use std::thread;
 use std::time::Duration;
 
+const CONTROL_MESSAGE_POLL_INTERVAL_SECONDS: f64 = 1.0;
+
 #[derive(Debug)]
 pub enum RuntimeError {
     Protocol(ProtocolError),
@@ -478,7 +480,47 @@ where
         }
 
         if cycle + 1 < cycles {
-            delay.sleep_report_interval(report_interval_seconds);
+            sleep_report_interval_with_control_messages(
+                &mut socket,
+                handler,
+                ping_executor,
+                delay,
+                report_interval_seconds,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn sleep_report_interval_with_control_messages<S, C, P, D>(
+    socket: &mut Option<S>,
+    handler: &mut C,
+    ping_executor: &P,
+    delay: &mut D,
+    seconds: f64,
+) -> Result<(), RuntimeError>
+where
+    S: ReportSocket,
+    C: ControlMessageHandler,
+    P: PingExecutor,
+    D: LoopDelay,
+{
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Ok(());
+    }
+
+    let mut remaining = seconds;
+    while remaining > 0.0 {
+        let sleep_for = remaining.min(CONTROL_MESSAGE_POLL_INTERVAL_SECONDS);
+        delay.sleep_report_interval(sleep_for);
+        remaining = (remaining - sleep_for).max(0.0);
+
+        if let Some(active_socket) = socket.as_mut() {
+            if drain_backend_messages_for_cycle(active_socket, handler, ping_executor)? {
+                *socket = None;
+                break;
+            }
         }
     }
 

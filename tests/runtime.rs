@@ -574,6 +574,56 @@ fn run_report_cycles_with_delay_waits_between_cycles() {
 }
 
 #[test]
+fn run_report_cycles_polls_control_messages_during_report_wait() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let inbound = Rc::new(RefCell::new(VecDeque::new()));
+    let sent_ping_results = Rc::new(RefCell::new(Vec::new()));
+    let mut config = test_config();
+    config.interval_seconds = 4.0;
+    let mut http = FakeHttp::new(events.clone());
+    let mut websocket = FakeWebSocketTransport::new(events.clone(), None)
+        .with_shared_inbound(inbound.clone())
+        .with_sent_ping_results(sent_ping_results.clone());
+    let mut handler = RecordingHandler::default();
+    let mut delay = InjectingDelay::new(
+        events.clone(),
+        inbound,
+        br#"{"message":"ping","ping_task_id":7,"ping_type":"tcp","ping_target":"1.1.1.1:443"}"#
+            .to_vec(),
+    );
+
+    run_report_cycles_with_ping_delay(
+        &config,
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(11.0)),
+        &FixedPingExecutor::new(25),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        &mut delay,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
+            "send_report",
+            "sleep_report:1",
+            "inject_message",
+            "send_ping_result",
+            "sleep_report:1",
+            "sleep_report:1",
+            "send_report",
+        ]
+    );
+    assert_eq!(sent_ping_results.borrow()[0].task_id, 7);
+    assert!(handler.messages.is_empty());
+}
+
+#[test]
 fn run_report_cycles_drains_available_control_messages_after_report() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let inbound_messages = vec![
@@ -906,7 +956,7 @@ impl HttpTransport for FakeHttp {
 
 struct FakeWebSocketTransport {
     events: Rc<RefCell<Vec<String>>>,
-    inbound: VecDeque<Vec<u8>>,
+    inbound: Rc<RefCell<VecDeque<Vec<u8>>>>,
     sent_reports: Rc<RefCell<Vec<Report>>>,
     sent_ping_results: Rc<RefCell<Vec<PingResult>>>,
     send_failures_remaining: Rc<RefCell<usize>>,
@@ -917,7 +967,7 @@ impl FakeWebSocketTransport {
     fn new(events: Rc<RefCell<Vec<String>>>, inbound: Option<Vec<u8>>) -> Self {
         Self {
             events,
-            inbound: inbound.into_iter().collect(),
+            inbound: Rc::new(RefCell::new(inbound.into_iter().collect())),
             sent_reports: Rc::new(RefCell::new(Vec::new())),
             sent_ping_results: Rc::new(RefCell::new(Vec::new())),
             send_failures_remaining: Rc::new(RefCell::new(0)),
@@ -925,11 +975,16 @@ impl FakeWebSocketTransport {
         }
     }
 
-    fn with_inbound_messages<I>(mut self, messages: I) -> Self
+    fn with_inbound_messages<I>(self, messages: I) -> Self
     where
         I: IntoIterator<Item = Vec<u8>>,
     {
-        self.inbound = messages.into_iter().collect();
+        *self.inbound.borrow_mut() = messages.into_iter().collect();
+        self
+    }
+
+    fn with_shared_inbound(mut self, inbound: Rc<RefCell<VecDeque<Vec<u8>>>>) -> Self {
+        self.inbound = inbound;
         self
     }
 
@@ -974,7 +1029,7 @@ impl WebSocketTransport for FakeWebSocketTransport {
 
         Ok(FakeSocket {
             events: self.events.clone(),
-            inbound: std::mem::take(&mut self.inbound),
+            inbound: self.inbound.clone(),
             sent_reports: self.sent_reports.clone(),
             sent_ping_results: self.sent_ping_results.clone(),
             send_failures_remaining: self.send_failures_remaining.clone(),
@@ -984,7 +1039,7 @@ impl WebSocketTransport for FakeWebSocketTransport {
 
 struct FakeSocket {
     events: Rc<RefCell<Vec<String>>>,
-    inbound: VecDeque<Vec<u8>>,
+    inbound: Rc<RefCell<VecDeque<Vec<u8>>>>,
     sent_reports: Rc<RefCell<Vec<Report>>>,
     sent_ping_results: Rc<RefCell<Vec<PingResult>>>,
     send_failures_remaining: Rc<RefCell<usize>>,
@@ -1008,7 +1063,7 @@ impl ReportSocket for FakeSocket {
     }
 
     fn read_message(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
-        Ok(self.inbound.pop_front())
+        Ok(self.inbound.borrow_mut().pop_front())
     }
 
     fn send_ping(&mut self) -> Result<(), TransportError> {
@@ -1081,6 +1136,48 @@ struct RecordingDelay {
 impl RecordingDelay {
     fn new(events: Rc<RefCell<Vec<String>>>) -> Self {
         Self { events }
+    }
+}
+
+struct InjectingDelay {
+    events: Rc<RefCell<Vec<String>>>,
+    inbound: Rc<RefCell<VecDeque<Vec<u8>>>>,
+    message: Vec<u8>,
+    injected: bool,
+}
+
+impl InjectingDelay {
+    fn new(
+        events: Rc<RefCell<Vec<String>>>,
+        inbound: Rc<RefCell<VecDeque<Vec<u8>>>>,
+        message: Vec<u8>,
+    ) -> Self {
+        Self {
+            events,
+            inbound,
+            message,
+            injected: false,
+        }
+    }
+}
+
+impl LoopDelay for InjectingDelay {
+    fn sleep_report_interval(&mut self, seconds: f64) {
+        self.events
+            .borrow_mut()
+            .push(format!("sleep_report:{seconds}"));
+        if self.injected {
+            return;
+        }
+        self.injected = true;
+        self.events.borrow_mut().push("inject_message".to_string());
+        self.inbound.borrow_mut().push_back(self.message.clone());
+    }
+
+    fn sleep_reconnect_interval(&mut self, seconds: u64) {
+        self.events
+            .borrow_mut()
+            .push(format!("sleep_reconnect:{seconds}"));
     }
 }
 

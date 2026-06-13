@@ -42,8 +42,9 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
 - Report and terminal WebSocket URLs convert IDN hostnames to ASCII/Punycode,
   matching the Go agent's `ConvertIDNToASCII` behavior.
 - The report loop drains buffered backend control messages at the start of each
-  cycle and again after a successful report send, so queued exec, ping, and
-  terminal requests do not have to wait behind the next report payload.
+  cycle, again after a successful report send, and during the report wait in
+  one-second slices, so queued exec, ping, and terminal requests do not have to
+  wait behind the next report payload.
 - Basic-info upload and report WebSocket connection classify Go-agent-style
   HTTP 401 invalid-token responses as typed invalid-token transport errors,
   preserving the operation name, token, status code, and response body for
@@ -94,11 +95,11 @@ dynamic smoke produces logs:
 
    The Go agent reads backend control messages in a dedicated goroutine while
    reports are sent by ticker. The Rust agent now drains buffered control
-   messages both before and after report sends, which removes the most visible
-   "queued behind report" delay for messages already waiting on the socket. It
-   is still not a dedicated read goroutine, so live smoke should verify that
-   exec, ping, and terminal requests feel responsive with the production report
-   interval and during reconnect or send-failure periods.
+   messages before and after report sends, and polls them during the report
+   wait in one-second slices. It is still not a dedicated read goroutine, so
+   live smoke should verify that exec, ping, and terminal requests feel
+   responsive with the production report interval and during reconnect or
+   send-failure periods.
 
 2. Auto-discovery and token recovery
 
