@@ -822,6 +822,14 @@ fn sysfs_drm_gpu_name_matches_go_agent_arm_soc_and_driver_fallbacks() {
         Some("Broadcom VideoCore VI (Pi 4)")
     );
     assert_eq!(
+        parse_soc_gpu_model(
+            "sunxi-drm",
+            b"allwinner,sunxi-drm\0allwinner,sun50i-h6-display-engine",
+        )
+        .as_deref(),
+        Some("Allwinner H6")
+    );
+    assert_eq!(
         sysfs_drm_gpu_name_from_driver("virtio_gpu", None).as_deref(),
         None
     );

@@ -2547,18 +2547,25 @@ fn first_token_after_marker(value: &str, marker: &str, digits_only: bool) -> Opt
 }
 
 fn allwinner_soc_model(value: &str) -> Option<String> {
-    let start = value.find("sun")?;
-    let suffix = &value[start..];
-    let dash = suffix.find('-')? + 1;
-    let model = suffix[dash..]
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>();
-    if model.is_empty() {
-        None
-    } else {
-        Some(model.to_ascii_uppercase())
+    for (start, _) in value.match_indices("sun") {
+        let mut chars = value[start + "sun".len()..].chars().peekable();
+        let mut saw_digit = false;
+        while matches!(chars.peek(), Some(ch) if ch.is_ascii_digit()) {
+            saw_digit = true;
+            chars.next();
+        }
+        if !saw_digit || chars.next() != Some('i') || chars.next() != Some('-') {
+            continue;
+        }
+
+        let model = chars
+            .take_while(|ch| ch.is_ascii_alphanumeric())
+            .collect::<String>();
+        if !model.is_empty() {
+            return Some(model.to_ascii_uppercase());
+        }
     }
+    None
 }
 
 fn count_tcp_udp_sockets_in_proc_root(proc_root: &Path) -> Result<(i32, i32), String> {
