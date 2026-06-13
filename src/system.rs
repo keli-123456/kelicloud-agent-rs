@@ -1,5 +1,7 @@
 use crate::config::AgentConfig;
-use crate::linux_proc::{GpuMetric, ProcMetricErrors, ProcMetrics, ProcStatCpuSample};
+use crate::linux_proc::{
+    GpuMetric, MemorySelection, MemoryValues, ProcMetricErrors, ProcMetrics, ProcStatCpuSample,
+};
 use crate::net_static::{InterfaceCounter, NetStaticSampler, NetStaticSamplerConfig};
 use crate::report::{
     go_runtime_arch_name, BasicInfo, ConnectionsReport, CpuReport, DiskReport, GpuDetailedInfo,
@@ -248,6 +250,28 @@ pub fn process_count_from_proc_metrics_or_fallback(
         .unwrap_or(fallback)
 }
 
+pub fn select_report_memory_values(
+    linux_memory: Option<MemorySelection>,
+    memory_include_cache: bool,
+    memory_report_raw_used: bool,
+    fallback_ram: MemoryValues,
+    fallback_swap: MemoryValues,
+) -> (MemoryValues, MemoryValues) {
+    let raw_used_without_meminfo =
+        linux_memory.is_none() && memory_report_raw_used && !memory_include_cache;
+    let ram = if raw_used_without_meminfo {
+        MemoryValues::default()
+    } else {
+        linux_memory
+            .and_then(|selection| selection.ram)
+            .unwrap_or(fallback_ram)
+    };
+    let swap = linux_memory
+        .map(|selection| selection.swap)
+        .unwrap_or(fallback_swap);
+    (ram, swap)
+}
+
 pub fn select_basic_info_ip_addresses(
     get_ip_addr_from_nic: bool,
     nic_addresses: Option<crate::linux_proc::IpAddresses>,
@@ -490,18 +514,19 @@ impl SystemSnapshotCollector {
         let network_up = network_speed_sample.speed.total_up;
         let network_down = network_speed_sample.speed.total_down;
 
-        let mem_total = linux_memory
-            .and_then(|selection| selection.ram.map(|ram| ram.total))
-            .unwrap_or_else(|| self.system.total_memory() as i64);
-        let mem_used = linux_memory
-            .and_then(|selection| selection.ram.map(|ram| ram.used))
-            .unwrap_or_else(|| self.system.used_memory() as i64);
-        let swap_total = linux_memory
-            .map(|selection| selection.swap.total)
-            .unwrap_or_else(|| self.system.total_swap() as i64);
-        let swap_used = linux_memory
-            .map(|selection| selection.swap.used)
-            .unwrap_or_else(|| self.system.used_swap() as i64);
+        let (ram_values, swap_values) = select_report_memory_values(
+            linux_memory,
+            self.metrics.memory_include_cache,
+            self.metrics.memory_report_raw_used,
+            MemoryValues {
+                total: self.system.total_memory() as i64,
+                used: self.system.used_memory() as i64,
+            },
+            MemoryValues {
+                total: self.system.total_swap() as i64,
+                used: self.system.used_swap() as i64,
+            },
+        );
         let nic_addresses = if self.metrics.get_ip_addr_from_nic {
             crate::linux_proc::collect_ip_addresses_with_filter(&network_filter)
         } else {
@@ -547,10 +572,10 @@ impl SystemSnapshotCollector {
             kernel_version: crate::linux_proc::collect_kernel_version(),
             ipv4: ip_addresses.ipv4,
             ipv6: ip_addresses.ipv6,
-            mem_total,
-            mem_used,
-            swap_total,
-            swap_used,
+            mem_total: ram_values.total,
+            mem_used: ram_values.used,
+            swap_total: swap_values.total,
+            swap_used: swap_values.used,
             disk_total: disk_values.total,
             disk_used: disk_values.used,
             load1: proc_metrics

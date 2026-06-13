@@ -1,14 +1,15 @@
 use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::linux_proc::{
-    GpuMetric, IpAddresses, ProcMetricErrors, ProcMetrics, ProcStatCpuSample,
+    GpuMetric, IpAddresses, MemorySelection, MemoryValues, ProcMetricErrors, ProcMetrics,
+    ProcStatCpuSample,
 };
 use kelicloud_agent_rs::report::{GpuReport, ReportGenerator};
 use kelicloud_agent_rs::system::{
     append_report_error, cpu_usage_from_proc_stat_or_fallback, go_compatible_cpu_usage,
     gpu_report_from_detailed_result, gpu_report_from_detailed_results, gpu_report_from_metrics,
     proc_metric_errors_to_message, process_count_from_proc_metrics_or_fallback,
-    select_basic_info_ip_addresses, SystemMetricsOptions, SystemReportGenerator, SystemSnapshot,
-    SystemSnapshotCollector,
+    select_basic_info_ip_addresses, select_report_memory_values, SystemMetricsOptions,
+    SystemReportGenerator, SystemSnapshot, SystemSnapshotCollector,
 };
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -119,6 +120,49 @@ fn cpu_usage_from_proc_stat_samples_takes_priority_over_sysinfo_fallback() {
     assert_eq!(
         cpu_usage_from_proc_stat_or_fallback(Some(first), None, 17.0),
         17.0
+    );
+}
+
+#[test]
+fn select_report_memory_values_matches_go_raw_used_missing_meminfo_behavior() {
+    let fallback_ram = MemoryValues {
+        total: 8 * 1024,
+        used: 4 * 1024,
+    };
+    let fallback_swap = MemoryValues {
+        total: 2 * 1024,
+        used: 512,
+    };
+
+    assert_eq!(
+        select_report_memory_values(None, false, true, fallback_ram, fallback_swap),
+        (MemoryValues::default(), fallback_swap)
+    );
+    assert_eq!(
+        select_report_memory_values(None, true, true, fallback_ram, fallback_swap),
+        (fallback_ram, fallback_swap)
+    );
+    assert_eq!(
+        select_report_memory_values(
+            Some(MemorySelection {
+                ram: None,
+                swap: MemoryValues {
+                    total: 3 * 1024,
+                    used: 256,
+                },
+            }),
+            false,
+            false,
+            fallback_ram,
+            fallback_swap,
+        ),
+        (
+            fallback_ram,
+            MemoryValues {
+                total: 3 * 1024,
+                used: 256,
+            },
+        )
     );
 }
 
