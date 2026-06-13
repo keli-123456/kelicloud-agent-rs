@@ -168,6 +168,7 @@ impl NetStaticSampler {
                 if file.config.save_interval != 0.0 {
                     self.config.save_interval_seconds = file.config.save_interval;
                 }
+                self.config.nics = file.config.nics;
             }
             Err(_) => {
                 let _ = fs::rename(

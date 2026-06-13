@@ -143,6 +143,49 @@ fn sampler_uses_persisted_preserve_days_like_go_agent() {
 }
 
 #[test]
+fn sampler_uses_persisted_nics_whitelist_like_go_agent() {
+    let path = temp_net_static_path("persisted-nics");
+    fs::write(
+        &path,
+        r#"{"interfaces":{},"config":{"data_preserve_day":31,"detect_interval":2,"save_interval":600,"nics":["eth0"]}}"#,
+    )
+    .unwrap();
+
+    let mut sampler = NetStaticSampler::with_config(NetStaticSamplerConfig {
+        path: path.clone(),
+        ..NetStaticSamplerConfig::default()
+    });
+    let filter = NetworkFilter::default();
+
+    sampler.sample(
+        100,
+        &[
+            InterfaceCounter::new("eth0", 1_000, 2_000),
+            InterfaceCounter::new("ens18", 10_000, 20_000),
+        ],
+    );
+    sampler.sample(
+        102,
+        &[
+            InterfaceCounter::new("eth0", 1_100, 2_200),
+            InterfaceCounter::new("ens18", 10_900, 20_900),
+        ],
+    );
+
+    let totals = sampler.total_between(0, 200, &filter);
+    drop(sampler);
+    let _ = fs::remove_file(path);
+
+    assert_eq!(
+        totals,
+        NetworkTotals {
+            total_up: 100,
+            total_down: 200,
+        }
+    );
+}
+
+#[test]
 fn parse_net_static_total_between_rejects_negative_counters_like_go_agent() {
     let contents = r#"
 {
