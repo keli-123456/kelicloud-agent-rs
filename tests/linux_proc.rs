@@ -443,6 +443,13 @@ ro.product.brand=Google
         android_os_name_from_build_prop("ro.product.model=Pixel 8\n").as_deref(),
         Some("Android")
     );
+    assert_eq!(
+        android_os_name_from_build_prop(
+            "ro.build.version.release=14\nro.product.model= Pixel 8\nro.product.brand=Google\n"
+        )
+        .as_deref(),
+        Some("Android 14 (Google  Pixel 8)")
+    );
 }
 
 #[test]

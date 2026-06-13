@@ -458,6 +458,9 @@ pub fn android_os_name_from_build_prop(contents: &str) -> Option<String> {
     let Some(version) = parse_property_value(contents, "ro.build.version.release") else {
         return Some("Android".to_string());
     };
+    if version.is_empty() {
+        return Some("Android".to_string());
+    }
     let model = parse_property_value(contents, "ro.product.model").unwrap_or_default();
     let brand = parse_property_value(contents, "ro.product.brand").unwrap_or_default();
     Some(android_os_name_from_parts(&version, &model, &brand))
@@ -2300,19 +2303,13 @@ fn parse_os_release_value(contents: &str, key: &str) -> Option<String> {
 
 fn parse_property_value(contents: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
-    contents.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix(&prefix)
-            .map(str::trim)
-            .map(ToString::to_string)
-            .filter(|value| !value.is_empty())
-    })
+    contents
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(&prefix).map(ToString::to_string))
 }
 
 fn android_os_name_from_parts(version: &str, model: &str, brand: &str) -> String {
-    let mut result = format!("Android {}", version.trim());
-    let model = model.trim();
-    let brand = brand.trim();
+    let mut result = format!("Android {version}");
 
     if !model.is_empty() {
         if !brand.is_empty() && brand != model {
