@@ -3,7 +3,7 @@ use std::error::Error;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::fs;
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -1826,23 +1826,17 @@ pub fn collect_public_ip_addresses() -> IpAddresses {
 }
 
 pub fn collect_public_ip_addresses_with_dns(custom_dns: &str) -> IpAddresses {
-    let mut builder = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .user_agent("curl/8.0.1");
-
     let custom_dns = custom_dns.trim();
-    if !custom_dns.is_empty() {
-        builder = builder.dns_resolver(Arc::new(CustomDnsResolver::new(custom_dns)));
-    }
-
-    let client = match builder.build() {
-        Ok(client) => client,
-        Err(_) => return IpAddresses::default(),
-    };
 
     IpAddresses {
-        ipv4: probe_public_ipv4(&client).unwrap_or_default(),
-        ipv6: probe_public_ipv6(&client).unwrap_or_default(),
+        ipv4: build_public_ip_probe_client(custom_dns, PublicIpProbeFamily::Ipv4)
+            .ok()
+            .and_then(|client| probe_public_ipv4(&client))
+            .unwrap_or_default(),
+        ipv6: build_public_ip_probe_client(custom_dns, PublicIpProbeFamily::Ipv6)
+            .ok()
+            .and_then(|client| probe_public_ipv6(&client))
+            .unwrap_or_default(),
     }
 }
 
@@ -2324,8 +2318,55 @@ pub fn public_ipv6_probe_urls() -> &'static [&'static str] {
     PUBLIC_IPV6_PROBE_URLS
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PublicIpProbeFamily {
+    Ipv4,
+    Ipv6,
+}
+
+fn public_ip_probe_client_builder(family: PublicIpProbeFamily) -> reqwest::blocking::ClientBuilder {
+    let local_address = match family {
+        PublicIpProbeFamily::Ipv4 => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        PublicIpProbeFamily::Ipv6 => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+    };
+
+    reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent("curl/8.0.1")
+        .local_address(local_address)
+}
+
+fn build_public_ip_probe_client(
+    custom_dns: &str,
+    family: PublicIpProbeFamily,
+) -> Result<reqwest::blocking::Client, reqwest::Error> {
+    let mut builder = public_ip_probe_client_builder(family);
+    if !custom_dns.is_empty() {
+        builder = builder.dns_resolver(Arc::new(CustomDnsResolver::new(custom_dns)));
+    }
+    builder.build()
+}
+
+#[cfg(test)]
+fn build_public_ip_probe_client_with_resolver<R>(
+    family: PublicIpProbeFamily,
+    resolver: Arc<R>,
+) -> reqwest::blocking::ClientBuilder
+where
+    R: reqwest::dns::Resolve + 'static,
+{
+    public_ip_probe_client_builder(family).dns_resolver(resolver)
+}
+
 fn probe_public_ipv4(client: &reqwest::blocking::Client) -> Option<String> {
-    for api in public_ipv4_probe_urls() {
+    probe_public_ipv4_from_urls(client, public_ipv4_probe_urls())
+}
+
+fn probe_public_ipv4_from_urls(
+    client: &reqwest::blocking::Client,
+    urls: &[&str],
+) -> Option<String> {
+    for api in urls {
         let Ok(body) = client.get(*api).send().and_then(|response| response.text()) else {
             continue;
         };
@@ -2337,7 +2378,14 @@ fn probe_public_ipv4(client: &reqwest::blocking::Client) -> Option<String> {
 }
 
 fn probe_public_ipv6(client: &reqwest::blocking::Client) -> Option<String> {
-    for api in public_ipv6_probe_urls() {
+    probe_public_ipv6_from_urls(client, public_ipv6_probe_urls())
+}
+
+fn probe_public_ipv6_from_urls(
+    client: &reqwest::blocking::Client,
+    urls: &[&str],
+) -> Option<String> {
+    for api in urls {
         let Ok(body) = client.get(*api).send().and_then(|response| response.text()) else {
             continue;
         };
@@ -3025,4 +3073,103 @@ fn json_string(card: &serde_json::Map<String, serde_json::Value>, key: &str) -> 
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
+    use std::thread;
+
+    #[derive(Clone)]
+    struct StaticResolver {
+        addrs: Vec<SocketAddr>,
+    }
+
+    impl reqwest::dns::Resolve for StaticResolver {
+        fn resolve(&self, _name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            let addrs = self.addrs.clone();
+            Box::pin(std::future::ready(Ok(
+                Box::new(addrs.into_iter()) as reqwest::dns::Addrs
+            )))
+        }
+    }
+
+    #[test]
+    fn public_ip_probe_clients_filter_resolved_addresses_by_family_like_go_agent() {
+        let (v4_listener, v6_listener, port) = bind_dual_stack_loopback_listeners();
+        let v4_server = serve_one_response(v4_listener, "ip=203.0.113.10\n");
+        let v6_server = serve_one_response(v6_listener, "ip=2001:db8::1\n");
+        let resolver = StaticResolver {
+            addrs: vec![
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            ],
+        };
+        let client = build_public_ip_probe_client_with_resolver(
+            PublicIpProbeFamily::Ipv4,
+            std::sync::Arc::new(resolver),
+        )
+        .no_proxy()
+        .build()
+        .unwrap();
+
+        assert_eq!(
+            probe_public_ipv4_from_urls(&client, &[&format!("http://kelicloud.test:{port}")])
+                .as_deref(),
+            Some("203.0.113.10")
+        );
+
+        v4_server.join().unwrap();
+        drop(v6_server);
+
+        let (v4_listener, v6_listener, port) = bind_dual_stack_loopback_listeners();
+        let v4_server = serve_one_response(v4_listener, "ip=203.0.113.10\n");
+        let v6_server = serve_one_response(v6_listener, "ip=2001:db8::1\n");
+        let resolver = StaticResolver {
+            addrs: vec![
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+            ],
+        };
+        let client = build_public_ip_probe_client_with_resolver(
+            PublicIpProbeFamily::Ipv6,
+            std::sync::Arc::new(resolver),
+        )
+        .no_proxy()
+        .build()
+        .unwrap();
+
+        assert_eq!(
+            probe_public_ipv6_from_urls(&client, &[&format!("http://kelicloud.test:{port}")])
+                .as_deref(),
+            Some("2001:db8::1")
+        );
+
+        v6_server.join().unwrap();
+        drop(v4_server);
+    }
+
+    fn bind_dual_stack_loopback_listeners() -> (TcpListener, TcpListener, u16) {
+        let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = v4.local_addr().unwrap().port();
+        let v6 = TcpListener::bind((Ipv6Addr::LOCALHOST, port)).unwrap();
+        (v4, v6, port)
+    }
+
+    fn serve_one_response(listener: TcpListener, body: &'static str) -> thread::JoinHandle<()> {
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 512];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        })
+    }
 }
