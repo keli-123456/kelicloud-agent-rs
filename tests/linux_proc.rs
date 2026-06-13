@@ -358,14 +358,18 @@ fn parse_public_ipv4_response_extracts_ips_from_go_agent_api_shapes() {
         parse_public_ipv4_response(r#"{"ip":"198.51.100.24"}"#).as_deref(),
         Some("198.51.100.24")
     );
+    assert_eq!(
+        parse_public_ipv4_response(r#"{"ip":"999.999.999.999","real":"198.51.100.24"}"#).as_deref(),
+        Some("999.999.999.999")
+    );
 }
 
 #[test]
-fn parse_public_ipv6_response_extracts_global_ipv6_and_skips_link_local() {
+fn parse_public_ipv6_response_matches_go_agent_first_regex_match() {
     assert_eq!(
         parse_public_ipv6_response(r#"{"ip":"fe80::1","real":"2607:f358:1a:e::ab0:39b7"}"#)
             .as_deref(),
-        Some("2607:f358:1a:e::ab0:39b7")
+        Some("fe80::1")
     );
 }
 

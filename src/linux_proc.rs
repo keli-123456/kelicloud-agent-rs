@@ -562,25 +562,11 @@ fn record_ip_addr_show_address(addresses: &mut IpAddresses, family: &str, raw_ad
 }
 
 pub fn parse_public_ipv4_response(contents: &str) -> Option<String> {
-    response_ip_candidates(contents).find_map(|candidate| {
-        match candidate.parse::<IpAddr>().ok()? {
-            IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_unspecified() => Some(ip.to_string()),
-            _ => None,
-        }
-    })
+    find_go_ipv4_regex_match(contents).map(ToOwned::to_owned)
 }
 
 pub fn parse_public_ipv6_response(contents: &str) -> Option<String> {
-    response_ip_candidates(contents).find_map(|candidate| {
-        match candidate.parse::<IpAddr>().ok()? {
-            IpAddr::V6(ip)
-                if !ip.is_loopback() && !ip.is_unspecified() && !ip.is_unicast_link_local() =>
-            {
-                Some(ip.to_string())
-            }
-            _ => None,
-        }
-    })
+    find_go_ipv6_regex_match(contents).map(ToOwned::to_owned)
 }
 
 pub fn detect_container_from_cgroup(contents: &str) -> Option<String> {
@@ -2411,12 +2397,96 @@ fn is_excluded_gpu_name(name: &str) -> bool {
         || lower.contains("hyper-v")
 }
 
-fn response_ip_candidates(contents: &str) -> impl Iterator<Item = &str> {
+fn find_go_ipv4_regex_match(contents: &str) -> Option<&str> {
+    let bytes = contents.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !bytes[start].is_ascii_digit() {
+            start += 1;
+            continue;
+        }
+
+        let mut cursor = start;
+        if consume_ipv4_digits(bytes, &mut cursor).is_none() {
+            start += 1;
+            continue;
+        }
+
+        let mut matched = true;
+        for _ in 0..3 {
+            if bytes.get(cursor) != Some(&b'.') {
+                matched = false;
+                break;
+            }
+            cursor += 1;
+            if consume_ipv4_digits(bytes, &mut cursor).is_none() {
+                matched = false;
+                break;
+            }
+        }
+
+        if matched {
+            return Some(&contents[start..cursor]);
+        }
+        start += 1;
+    }
+
+    None
+}
+
+fn consume_ipv4_digits(bytes: &[u8], cursor: &mut usize) -> Option<()> {
+    let start = *cursor;
+    while *cursor < bytes.len() && bytes[*cursor].is_ascii_digit() && *cursor - start < 3 {
+        *cursor += 1;
+    }
+    (*cursor > start).then_some(())
+}
+
+fn find_go_ipv6_regex_match(contents: &str) -> Option<&str> {
     contents
-        .split(|ch: char| !(ch.is_ascii_hexdigit() || matches!(ch, '.' | ':')))
-        .filter(|candidate| candidate.contains('.') || candidate.contains(':'))
-        .map(str::trim)
-        .filter(|candidate| !candidate.is_empty())
+        .split(|ch: char| !(ch.is_ascii_hexdigit() || ch == ':'))
+        .filter(|candidate| candidate.contains(':'))
+        .find(|candidate| matches_go_ipv6_regex(candidate))
+}
+
+fn matches_go_ipv6_regex(candidate: &str) -> bool {
+    if candidate.is_empty()
+        || candidate
+            .bytes()
+            .any(|byte| !(byte.is_ascii_hexdigit() || byte == b':'))
+    {
+        return false;
+    }
+
+    let parts = candidate.split(':').collect::<Vec<_>>();
+    if parts.iter().any(|part| part.len() > 4) {
+        return false;
+    }
+
+    if !candidate.contains("::") {
+        return parts.len() == 8 && parts.iter().all(|part| !part.is_empty());
+    }
+
+    let Some((prefix, suffix)) = candidate.split_once("::") else {
+        return false;
+    };
+    if prefix.is_empty() || suffix.contains("::") {
+        return false;
+    }
+
+    let prefix_groups = prefix.split(':').collect::<Vec<_>>();
+    if prefix_groups.is_empty()
+        || prefix_groups.len() > 6
+        || prefix_groups.iter().any(|part| part.is_empty())
+    {
+        return false;
+    }
+
+    if suffix.is_empty() {
+        return true;
+    }
+    let suffix_groups = suffix.split(':').collect::<Vec<_>>();
+    suffix_groups.len() <= 5 && suffix_groups.iter().all(|part| !part.is_empty())
 }
 
 fn actual_reset_date(year: i32, month: u32, reset_day: u32) -> (i32, u32, u32) {
