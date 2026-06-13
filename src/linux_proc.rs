@@ -720,8 +720,9 @@ pub fn parse_lspci_gpu_name(contents: &str) -> Option<String> {
                 if !lower.contains(vendor) {
                     continue;
                 }
-                let name = extract_lspci_device_name(line)?;
-                if !is_excluded_gpu_name(&name) {
+                if let Some(name) =
+                    extract_lspci_device_name(line).filter(|name| !is_excluded_gpu_name(name))
+                {
                     return Some(name);
                 }
             }
@@ -731,8 +732,9 @@ pub fn parse_lspci_gpu_name(contents: &str) -> Option<String> {
     for line in lines {
         let lower = line.to_ascii_lowercase();
         if is_display_pci_line(&lower) {
-            let name = extract_lspci_device_name(line)?;
-            if !is_excluded_gpu_name(&name) {
+            if let Some(name) =
+                extract_lspci_device_name(line).filter(|name| !is_excluded_gpu_name(name))
+            {
                 return Some(name);
             }
         }
