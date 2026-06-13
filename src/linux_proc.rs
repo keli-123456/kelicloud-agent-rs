@@ -1195,10 +1195,11 @@ fn parse_net_dev_interfaces_result(
         }
 
         let fields = counters.split_whitespace().collect::<Vec<_>>();
-        if fields.len() < 16 {
+        if fields.len() < 13 {
             continue;
         }
 
+        validate_go_net_dev_counters(&fields)?;
         let rx_bytes = parse_net_dev_bytes(fields[0])?;
         let tx_bytes = parse_net_dev_bytes(fields[8])?;
         interfaces.push(NetworkInterfaceTotals {
@@ -1209,6 +1210,13 @@ fn parse_net_dev_interfaces_result(
     }
 
     Ok(interfaces)
+}
+
+fn validate_go_net_dev_counters(fields: &[&str]) -> Result<(), String> {
+    for index in [0_usize, 1, 2, 3, 4, 8, 9, 10, 11, 12] {
+        parse_net_dev_bytes(fields[index])?;
+    }
+    Ok(())
 }
 
 fn parse_net_dev_bytes(value: &str) -> Result<i64, String> {
