@@ -1069,9 +1069,13 @@ pub fn go_compatible_disk_with_mountpoints(
     mounts: &[DiskMount],
     include_mountpoints: &str,
 ) -> DiskValues {
+    if include_mountpoints.is_empty() {
+        return go_compatible_disk(mounts);
+    }
+
     let include = parse_semicolon_list(include_mountpoints);
     if include.is_empty() {
-        return go_compatible_disk(mounts);
+        return DiskValues::default();
     }
 
     mounts
@@ -1105,7 +1109,7 @@ pub fn collect_disk_values_with_mountpoints(
     mounts: &[DiskMount],
     include_mountpoints: &str,
 ) -> DiskValues {
-    if parse_semicolon_list(include_mountpoints).is_empty() {
+    if include_mountpoints.is_empty() {
         return go_compatible_disk(mounts);
     }
 

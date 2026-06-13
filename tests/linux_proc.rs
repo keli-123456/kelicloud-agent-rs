@@ -1407,6 +1407,23 @@ fn disk_mounts_honor_include_mountpoints_like_go_agent() {
 }
 
 #[test]
+fn disk_mounts_whitespace_include_mountpoints_match_go_agent_custom_mode() {
+    let mounts = vec![DiskMount {
+        device: "/dev/sda1".to_string(),
+        mountpoint: "/".to_string(),
+        fstype: "ext4".to_string(),
+        opts: String::new(),
+        total: 1_000,
+        used: 400,
+    }];
+
+    let disk = kelicloud_agent_rs::linux_proc::go_compatible_disk_with_mountpoints(&mounts, " ; ");
+
+    assert_eq!(disk.total, 0);
+    assert_eq!(disk.used, 0);
+}
+
+#[test]
 fn disk_include_mountpoints_uses_direct_usage_lookup_like_go_agent() {
     let disk = kelicloud_agent_rs::linux_proc::go_compatible_disk_from_mountpoint_lookup(
         "/missing;/data;/backup",
