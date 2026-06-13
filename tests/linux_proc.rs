@@ -1354,6 +1354,16 @@ fn reset_timestamp_for_day_uses_local_midnight_reset_window() {
 }
 
 #[test]
+fn reset_timestamp_for_day_keeps_invalid_reset_day_at_current_time_like_go_agent() {
+    let now = Local.with_ymd_and_hms(2026, 6, 20, 12, 34, 56).unwrap();
+
+    assert_eq!(
+        reset_timestamp_for_day(99, now),
+        Some(now.timestamp() as u64)
+    );
+}
+
+#[test]
 fn disk_mounts_filter_like_go_agent() {
     let mounts = vec![
         DiskMount {

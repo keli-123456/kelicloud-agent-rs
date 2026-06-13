@@ -1499,6 +1499,10 @@ pub fn collect_net_static_total_between<P: AsRef<Path>>(
 }
 
 pub fn reset_timestamp_for_day(reset_day: u32, now: DateTime<Local>) -> Option<u64> {
+    if !(1..=31).contains(&reset_day) {
+        return Some(now.timestamp().max(0) as u64);
+    }
+
     let (year, month, day) = reset_date_ymd(reset_day, now.year(), now.month(), now.day());
     Local
         .with_ymd_and_hms(year, month, day, 0, 0, 0)
