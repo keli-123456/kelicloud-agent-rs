@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
@@ -1330,16 +1330,12 @@ enum ProcNetSocketProtocol {
 }
 
 fn count_socket_entries_for_protocol(contents: &str, protocol: ProcNetSocketProtocol) -> i32 {
-    let mut keys = HashSet::new();
-    for line in contents.lines().map(str::trim) {
-        if line.is_empty() || line.starts_with("sl ") {
-            continue;
-        }
-        if let Some(key) = proc_net_socket_row_key(line, protocol) {
-            keys.insert(key);
-        }
-    }
-    keys.len() as i32
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("sl "))
+        .filter(|line| proc_net_socket_row_key(line, protocol).is_some())
+        .count() as i32
 }
 
 fn proc_net_socket_row_key(line: &str, protocol: ProcNetSocketProtocol) -> Option<String> {
