@@ -159,9 +159,7 @@ where
     let report = report_generator.generate();
     socket.send_report(&report)?;
 
-    if let Some(bytes) = socket.read_message()? {
-        process_backend_message(&mut socket, handler, ping_executor, &bytes)?;
-    }
+    drain_backend_messages(&mut socket, handler, ping_executor)?;
 
     Ok(())
 }
@@ -251,9 +249,10 @@ where
     let basic_info_url = build_basic_info_url(&config.endpoint, &config.token)?;
 
     let report_url = build_report_ws_url(&config.endpoint, &config.token)?;
-    let heartbeat_every = heartbeat_interval_cycles(config.interval_seconds);
+    let report_interval_seconds = report_tick_interval_seconds(config.interval_seconds);
+    let heartbeat_every = heartbeat_interval_cycles(report_interval_seconds);
     let basic_info_every =
-        basic_info_interval_cycles(config.interval_seconds, config.info_report_interval_minutes);
+        basic_info_interval_cycles(report_interval_seconds, config.info_report_interval_minutes);
     let mut socket: Option<W::Socket> = None;
     let mut connect_failures = 0_u32;
 
@@ -290,12 +289,17 @@ where
             if active_socket.send_report(&report).is_err() {
                 disconnect = true;
             } else {
-                match active_socket.read_message() {
-                    Ok(Some(bytes)) => {
-                        process_backend_message(active_socket, handler, ping_executor, &bytes)?
+                loop {
+                    match active_socket.read_message() {
+                        Ok(Some(bytes)) => {
+                            process_backend_message(active_socket, handler, ping_executor, &bytes)?
+                        }
+                        Ok(None) => break,
+                        Err(_) => {
+                            disconnect = true;
+                            break;
+                        }
                     }
-                    Ok(None) => {}
-                    Err(_) => disconnect = true,
                 }
                 if !disconnect && (cycle + 1) % heartbeat_every == 0 {
                     if active_socket.send_ping().is_err() {
@@ -310,7 +314,7 @@ where
         }
 
         if cycle + 1 < cycles {
-            delay.sleep_report_interval(config.interval_seconds);
+            delay.sleep_report_interval(report_interval_seconds);
         }
     }
 
@@ -335,6 +339,23 @@ where
             http.upload_basic_info(url, headers, &basic_info.without_kernel_version())
         }
     }
+}
+
+fn drain_backend_messages<S, C, P>(
+    socket: &mut S,
+    handler: &mut C,
+    ping_executor: &P,
+) -> Result<(), RuntimeError>
+where
+    S: ReportSocket,
+    C: ControlMessageHandler,
+    P: PingExecutor,
+{
+    while let Some(bytes) = socket.read_message()? {
+        process_backend_message(socket, handler, ping_executor, &bytes)?;
+    }
+
+    Ok(())
 }
 
 fn process_backend_message<S, C, P>(
@@ -369,8 +390,16 @@ where
     Ok(())
 }
 
+fn report_tick_interval_seconds(config_interval_seconds: f64) -> f64 {
+    if !config_interval_seconds.is_finite() || config_interval_seconds <= 1.0 {
+        1.0
+    } else {
+        config_interval_seconds - 1.0
+    }
+}
+
 fn heartbeat_interval_cycles(interval_seconds: f64) -> usize {
-    if interval_seconds <= 0.0 {
+    if !interval_seconds.is_finite() || interval_seconds <= 0.0 {
         return 30;
     }
 

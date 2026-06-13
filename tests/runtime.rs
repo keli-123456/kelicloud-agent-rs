@@ -13,6 +13,7 @@ use kelicloud_agent_rs::transport::{
     HeaderPair, HttpTransport, ReportSocket, TransportError, WebSocketTransport,
 };
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 #[test]
@@ -209,7 +210,7 @@ fn run_once_with_ping_executes_ping_message_and_sends_result() {
 fn run_report_cycles_sends_reports_and_heartbeat_on_schedule() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut config = test_config();
-    config.interval_seconds = 10.0;
+    config.interval_seconds = 11.0;
     let mut http = FakeHttp::new(events.clone());
     let mut websocket = FakeWebSocketTransport::new(events.clone(), None);
     let mut handler = RecordingHandler::default();
@@ -277,7 +278,7 @@ fn run_report_cycles_refreshes_basic_info_on_info_report_interval() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let uploaded_kernel_versions = Rc::new(RefCell::new(Vec::new()));
     let mut config = test_config();
-    config.interval_seconds = 60.0;
+    config.interval_seconds = 61.0;
     config.info_report_interval_minutes = 1;
     let mut http = FakeHttp::new(events.clone())
         .with_uploaded_kernel_versions(uploaded_kernel_versions.clone());
@@ -319,7 +320,7 @@ fn run_report_cycles_refreshes_basic_info_on_info_report_interval() {
 fn run_report_cycles_keeps_reporting_when_periodic_basic_info_refresh_fails() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut config = test_config();
-    config.interval_seconds = 60.0;
+    config.interval_seconds = 61.0;
     config.info_report_interval_minutes = 1;
     let mut http = FakeHttp::new(events.clone()).with_upload_failures_after_successes(1, 2);
     let mut websocket = FakeWebSocketTransport::new(events.clone(), None);
@@ -381,8 +382,53 @@ fn run_report_cycles_with_delay_waits_between_cycles() {
             "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
             "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
             "send_report",
-            "sleep_report:2",
+            "sleep_report:1",
             "send_report"
+        ]
+    );
+}
+
+#[test]
+fn run_report_cycles_drains_available_control_messages_after_report() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let inbound_messages = vec![
+        br#"{"message":"terminal","request_id":"terminal-1"}"#.to_vec(),
+        br#"{"message":"exec","task_id":"task-1","command":"uptime"}"#.to_vec(),
+    ];
+    let mut http = FakeHttp::new(events.clone());
+    let mut websocket =
+        FakeWebSocketTransport::new(events.clone(), None).with_inbound_messages(inbound_messages);
+    let mut handler = RecordingHandler::default();
+
+    run_report_cycles(
+        &test_config(),
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(11.0)),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        1,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
+            "send_report"
+        ]
+    );
+    assert_eq!(
+        handler.messages,
+        vec![
+            BackendMessage::Terminal {
+                request_id: "terminal-1".to_string(),
+            },
+            BackendMessage::Exec {
+                task_id: "task-1".to_string(),
+                command: "uptime".to_string(),
+            },
         ]
     );
 }
@@ -619,7 +665,7 @@ impl HttpTransport for FakeHttp {
 
 struct FakeWebSocketTransport {
     events: Rc<RefCell<Vec<String>>>,
-    inbound: Option<Vec<u8>>,
+    inbound: VecDeque<Vec<u8>>,
     sent_reports: Rc<RefCell<Vec<Report>>>,
     sent_ping_results: Rc<RefCell<Vec<PingResult>>>,
     send_failures_remaining: Rc<RefCell<usize>>,
@@ -629,11 +675,19 @@ impl FakeWebSocketTransport {
     fn new(events: Rc<RefCell<Vec<String>>>, inbound: Option<Vec<u8>>) -> Self {
         Self {
             events,
-            inbound,
+            inbound: inbound.into_iter().collect(),
             sent_reports: Rc::new(RefCell::new(Vec::new())),
             sent_ping_results: Rc::new(RefCell::new(Vec::new())),
             send_failures_remaining: Rc::new(RefCell::new(0)),
         }
+    }
+
+    fn with_inbound_messages<I>(mut self, messages: I) -> Self
+    where
+        I: IntoIterator<Item = Vec<u8>>,
+    {
+        self.inbound = messages.into_iter().collect();
+        self
     }
 
     fn with_sent_reports(mut self, sent_reports: Rc<RefCell<Vec<Report>>>) -> Self {
@@ -663,7 +717,7 @@ impl WebSocketTransport for FakeWebSocketTransport {
         self.events.borrow_mut().push(format!("connect:{url}"));
         Ok(FakeSocket {
             events: self.events.clone(),
-            inbound: self.inbound.take(),
+            inbound: std::mem::take(&mut self.inbound),
             sent_reports: self.sent_reports.clone(),
             sent_ping_results: self.sent_ping_results.clone(),
             send_failures_remaining: self.send_failures_remaining.clone(),
@@ -673,7 +727,7 @@ impl WebSocketTransport for FakeWebSocketTransport {
 
 struct FakeSocket {
     events: Rc<RefCell<Vec<String>>>,
-    inbound: Option<Vec<u8>>,
+    inbound: VecDeque<Vec<u8>>,
     sent_reports: Rc<RefCell<Vec<Report>>>,
     sent_ping_results: Rc<RefCell<Vec<PingResult>>>,
     send_failures_remaining: Rc<RefCell<usize>>,
@@ -697,7 +751,7 @@ impl ReportSocket for FakeSocket {
     }
 
     fn read_message(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
-        Ok(self.inbound.take())
+        Ok(self.inbound.pop_front())
     }
 
     fn send_ping(&mut self) -> Result<(), TransportError> {
