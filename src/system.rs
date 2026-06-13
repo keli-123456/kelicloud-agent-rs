@@ -1,5 +1,5 @@
 use crate::config::AgentConfig;
-use crate::linux_proc::{GpuMetric, ProcMetricErrors, ProcStatCpuSample};
+use crate::linux_proc::{GpuMetric, ProcMetricErrors, ProcMetrics, ProcStatCpuSample};
 use crate::net_static::{InterfaceCounter, NetStaticSampler, NetStaticSamplerConfig};
 use crate::report::{
     go_runtime_arch_name, BasicInfo, ConnectionsReport, CpuReport, DiskReport, GpuDetailedInfo,
@@ -236,6 +236,15 @@ pub fn cpu_usage_from_proc_stat_or_fallback(
         .and_then(|(first, second)| {
             crate::linux_proc::cpu_usage_percent_from_proc_stat_samples(first, second)
         })
+        .unwrap_or(fallback)
+}
+
+pub fn process_count_from_proc_metrics_or_fallback(
+    proc_metrics: Option<ProcMetrics>,
+    fallback: i32,
+) -> i32 {
+    proc_metrics
+        .map(|metrics| metrics.process_count)
         .unwrap_or(fallback)
 }
 
@@ -569,11 +578,10 @@ impl SystemSnapshotCollector {
                 .as_ref()
                 .map(|metrics| metrics.uptime)
                 .unwrap_or_else(|| sysinfo::System::uptime() as i64),
-            process_count: proc_metrics
-                .as_ref()
-                .map(|metrics| metrics.process_count)
-                .filter(|count| *count > 0)
-                .unwrap_or_else(|| self.system.processes().len() as i32),
+            process_count: process_count_from_proc_metrics_or_fallback(
+                proc_metrics,
+                self.system.processes().len() as i32,
+            ),
             cpu_usage,
             virtualization,
             gpu_name,

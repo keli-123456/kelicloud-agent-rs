@@ -1,11 +1,14 @@
 use kelicloud_agent_rs::config::AgentConfig;
-use kelicloud_agent_rs::linux_proc::{GpuMetric, IpAddresses, ProcMetricErrors, ProcStatCpuSample};
+use kelicloud_agent_rs::linux_proc::{
+    GpuMetric, IpAddresses, ProcMetricErrors, ProcMetrics, ProcStatCpuSample,
+};
 use kelicloud_agent_rs::report::{GpuReport, ReportGenerator};
 use kelicloud_agent_rs::system::{
     append_report_error, cpu_usage_from_proc_stat_or_fallback, go_compatible_cpu_usage,
     gpu_report_from_detailed_result, gpu_report_from_detailed_results, gpu_report_from_metrics,
-    proc_metric_errors_to_message, select_basic_info_ip_addresses, SystemMetricsOptions,
-    SystemReportGenerator, SystemSnapshot, SystemSnapshotCollector,
+    proc_metric_errors_to_message, process_count_from_proc_metrics_or_fallback,
+    select_basic_info_ip_addresses, SystemMetricsOptions, SystemReportGenerator, SystemSnapshot,
+    SystemSnapshotCollector,
 };
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -353,6 +356,24 @@ fn gpu_report_from_metrics_matches_go_agent_detailed_shape() {
         "NVIDIA GeForce RTX 3090"
     );
     assert!(report.models.is_none());
+}
+
+#[test]
+fn process_count_selection_keeps_zero_proc_result_like_go_agent() {
+    let metrics = ProcMetrics {
+        process_count: 0,
+        ..ProcMetrics::default()
+    };
+
+    assert_eq!(
+        process_count_from_proc_metrics_or_fallback(Some(metrics), 201),
+        0
+    );
+}
+
+#[test]
+fn process_count_selection_uses_fallback_only_when_proc_metrics_missing() {
+    assert_eq!(process_count_from_proc_metrics_or_fallback(None, 201), 201);
 }
 
 #[test]
