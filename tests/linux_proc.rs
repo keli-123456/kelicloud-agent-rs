@@ -1196,6 +1196,30 @@ Shmem:             10 kB
 }
 
 #[test]
+fn memory_include_cache_mode_takes_priority_over_raw_used_like_go_agent() {
+    let meminfo = parse_meminfo(
+        r#"
+MemTotal:        1000 kB
+MemFree:          100 kB
+Buffers:           25 kB
+Cached:           200 kB
+SReclaimable:      50 kB
+Shmem:             10 kB
+"#,
+    );
+
+    let selection = memory_selection_from_meminfo_with_modes(&meminfo, true, true);
+
+    assert_eq!(
+        selection.ram,
+        Some(MemoryValues {
+            total: 1000 * 1024,
+            used: 900 * 1024,
+        })
+    );
+}
+
+#[test]
 fn memory_raw_used_mode_matches_go_agent_htop_like_branch() {
     let meminfo = parse_meminfo(
         r#"

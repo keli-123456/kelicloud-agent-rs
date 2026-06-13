@@ -1052,12 +1052,12 @@ pub fn memory_selection_from_meminfo_with_modes(
     include_cache: bool,
     report_raw_used: bool,
 ) -> MemorySelection {
-    let ram = if report_raw_used {
+    let ram = if include_cache {
+        Some(go_compatible_ram_include_cache(info))
+    } else if report_raw_used {
         Some(go_compatible_ram_raw_used(info))
     } else if info.mem_total <= 0 {
         None
-    } else if include_cache {
-        Some(go_compatible_ram_include_cache(info))
     } else {
         Some(go_compatible_ram(info))
     };
