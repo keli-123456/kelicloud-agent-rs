@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::ErrorKind;
 use std::net::TcpStream;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::AgentConfig;
@@ -11,7 +12,7 @@ use crate::report::{BasicInfo, Report};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderName, HeaderValue};
 use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{Message, WebSocket};
+use tungstenite::{client_tls_with_config, Message, WebSocket};
 
 pub type HeaderPair = (String, String);
 
@@ -97,8 +98,23 @@ pub struct ReqwestHttpTransport {
 
 impl ReqwestHttpTransport {
     pub fn new(insecure: bool) -> Result<Self, TransportError> {
-        let client = reqwest::blocking::Client::builder()
-            .danger_accept_invalid_certs(insecure)
+        Self::new_with_custom_dns(insecure, "")
+    }
+
+    pub fn from_config(config: &AgentConfig) -> Result<Self, TransportError> {
+        Self::new_with_custom_dns(config.insecure, &config.custom_dns)
+    }
+
+    pub fn new_with_custom_dns(insecure: bool, custom_dns: &str) -> Result<Self, TransportError> {
+        let mut builder =
+            reqwest::blocking::Client::builder().danger_accept_invalid_certs(insecure);
+        let custom_dns = custom_dns.trim();
+        if !custom_dns.is_empty() {
+            builder = builder.dns_resolver(Arc::new(crate::linux_proc::CustomDnsResolver::new(
+                custom_dns,
+            )));
+        }
+        let client = builder
             .build()
             .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
         Ok(Self { client })
@@ -132,8 +148,26 @@ impl HttpTransport for ReqwestHttpTransport {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct TungsteniteWebSocketTransport;
+#[derive(Debug, Default, Clone)]
+pub struct TungsteniteWebSocketTransport {
+    custom_dns: String,
+}
+
+impl TungsteniteWebSocketTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_config(config: &AgentConfig) -> Self {
+        Self::new_with_custom_dns(&config.custom_dns)
+    }
+
+    pub fn new_with_custom_dns(custom_dns: &str) -> Self {
+        Self {
+            custom_dns: custom_dns.trim().to_string(),
+        }
+    }
+}
 
 impl WebSocketTransport for TungsteniteWebSocketTransport {
     type Socket = TungsteniteReportSocket;
@@ -154,8 +188,12 @@ impl WebSocketTransport for TungsteniteWebSocketTransport {
             request.headers_mut().insert(header_name, header_value);
         }
 
-        let (socket, _response) = tungstenite::connect(request)
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        let (socket, _response) = if self.custom_dns.is_empty() {
+            tungstenite::connect(request)
+                .map_err(|error| TransportError::RequestFailed(error.to_string()))?
+        } else {
+            connect_websocket_with_custom_dns(request, &self.custom_dns)?
+        };
         Ok(TungsteniteReportSocket {
             socket,
             read_timeout: Duration::from_millis(100),
@@ -206,6 +244,58 @@ impl ReportSocket for TungsteniteReportSocket {
             .send(Message::Text(payload.into()))
             .map_err(|error| TransportError::RequestFailed(error.to_string()))
     }
+}
+
+fn connect_websocket_with_custom_dns(
+    request: tungstenite::handshake::client::Request,
+    custom_dns: &str,
+) -> Result<
+    (
+        WebSocket<MaybeTlsStream<TcpStream>>,
+        tungstenite::handshake::client::Response,
+    ),
+    TransportError,
+> {
+    let uri = request.uri();
+    let host = uri
+        .host()
+        .ok_or_else(|| TransportError::RequestFailed("websocket URL missing host".to_string()))?;
+    let port = uri.port_u16().unwrap_or_else(|| match uri.scheme_str() {
+        Some("wss") => 443,
+        _ => 80,
+    });
+    let mut addrs =
+        crate::linux_proc::resolve_host_with_dns_server(custom_dns, host, Duration::from_secs(10))
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    for addr in &mut addrs {
+        addr.set_port(port);
+    }
+
+    let mut last_error = None;
+    for addr in addrs {
+        match TcpStream::connect(addr) {
+            Ok(stream) => {
+                stream
+                    .set_nodelay(true)
+                    .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+                return client_tls_with_config(request, stream, None, None).map_err(|error| {
+                    TransportError::RequestFailed(match error {
+                        tungstenite::handshake::HandshakeError::Failure(error) => error.to_string(),
+                        tungstenite::handshake::HandshakeError::Interrupted(_) => {
+                            "websocket handshake interrupted".to_string()
+                        }
+                    })
+                });
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(TransportError::RequestFailed(
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "custom DNS returned no websocket addresses".to_string()),
+    ))
 }
 
 impl TungsteniteReportSocket {

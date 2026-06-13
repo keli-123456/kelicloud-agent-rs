@@ -1533,13 +1533,13 @@ pub fn collect_public_ip_addresses_with_dns(custom_dns: &str) -> IpAddresses {
 }
 
 #[derive(Debug)]
-struct CustomDnsResolver {
+pub struct CustomDnsResolver {
     server: String,
     timeout: Duration,
 }
 
 impl CustomDnsResolver {
-    fn new(server: &str) -> Self {
+    pub fn new(server: &str) -> Self {
         Self {
             server: normalize_dns_server(server),
             timeout: Duration::from_secs(10),

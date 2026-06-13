@@ -36,14 +36,14 @@ fn main() {
         SystemReportGenerator::new(collector),
         cn_connectivity_state.clone(),
     );
-    let mut http = match ReqwestHttpTransport::new(config.insecure) {
+    let mut http = match ReqwestHttpTransport::from_config(&config) {
         Ok(http) => http,
         Err(error) => {
             eprintln!("transport error: {error}");
             std::process::exit(2);
         }
     };
-    let mut websocket = TungsteniteWebSocketTransport;
+    let mut websocket = TungsteniteWebSocketTransport::from_config(&config);
     let mut handler = CnConnectivityControlMessageHandler::new(cn_connectivity_state);
     let ping_executor = LinuxPingExecutor::default();
 
