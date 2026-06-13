@@ -38,6 +38,8 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
 - Terminal control messages open `/api/clients/terminal?token=...&id=...`,
   create a Linux PTY, support input and resize messages, and send terminal
   output back over WebSocket.
+- Report and terminal WebSocket URLs convert IDN hostnames to ASCII/Punycode,
+  matching the Go agent's `ConvertIDNToASCII` behavior.
 - The report loop drains buffered backend control messages at the start of each
   cycle and again after a successful report send, so queued exec, ping, and
   terminal requests do not have to wait behind the next report payload.
@@ -79,27 +81,20 @@ dynamic smoke produces logs:
    exec, ping, and terminal requests feel responsive with the production report
    interval and during reconnect or send-failure periods.
 
-2. IDN endpoint handling
-
-   The Go agent explicitly converts report and terminal WebSocket URLs from IDN
-   to ASCII. The Rust agent does not currently perform an explicit IDN
-   conversion. Smoke should include an IDN endpoint only if production actually
-   uses one.
-
-3. Auto-discovery and token recovery
+2. Auto-discovery and token recovery
 
    The Go agent has auto-discovery and invalid-token recovery hooks. The Rust
    prototype currently requires a fixed endpoint and token. This is not a
    problem for a static-token smoke test, but it is a deployment compatibility
    gap if production relies on auto-discovery.
 
-4. Auto-update
+3. Auto-update
 
    The Go agent checks for updates unless disabled. The Rust prototype does not
    implement auto-update. This is intentionally outside the first smoke path,
    but it matters before replacement rollout.
 
-5. Non-systemd installation
+4. Non-systemd installation
 
    The Go installer supports multiple init systems. The Rust installer currently
    targets systemd only. Runtime smoke can still pass, but installation parity is

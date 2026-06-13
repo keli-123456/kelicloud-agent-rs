@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::net::IpAddr;
 
 use serde::Deserialize;
 
@@ -196,13 +197,16 @@ fn normalize_ws_base(endpoint: &str) -> Result<String, ProtocolError> {
     }
 
     if let Some(rest) = endpoint.strip_prefix("https://") {
-        return Ok(format!("wss://{rest}"));
+        return Ok(format!("wss://{}", endpoint_rest_with_ascii_host(rest)));
     }
     if let Some(rest) = endpoint.strip_prefix("http://") {
-        return Ok(format!("ws://{rest}"));
+        return Ok(format!("ws://{}", endpoint_rest_with_ascii_host(rest)));
     }
-    if endpoint.starts_with("wss://") || endpoint.starts_with("ws://") {
-        return Ok(endpoint.to_string());
+    if let Some(rest) = endpoint.strip_prefix("wss://") {
+        return Ok(format!("wss://{}", endpoint_rest_with_ascii_host(rest)));
+    }
+    if let Some(rest) = endpoint.strip_prefix("ws://") {
+        return Ok(format!("ws://{}", endpoint_rest_with_ascii_host(rest)));
     }
 
     let scheme = endpoint
@@ -210,6 +214,37 @@ fn normalize_ws_base(endpoint: &str) -> Result<String, ProtocolError> {
         .map(|(scheme, _)| scheme.to_string())
         .unwrap_or_else(|| "missing".to_string());
     Err(ProtocolError::UnsupportedScheme(scheme))
+}
+
+fn endpoint_rest_with_ascii_host(rest: &str) -> String {
+    let (authority, suffix) = rest
+        .split_once('/')
+        .map(|(authority, suffix)| (authority, format!("/{suffix}")))
+        .unwrap_or_else(|| (rest, String::new()));
+    format!("{}{}", authority_with_ascii_host(authority), suffix)
+}
+
+fn authority_with_ascii_host(authority: &str) -> String {
+    if authority.starts_with('[') {
+        return authority.to_string();
+    }
+
+    let colon_count = authority.matches(':').count();
+    let (host, port) = if colon_count == 1 {
+        authority
+            .split_once(':')
+            .map(|(host, port)| (host, format!(":{port}")))
+            .unwrap_or((authority, String::new()))
+    } else {
+        (authority, String::new())
+    };
+
+    if host.parse::<IpAddr>().is_ok() || host.is_empty() {
+        return authority.to_string();
+    }
+
+    let ascii_host = idna::domain_to_ascii(host).unwrap_or_else(|_| host.to_string());
+    format!("{ascii_host}{port}")
 }
 
 fn require_non_empty(value: &str, error: ProtocolError) -> Result<&str, ProtocolError> {

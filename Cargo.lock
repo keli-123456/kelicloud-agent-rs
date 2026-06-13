@@ -533,6 +533,7 @@ name = "kelicloud-agent-rs"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "idna",
  "libc",
  "portable-pty",
  "reqwest",

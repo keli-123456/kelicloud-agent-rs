@@ -23,12 +23,32 @@ fn report_ws_url_converts_http_endpoint_to_ws_and_escapes_token() {
 }
 
 #[test]
+fn report_ws_url_converts_idn_host_to_ascii_like_go_agent() {
+    let url = build_report_ws_url("https://例子.测试:8443/base/", "tok").unwrap();
+
+    assert_eq!(
+        url,
+        "wss://xn--fsqu00a.xn--0zwm56d:8443/base/api/clients/report?token=tok"
+    );
+}
+
+#[test]
 fn terminal_ws_url_adds_token_and_terminal_id() {
     let url = build_terminal_ws_url("https://panel.example.com/base/", "tok", "term-1").unwrap();
 
     assert_eq!(
         url,
         "wss://panel.example.com/base/api/clients/terminal?token=tok&id=term-1"
+    );
+}
+
+#[test]
+fn terminal_ws_url_converts_idn_host_to_ascii_like_go_agent() {
+    let url = build_terminal_ws_url("https://中文域名.com/base/", "tok", "term-1").unwrap();
+
+    assert_eq!(
+        url,
+        "wss://xn--fiq06l2rdsvs.com/base/api/clients/terminal?token=tok&id=term-1"
     );
 }
 
