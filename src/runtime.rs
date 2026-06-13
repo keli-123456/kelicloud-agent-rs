@@ -44,6 +44,37 @@ pub trait ControlMessageHandler {
     fn handle(&mut self, message: BackendMessage);
 }
 
+#[derive(Debug)]
+pub struct ChainControlMessageHandler<A, B> {
+    first: A,
+    second: B,
+}
+
+impl<A, B> ChainControlMessageHandler<A, B> {
+    pub fn new(first: A, second: B) -> Self {
+        Self { first, second }
+    }
+
+    pub fn first(&self) -> &A {
+        &self.first
+    }
+
+    pub fn second(&self) -> &B {
+        &self.second
+    }
+}
+
+impl<A, B> ControlMessageHandler for ChainControlMessageHandler<A, B>
+where
+    A: ControlMessageHandler,
+    B: ControlMessageHandler,
+{
+    fn handle(&mut self, message: BackendMessage) {
+        self.first.handle(message.clone());
+        self.second.handle(message);
+    }
+}
+
 pub trait BasicInfoProvider {
     fn basic_info(&self) -> BasicInfo;
 }

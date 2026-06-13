@@ -4,9 +4,13 @@ use kelicloud_agent_rs::cn_connectivity::{
 use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::ping::LinuxPingExecutor;
 use kelicloud_agent_rs::runtime::{
-    run_once_with_ping, run_report_cycles_with_ping_delay, startup_summary, ThreadLoopDelay,
+    run_once_with_ping, run_report_cycles_with_ping_delay, startup_summary,
+    ChainControlMessageHandler, ThreadLoopDelay,
 };
 use kelicloud_agent_rs::system::{SystemReportGenerator, SystemSnapshotCollector};
+use kelicloud_agent_rs::task::{
+    HttpTaskResultUploader, LinuxTaskExecutor, TaskControlMessageHandler,
+};
 use kelicloud_agent_rs::transport::{ReqwestHttpTransport, TungsteniteWebSocketTransport};
 
 fn main() {
@@ -47,7 +51,17 @@ fn main() {
         }
     };
     let mut websocket = TungsteniteWebSocketTransport::from_config(&config);
-    let mut handler = CnConnectivityControlMessageHandler::new(cn_connectivity_state);
+    let task_uploader = match HttpTaskResultUploader::from_config(&config) {
+        Ok(uploader) => uploader,
+        Err(error) => {
+            eprintln!("task uploader error: {error}");
+            std::process::exit(2);
+        }
+    };
+    let cn_handler = CnConnectivityControlMessageHandler::new(cn_connectivity_state);
+    let task_handler =
+        TaskControlMessageHandler::new(LinuxTaskExecutor, task_uploader, config.disable_web_ssh);
+    let mut handler = ChainControlMessageHandler::new(cn_handler, task_handler);
     let ping_executor = LinuxPingExecutor::default();
 
     let result = if config.once {

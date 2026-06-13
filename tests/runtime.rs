@@ -7,7 +7,8 @@ use kelicloud_agent_rs::report::{
 };
 use kelicloud_agent_rs::runtime::{
     run_once, run_once_with_ping, run_report_cycles, run_report_cycles_with_delay,
-    run_report_cycles_with_ping_delay, startup_summary, ControlMessageHandler, LoopDelay,
+    run_report_cycles_with_ping_delay, startup_summary, ChainControlMessageHandler,
+    ControlMessageHandler, LoopDelay,
 };
 use kelicloud_agent_rs::transport::{
     HeaderPair, HttpTransport, ReportSocket, TransportError, WebSocketTransport,
@@ -204,6 +205,32 @@ fn run_once_with_ping_executes_ping_message_and_sends_result() {
     assert_eq!(sent_ping_results.borrow()[0].ping_type, "tcp");
     assert_eq!(sent_ping_results.borrow()[0].value, 29);
     assert!(handler.messages.is_empty());
+}
+
+#[test]
+fn chain_control_message_handler_forwards_messages_to_both_handlers() {
+    let mut handler =
+        ChainControlMessageHandler::new(RecordingHandler::default(), RecordingHandler::default());
+
+    handler.handle(BackendMessage::Exec {
+        task_id: "task-1".to_string(),
+        command: "uptime".to_string(),
+    });
+
+    assert_eq!(
+        handler.first().messages,
+        vec![BackendMessage::Exec {
+            task_id: "task-1".to_string(),
+            command: "uptime".to_string(),
+        }]
+    );
+    assert_eq!(
+        handler.second().messages,
+        vec![BackendMessage::Exec {
+            task_id: "task-1".to_string(),
+            command: "uptime".to_string(),
+        }]
+    );
 }
 
 #[test]
