@@ -245,7 +245,6 @@ import json
 import os
 print(json.dumps({"username": os.environ["ADMIN_USERNAME"], "password": os.environ["ADMIN_PASSWORD"]}))
 ')"
-)"
 
     local response
     response="$(curl -fsS -c "${COOKIE_JAR}" \
