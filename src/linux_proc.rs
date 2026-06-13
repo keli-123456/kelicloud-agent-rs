@@ -2898,11 +2898,28 @@ fn is_leap_year(year: i32) -> bool {
 }
 
 fn xml_tag_raw<'a>(contents: &'a str, tag: &str) -> Option<&'a str> {
-    let open = format!("<{tag}>");
     let close = format!("</{tag}>");
-    let (_, after_open) = contents.split_once(&open)?;
+    let after_open = after_xml_open_tag(contents, tag)?;
     let (value, _) = after_open.split_once(&close)?;
     Some(value)
+}
+
+fn after_xml_open_tag<'a>(contents: &'a str, tag: &str) -> Option<&'a str> {
+    let prefix = format!("<{tag}");
+    let mut search_start = 0;
+    while let Some(relative_start) = contents[search_start..].find(&prefix) {
+        let tag_start = search_start + relative_start;
+        let after_name = tag_start + prefix.len();
+        let next_byte = contents.as_bytes().get(after_name)?;
+        if !matches!(next_byte, b'>' | b' ' | b'\t' | b'\r' | b'\n') {
+            search_start = after_name;
+            continue;
+        }
+        let tag_end = contents[after_name..].find('>')? + after_name + 1;
+        return Some(&contents[tag_end..]);
+    }
+
+    None
 }
 
 fn xml_tag_text(contents: &str, tag: &str) -> Option<String> {

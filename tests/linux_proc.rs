@@ -921,6 +921,36 @@ fn parse_nvidia_smi_xml_accepts_gpu_tags_with_attributes_like_go_agent() {
 }
 
 #[test]
+fn parse_nvidia_smi_xml_accepts_child_tags_with_attributes_like_go_agent() {
+    let xml = r#"
+<nvidia_smi_log>
+  <gpu id="00000000:01:00.0">
+    <product_name source="nvidia-smi">NVIDIA L40S</product_name>
+    <fb_memory_usage unit="MiB">
+      <total unit="MiB">46068 MiB</total>
+      <used unit="MiB">1024 MiB</used>
+    </fb_memory_usage>
+    <utilization sample="current">
+      <gpu_util unit="%">12 %</gpu_util>
+    </utilization>
+    <temperature sensor="gpu">
+      <gpu_temp unit="C">39 C</gpu_temp>
+    </temperature>
+  </gpu>
+</nvidia_smi_log>
+"#;
+
+    let metrics = parse_nvidia_smi_xml(xml);
+
+    assert_eq!(metrics.len(), 1);
+    assert_eq!(metrics[0].name, "NVIDIA L40S");
+    assert_eq!(metrics[0].memory_total, 46_068 * 1024 * 1024);
+    assert_eq!(metrics[0].memory_used, 1024 * 1024 * 1024);
+    assert_eq!(metrics[0].utilization, 12.0);
+    assert_eq!(metrics[0].temperature, 39);
+}
+
+#[test]
 fn parse_nvidia_smi_xml_uses_framebuffer_memory_like_go_agent() {
     let xml = r#"
 <nvidia_smi_log>
