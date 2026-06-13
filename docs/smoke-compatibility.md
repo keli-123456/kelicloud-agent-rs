@@ -83,10 +83,28 @@ dynamic smoke produces logs:
 
 2. Auto-discovery and token recovery
 
-   The Go agent has auto-discovery and invalid-token recovery hooks. The Rust
-   prototype currently requires a fixed endpoint and token. This is not a
-   problem for a static-token smoke test, but it is a deployment compatibility
-   gap if production relies on auto-discovery.
+   The Go agent supports `--auto-discovery` / `AGENT_AUTO_DISCOVERY_KEY`. On
+   startup it loads `auto-discovery.json` from the executable directory when
+   present; otherwise it registers with
+   `POST /api/clients/register?name=<hostname>`, sends `{"key":"..."}`, sets
+   `Authorization: Bearer <auto-discovery-key>`, includes Cloudflare Access
+   headers when configured, stores the returned `{uuid, token}`, and then uses
+   that token for normal report traffic.
+
+   The Go agent also classifies HTTP 401 responses whose body mentions
+   `invalid token`, `token is required`, or `failed to validate token` during
+   basic-info upload and report WebSocket connection. When auto-discovery is
+   enabled, it clears the cached `auto-discovery.json`, re-registers, and
+   retries with the new token. If another thread has already rotated the token,
+   it treats the stale-token error as recovered.
+
+   The Rust prototype currently requires a fixed endpoint and token. It ignores
+   Go-only flags such as `--auto-discovery`, has no `AGENT_AUTO_DISCOVERY_KEY`
+   field, does not persist `auto-discovery.json`, and surfaces 401 responses as
+   generic transport failures rather than typed invalid-token errors. This is
+   not a blocker for a static-token smoke test, but it is a deployment
+   compatibility gap if production relies on auto-discovery or stale-token
+   recovery.
 
 3. Auto-update
 
