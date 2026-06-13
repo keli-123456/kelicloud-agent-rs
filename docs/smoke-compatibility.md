@@ -16,6 +16,7 @@ needs `KELICLOUD_SMOKE_TOKEN` and either the `endpoint` workflow input or
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_SECRET`.
 - Optional inputs: `endpoint`, `mode`, `duration`, `expect_success_log`,
   `custom_dns`, `insecure`.
+- Smoke log summarizer: `cargo run --locked --bin smoke-summary -- <log-file>`.
 
 ## Static Parity Evidence
 
@@ -65,6 +66,11 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
   uploads and WebSSH terminal connection attempts.
 - Cloudflare Access headers are supported for basic info, report WebSocket,
   terminal WebSocket, and task result upload.
+- The live smoke path emits non-secret `smoke:` milestone lines for basic-info
+  upload, report WebSocket connection, report sends, ping result upload, task
+  result upload, terminal session start, and CN connectivity config receipt.
+  `scripts/smoke-live.sh` turns those logs into a Markdown `*.summary.md`
+  compatibility summary.
 
 ## First Dynamic Smoke Checks
 
@@ -85,6 +91,8 @@ Run these during the first `live` smoke:
    cycle.
 10. If Cloudflare Access protects the panel, all HTTP and WebSocket paths work
     with the configured CF Access secrets.
+11. Review the generated `*.summary.md`; any "missing" control-plane evidence
+    should become the first compatibility gap to reproduce against the Go agent.
 
 ## First Compatibility Watchlist
 

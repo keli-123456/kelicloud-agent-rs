@@ -2,6 +2,7 @@ use crate::config::AgentConfig;
 use crate::linux_proc::CustomDnsResolver;
 use crate::protocol::BackendMessage;
 use crate::runtime::ControlMessageHandler;
+use crate::smoke_summary::smoke_event_line;
 use crate::token::SharedAgentToken;
 use crate::transport::{access_headers, HeaderPair, TransportError};
 use chrono::Utc;
@@ -350,7 +351,17 @@ impl TaskResultUploader for HttpTaskResultUploader {
             }
 
             match request.send() {
-                Ok(response) if response.status().is_success() => return Ok(()),
+                Ok(response) if response.status().is_success() => {
+                    let exit_code = result.exit_code.to_string();
+                    println!(
+                        "{}",
+                        smoke_event_line(
+                            "task_result_uploaded",
+                            &[("task_id", &result.task_id), ("exit_code", &exit_code)]
+                        )
+                    );
+                    return Ok(());
+                }
                 Ok(response) => {
                     let status = response.status();
                     let body = response.text().unwrap_or_default();

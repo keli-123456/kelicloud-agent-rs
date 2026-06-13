@@ -299,6 +299,24 @@ check_result() {
     fi
 }
 
+print_summary() {
+    local root="$1"
+    local log_file="$2"
+    local summary_file="${log_file%.log}.summary.md"
+
+    if ! command -v cargo >/dev/null 2>&1; then
+        log "Smoke compatibility summary skipped: cargo command not found."
+        return
+    fi
+
+    log "Smoke compatibility summary:"
+    if ! (cd "$root" && cargo run --locked --quiet --bin smoke-summary -- "$log_file") | tee "$summary_file"; then
+        log "warning: failed to generate smoke compatibility summary"
+    else
+        log "Smoke compatibility summary file: ${summary_file}"
+    fi
+}
+
 main() {
     parse_args "$@"
     validate_config
@@ -335,6 +353,7 @@ main() {
     fi
 
     check_result "$status" "$log_file"
+    print_summary "$root" "$log_file"
     log "Smoke test finished. Log file: ${log_file}"
 }
 

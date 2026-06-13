@@ -22,7 +22,7 @@ fn smoke_workflow_runs_live_script_on_manual_dispatch() {
     assert!(workflow.contains("--custom-dns \"${SMOKE_CUSTOM_DNS}\""));
     assert!(workflow.contains("--insecure"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
-    assert!(workflow.contains("smoke-logs/*.log"));
+    assert!(workflow.contains("smoke-logs/*"));
 }
 
 fn smoke_workflow_path() -> PathBuf {

@@ -2,6 +2,7 @@ use crate::ping::{LinuxPingExecutor, PingExecutor, PingTask};
 use crate::protocol::BackendMessage;
 use crate::report::{Report, ReportGenerator};
 use crate::runtime::ControlMessageHandler;
+use crate::smoke_summary::smoke_event_line;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -264,6 +265,14 @@ impl ControlMessageHandler for CnConnectivityControlMessageHandler {
             timeout_seconds,
         } = message
         {
+            let enabled_text = if enabled { "true" } else { "false" };
+            println!(
+                "{}",
+                smoke_event_line(
+                    "cn_connectivity_config_received",
+                    &[("enabled", enabled_text)]
+                )
+            );
             self.state.update_config(
                 enabled,
                 target.as_deref(),

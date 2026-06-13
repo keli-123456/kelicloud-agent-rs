@@ -7,6 +7,7 @@ pub mod ping;
 pub mod protocol;
 pub mod report;
 pub mod runtime;
+pub mod smoke_summary;
 pub mod system;
 pub mod task;
 pub mod terminal;

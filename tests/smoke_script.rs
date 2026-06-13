@@ -15,6 +15,9 @@ fn smoke_script_documents_live_backend_checks() {
     assert!(script.contains("--expect-success-log"));
     assert!(script.contains("redact_token"));
     assert!(script.contains("agent loop: completed"));
+    assert!(script.contains("smoke-summary"));
+    assert!(script.contains("Smoke compatibility summary"));
+    assert!(script.contains(".summary.md"));
     assert!(script.contains("timeout"));
 }
 

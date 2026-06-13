@@ -146,6 +146,17 @@ reached as success because the normal agent loop is expected to keep running.
 Use `docs/smoke-compatibility.md` as the first-run checklist and compatibility
 watchlist.
 
+After a successful run, the smoke script prints a Markdown compatibility
+summary and writes a sibling `*.summary.md` file next to the captured log. The
+summary is based on non-secret `smoke:` milestone lines from the agent, such as
+basic-info upload, report WebSocket connection, report send, ping result upload,
+task result upload, terminal session start, and CN connectivity config receipt.
+You can also summarize an existing log directly:
+
+```bash
+cargo run --locked --bin smoke-summary -- /tmp/kelicloud-agent-rs-smoke.example.log
+```
+
 You can also run the same smoke test from GitHub Actions when you do not have a
 Linux shell on your workstation:
 
@@ -159,6 +170,7 @@ Linux shell on your workstation:
 5. If `KELICLOUD_SMOKE_ENDPOINT` is not set, fill the `endpoint` workflow input.
 6. Fill optional `custom_dns` or set `insecure` when the target environment needs them.
 7. Download the `kelicloud-agent-rs-smoke-logs` artifact after the run.
+   It includes both raw `*.log` files and generated `*.summary.md` files.
 
 ## Release Builds
 

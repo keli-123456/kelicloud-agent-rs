@@ -9,6 +9,7 @@ use crate::config::AgentConfig;
 use crate::ping::PingResult;
 use crate::protocol::BackendMessage;
 use crate::report::{BasicInfo, Report};
+use crate::smoke_summary::smoke_event_line;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderName, HeaderValue};
 use tungstenite::stream::MaybeTlsStream;
@@ -158,6 +159,7 @@ impl HttpTransport for ReqwestHttpTransport {
             .send()
             .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
         if response.status().is_success() {
+            println!("{}", smoke_event_line("basic_info_uploaded", &[]));
             return Ok(());
         }
 
@@ -213,6 +215,7 @@ impl WebSocketTransport for TungsteniteWebSocketTransport {
         }
 
         let (socket, _response) = connect_websocket_request(request, &self.custom_dns)?;
+        println!("{}", smoke_event_line("report_websocket_connected", &[]));
         Ok(TungsteniteReportSocket {
             socket,
             read_timeout: Duration::from_millis(100),
@@ -231,7 +234,9 @@ impl ReportSocket for TungsteniteReportSocket {
             .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
         self.socket
             .send(Message::Text(payload.into()))
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        println!("{}", smoke_event_line("report_sent", &[]));
+        Ok(())
     }
 
     fn read_message(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
@@ -259,9 +264,19 @@ impl ReportSocket for TungsteniteReportSocket {
     fn send_ping_result(&mut self, result: &PingResult) -> Result<(), TransportError> {
         let payload = serde_json::to_string(result)
             .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        let task_id = result.task_id.to_string();
+        let value = result.value.to_string();
         self.socket
             .send(Message::Text(payload.into()))
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        println!(
+            "{}",
+            smoke_event_line(
+                "ping_result_uploaded",
+                &[("task_id", &task_id), ("value", &value)]
+            )
+        );
+        Ok(())
     }
 }
 

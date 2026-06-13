@@ -1,6 +1,7 @@
 use crate::config::AgentConfig;
 use crate::protocol::{build_terminal_ws_url, BackendMessage, ProtocolError};
 use crate::runtime::ControlMessageHandler;
+use crate::smoke_summary::smoke_event_line;
 use crate::token::SharedAgentToken;
 use crate::transport::{access_headers, connect_websocket_request, HeaderPair, TransportError};
 use serde::Deserialize;
@@ -182,6 +183,10 @@ impl TerminalConnector for TungsteniteTerminalConnector {
         }
 
         let (mut socket, _response) = connect_websocket_request(request, &self.custom_dns)?;
+        println!(
+            "{}",
+            smoke_event_line("terminal_session_started", &[("request_id", request_id)])
+        );
         if remote_control_disabled {
             socket
                 .send(Message::Text(WEB_SSH_DISABLED_MESSAGE.to_string().into()))

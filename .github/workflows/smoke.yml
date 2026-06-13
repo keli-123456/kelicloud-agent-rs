@@ -117,5 +117,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kelicloud-agent-rs-smoke-logs
-          path: smoke-logs/*.log
+          path: smoke-logs/*
           if-no-files-found: ignore
