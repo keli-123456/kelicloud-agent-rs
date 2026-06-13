@@ -307,6 +307,31 @@ fn config_reads_go_agent_metric_options_from_environment() {
 }
 
 #[test]
+fn config_env_booleans_match_go_agent_true_and_one_only() {
+    let config = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_IGNORE_UNSAFE_CERT" => Some("yes".to_string()),
+        "AGENT_DISABLE_WEB_SSH" => Some("on".to_string()),
+        "AGENT_GET_IP_ADDR_FROM_NIC" => Some("y".to_string()),
+        "AGENT_MEMORY_INCLUDE_CACHE" => Some("yes".to_string()),
+        "AGENT_MEMORY_REPORT_RAW_USED" => Some("on".to_string()),
+        "AGENT_ENABLE_GPU" => Some("y".to_string()),
+        "AGENT_ONCE" => Some("yes".to_string()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert!(!config.insecure);
+    assert!(!config.disable_web_ssh);
+    assert!(!config.get_ip_addr_from_nic);
+    assert!(!config.memory_include_cache);
+    assert!(!config.memory_report_raw_used);
+    assert!(!config.enable_gpu);
+    assert!(!config.once);
+}
+
+#[test]
 fn config_file_overrides_args_and_env_like_go_agent_json_config() {
     let path = std::env::temp_dir().join(format!(
         "kelicloud-agent-rs-config-{}.json",

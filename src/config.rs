@@ -505,10 +505,7 @@ fn clean_config_string(value: String) -> String {
 }
 
 fn parse_bool(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "y" | "on"
-    )
+    matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true")
 }
 
 fn parse_env_f64<F>(env_lookup: &F, key: &'static str, default: f64) -> Result<f64, ConfigError>
