@@ -56,6 +56,48 @@ Supported flags:
 - `--month-rotate <day>` or `AGENT_MONTH_ROTATE`
 - `--host-proc <path>` or `HOST_PROC`
 
+## Linux Install
+
+The installer is Linux-only and currently targets systemd:
+
+```bash
+sudo ./install.sh install \
+  --endpoint https://panel.example.com \
+  --token TOKEN
+```
+
+By default it installs:
+
+- Binary: `/usr/local/bin/kelicloud-agent-rs`
+- Environment file: `/etc/kelicloud-agent-rs/config.env`
+- Service unit: `/etc/systemd/system/kelicloud-agent-rs.service`
+
+To install a locally built binary instead of downloading a release asset:
+
+```bash
+cargo build --release
+sudo ./install.sh install \
+  --source-binary target/release/kelicloud-agent-rs \
+  --endpoint https://panel.example.com \
+  --token TOKEN
+```
+
+Service operations:
+
+```bash
+sudo ./install.sh restart
+./install.sh status
+sudo ./install.sh uninstall
+sudo ./install.sh uninstall --keep-config
+```
+
+Installer render helpers are side-effect free and useful for review or CI:
+
+```bash
+./install.sh render-service
+./install.sh render-env --endpoint https://panel.example.com --token TOKEN
+```
+
 ## Verification
 
 ```bash
@@ -68,6 +110,6 @@ GitHub Actions runs the same checks on Linux for pushes to `main` and pull reque
 
 ## Next Milestones
 
-1. Add a Linux install script and systemd service template.
-2. Add release builds for common Linux architectures.
-3. Run an end-to-end smoke test against a real kelicloud backend.
+1. Add release builds for common Linux architectures.
+2. Run an end-to-end smoke test against a real kelicloud backend.
+3. Expand installer support after systemd deployment is stable.
