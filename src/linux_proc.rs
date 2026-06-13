@@ -270,27 +270,33 @@ pub fn proc_metrics_from_parts(
 }
 
 pub fn parse_cpuinfo_name(contents: &str) -> Option<String> {
-    let mut processor_fallback = None;
     let mut vendor_id = String::new();
     let mut family = String::new();
 
     for line in contents.lines() {
+        if line.starts_with("Model\t")
+            || line.starts_with("Hardware\t")
+            || line.starts_with("Processor\t")
+        {
+            if let Some((_, value)) = line.split_once(':') {
+                let name = value.trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+
         let Some((key, value)) = line.split_once(':') else {
             continue;
         };
-        let normalized_key = key.trim().to_ascii_lowercase();
         let name = value.trim();
         if name.is_empty() {
             continue;
         }
 
-        match normalized_key.as_str() {
-            "model name" | "model" | "hardware" => return Some(name.to_string()),
+        match key.trim() {
             "vendor_id" => vendor_id = name.to_string(),
             "cpu family" => family = name.to_string(),
-            "processor" if !name.chars().all(|ch| ch.is_ascii_digit()) => {
-                processor_fallback.get_or_insert_with(|| name.to_string());
-            }
             _ => {}
         }
     }
@@ -300,7 +306,7 @@ pub fn parse_cpuinfo_name(contents: &str) -> Option<String> {
         return Some(vendor_family);
     }
 
-    processor_fallback
+    None
 }
 
 pub fn parse_lscpu_model_name(contents: &str) -> Option<String> {

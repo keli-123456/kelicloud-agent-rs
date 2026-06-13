@@ -154,17 +154,19 @@ cpu0 999 999 999 999
 }
 
 #[test]
-fn parse_cpuinfo_name_matches_go_agent_fallback_keys() {
+fn parse_cpuinfo_name_matches_go_agent_proc_fallback_prefixes() {
     let contents = r#"
 processor   : 0
 model name  : AMD EPYC 7763 64-Core Processor
-Hardware    : ignored fallback
+Hardware	: ARMv8 Processor rev 1
 "#;
 
     assert_eq!(
         parse_cpuinfo_name(contents).as_deref(),
-        Some("AMD EPYC 7763 64-Core Processor")
+        Some("ARMv8 Processor rev 1")
     );
+
+    assert_eq!(parse_cpuinfo_name("Processor\t: 0\n").as_deref(), Some("0"));
 }
 
 #[test]
