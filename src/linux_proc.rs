@@ -1,11 +1,13 @@
 use std::collections::HashMap;
+use std::error::Error;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
 use std::fs;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::process::Command;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Datelike, Local, TimeZone};
 
@@ -1506,11 +1508,20 @@ pub fn collect_ip_addresses_with_filter(filter: &NetworkFilter) -> Option<IpAddr
 }
 
 pub fn collect_public_ip_addresses() -> IpAddresses {
-    let client = match reqwest::blocking::Client::builder()
+    collect_public_ip_addresses_with_dns("")
+}
+
+pub fn collect_public_ip_addresses_with_dns(custom_dns: &str) -> IpAddresses {
+    let mut builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent("curl/8.0.1")
-        .build()
-    {
+        .user_agent("curl/8.0.1");
+
+    let custom_dns = custom_dns.trim();
+    if !custom_dns.is_empty() {
+        builder = builder.dns_resolver(Arc::new(CustomDnsResolver::new(custom_dns)));
+    }
+
+    let client = match builder.build() {
         Ok(client) => client,
         Err(_) => return IpAddresses::default(),
     };
@@ -1518,6 +1529,249 @@ pub fn collect_public_ip_addresses() -> IpAddresses {
     IpAddresses {
         ipv4: probe_public_ipv4(&client).unwrap_or_default(),
         ipv6: probe_public_ipv6(&client).unwrap_or_default(),
+    }
+}
+
+#[derive(Debug)]
+struct CustomDnsResolver {
+    server: String,
+    timeout: Duration,
+}
+
+impl CustomDnsResolver {
+    fn new(server: &str) -> Self {
+        Self {
+            server: normalize_dns_server(server),
+            timeout: Duration::from_secs(10),
+        }
+    }
+}
+
+impl reqwest::dns::Resolve for CustomDnsResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let result = resolve_host_with_dns_server(&self.server, name.as_str(), self.timeout)
+            .map(|addrs| Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+            .map_err(|error| Box::new(error) as Box<dyn Error + Send + Sync>);
+        Box::pin(std::future::ready(result))
+    }
+}
+
+pub fn normalize_dns_server(server: &str) -> String {
+    let server = server.trim();
+    if (server.starts_with('[') && server.contains("]:"))
+        || (server.matches(':').count() == 1 && !server.contains(']'))
+    {
+        return server.to_string();
+    }
+    if server.matches(':').count() >= 2 && !server.contains(']') {
+        return format!("[{server}]:53");
+    }
+    if !server.contains(':') {
+        return format!("{server}:53");
+    }
+    server.to_string()
+}
+
+pub fn resolve_host_with_dns_server(
+    dns_server: &str,
+    host: &str,
+    timeout: Duration,
+) -> std::io::Result<Vec<SocketAddr>> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(vec![SocketAddr::new(ip, 0)]);
+    }
+
+    let dns_server = normalize_dns_server(dns_server);
+    let server_addr = dns_server
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty DNS server"))?;
+
+    let mut addrs = Vec::new();
+    addrs.extend(query_dns_records(server_addr, host, 1, timeout)?);
+    addrs.extend(query_dns_records(server_addr, host, 28, timeout)?);
+
+    if addrs.is_empty() {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "DNS response contained no address records",
+        ))
+    } else {
+        Ok(addrs)
+    }
+}
+
+fn query_dns_records(
+    server_addr: SocketAddr,
+    host: &str,
+    qtype: u16,
+    timeout: Duration,
+) -> std::io::Result<Vec<SocketAddr>> {
+    let query_id = dns_query_id(host, qtype);
+    let query = build_dns_query(query_id, host, qtype)?;
+    let bind_addr = if server_addr.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    };
+    let socket = UdpSocket::bind(bind_addr)?;
+    socket.set_read_timeout(Some(timeout))?;
+    socket.set_write_timeout(Some(timeout))?;
+    socket.send_to(&query, server_addr)?;
+
+    let mut response = [0_u8; 1232];
+    let (len, _) = socket.recv_from(&mut response)?;
+    parse_dns_response(&response[..len], query_id, qtype)
+}
+
+fn dns_query_id(host: &str, qtype: u16) -> u16 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos())
+        .unwrap_or(0);
+    host.bytes().fold((nanos as u16) ^ qtype, |acc, byte| {
+        acc.wrapping_mul(31) ^ byte as u16
+    })
+}
+
+fn build_dns_query(id: u16, host: &str, qtype: u16) -> std::io::Result<Vec<u8>> {
+    let mut packet = Vec::with_capacity(512);
+    packet.extend_from_slice(&id.to_be_bytes());
+    packet.extend_from_slice(&0x0100_u16.to_be_bytes());
+    packet.extend_from_slice(&1_u16.to_be_bytes());
+    packet.extend_from_slice(&0_u16.to_be_bytes());
+    packet.extend_from_slice(&0_u16.to_be_bytes());
+    packet.extend_from_slice(&0_u16.to_be_bytes());
+
+    for label in host.trim_end_matches('.').split('.') {
+        if label.is_empty() || label.len() > 63 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid DNS name",
+            ));
+        }
+        packet.push(label.len() as u8);
+        packet.extend_from_slice(label.as_bytes());
+    }
+    packet.push(0);
+    packet.extend_from_slice(&qtype.to_be_bytes());
+    packet.extend_from_slice(&1_u16.to_be_bytes());
+    Ok(packet)
+}
+
+fn parse_dns_response(
+    packet: &[u8],
+    expected_id: u16,
+    qtype: u16,
+) -> std::io::Result<Vec<SocketAddr>> {
+    if packet.len() < 12 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "short DNS response",
+        ));
+    }
+    let response_id = u16::from_be_bytes([packet[0], packet[1]]);
+    if response_id != expected_id {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "mismatched DNS response id",
+        ));
+    }
+
+    let flags = u16::from_be_bytes([packet[2], packet[3]]);
+    if flags & 0x000f != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "DNS response returned an error",
+        ));
+    }
+
+    let questions = u16::from_be_bytes([packet[4], packet[5]]) as usize;
+    let answers = u16::from_be_bytes([packet[6], packet[7]]) as usize;
+    let mut offset = 12;
+    for _ in 0..questions {
+        offset = skip_dns_name(packet, offset)?;
+        offset = offset.checked_add(4).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "DNS question overflow")
+        })?;
+        if offset > packet.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "truncated DNS question",
+            ));
+        }
+    }
+
+    let mut addrs = Vec::new();
+    for _ in 0..answers {
+        offset = skip_dns_name(packet, offset)?;
+        if offset + 10 > packet.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "truncated DNS answer",
+            ));
+        }
+        let answer_type = u16::from_be_bytes([packet[offset], packet[offset + 1]]);
+        let answer_class = u16::from_be_bytes([packet[offset + 2], packet[offset + 3]]);
+        let rdlen = u16::from_be_bytes([packet[offset + 8], packet[offset + 9]]) as usize;
+        offset += 10;
+        if offset + rdlen > packet.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "truncated DNS rdata",
+            ));
+        }
+
+        let rdata = &packet[offset..offset + rdlen];
+        if answer_class == 1 && answer_type == qtype {
+            match (answer_type, rdlen) {
+                (1, 4) => addrs.push(SocketAddr::new(
+                    IpAddr::from([rdata[0], rdata[1], rdata[2], rdata[3]]),
+                    0,
+                )),
+                (28, 16) => {
+                    let mut bytes = [0_u8; 16];
+                    bytes.copy_from_slice(rdata);
+                    addrs.push(SocketAddr::new(IpAddr::from(bytes), 0));
+                }
+                _ => {}
+            }
+        }
+        offset += rdlen;
+    }
+
+    Ok(addrs)
+}
+
+fn skip_dns_name(packet: &[u8], mut offset: usize) -> std::io::Result<usize> {
+    loop {
+        let Some(&len) = packet.get(offset) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "truncated DNS name",
+            ));
+        };
+        if len & 0xC0 == 0xC0 {
+            if packet.get(offset + 1).is_none() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "truncated DNS pointer",
+                ));
+            }
+            return Ok(offset + 2);
+        }
+        if len == 0 {
+            return Ok(offset + 1);
+        }
+        offset = offset.checked_add(1 + len as usize).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "DNS name overflow")
+        })?;
+        if offset > packet.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "truncated DNS label",
+            ));
+        }
     }
 }
 

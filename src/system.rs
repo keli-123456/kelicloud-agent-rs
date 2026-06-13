@@ -50,6 +50,7 @@ pub struct SystemMetricsOptions {
     pub include_mountpoints: String,
     pub custom_ipv4: String,
     pub custom_ipv6: String,
+    pub custom_dns: String,
     pub get_ip_addr_from_nic: bool,
     pub memory_include_cache: bool,
     pub memory_report_raw_used: bool,
@@ -69,6 +70,7 @@ impl Default for SystemMetricsOptions {
             include_mountpoints: String::new(),
             custom_ipv4: String::new(),
             custom_ipv6: String::new(),
+            custom_dns: String::new(),
             get_ip_addr_from_nic: false,
             memory_include_cache: false,
             memory_report_raw_used: false,
@@ -90,6 +92,7 @@ impl From<&AgentConfig> for SystemMetricsOptions {
             include_mountpoints: config.include_mountpoints.clone(),
             custom_ipv4: config.custom_ipv4.clone(),
             custom_ipv6: config.custom_ipv6.clone(),
+            custom_dns: config.custom_dns.clone(),
             get_ip_addr_from_nic: config.get_ip_addr_from_nic,
             memory_include_cache: config.memory_include_cache,
             memory_report_raw_used: config.memory_report_raw_used,
@@ -471,7 +474,7 @@ impl SystemSnapshotCollector {
         let fallback_addresses = if self.metrics.get_ip_addr_from_nic && nic_has_addresses {
             crate::linux_proc::IpAddresses::default()
         } else if self.metrics.public_ip_probe {
-            crate::linux_proc::collect_public_ip_addresses()
+            crate::linux_proc::collect_public_ip_addresses_with_dns(&self.metrics.custom_dns)
         } else {
             crate::linux_proc::IpAddresses::default()
         };

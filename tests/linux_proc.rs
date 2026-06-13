@@ -6,16 +6,19 @@ use kelicloud_agent_rs::linux_proc::{
     fnos_os_name_from_markers, go_compatible_disk, go_compatible_ram,
     go_compatible_ram_include_cache, go_compatible_ram_raw_used, go_compatible_swap,
     kernel_version_from_uname_output, linux_supported, network_speed_from_samples,
-    parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output, parse_ip_address_list,
-    parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name, parse_meminfo, parse_net_dev,
-    parse_net_dev_interfaces, parse_net_dev_with_filter, parse_net_static_total_between,
-    parse_nvidia_smi_xml, parse_os_release_pretty_name, parse_public_ipv4_response,
-    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
-    proc_metrics_from_parts, proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
+    normalize_dns_server, parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output,
+    parse_ip_address_list, parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name,
+    parse_meminfo, parse_net_dev, parse_net_dev_interfaces, parse_net_dev_with_filter,
+    parse_net_static_total_between, parse_nvidia_smi_xml, parse_os_release_pretty_name,
+    parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
+    parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
+    reset_date_ymd, reset_timestamp_for_day, resolve_host_with_dns_server,
     sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts, DiskMount, NetworkFilter,
     NetworkTotals,
 };
 use std::fs;
+use std::net::UdpSocket;
+use std::time::Duration;
 
 #[test]
 fn parse_loadavg_extracts_loads_and_process_count() {
@@ -341,6 +344,59 @@ fn parse_public_ipv6_response_extracts_global_ipv6_and_skips_link_local() {
             .as_deref(),
         Some("2607:f358:1a:e::ab0:39b7")
     );
+}
+
+#[test]
+fn normalize_dns_server_matches_go_agent_custom_dns_flag() {
+    assert_eq!(normalize_dns_server("1.1.1.1"), "1.1.1.1:53");
+    assert_eq!(normalize_dns_server("8.8.8.8:5353"), "8.8.8.8:5353");
+    assert_eq!(
+        normalize_dns_server("2606:4700:4700::1111"),
+        "[2606:4700:4700::1111]:53"
+    );
+    assert_eq!(
+        normalize_dns_server("[2606:4700:4700::1111]:5353"),
+        "[2606:4700:4700::1111]:5353"
+    );
+}
+
+#[test]
+fn resolve_host_with_dns_server_uses_the_configured_dns_endpoint() {
+    let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let server = socket.local_addr().unwrap();
+    let handle = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let mut request = [0_u8; 512];
+            let (len, peer) = socket.recv_from(&mut request).unwrap();
+            let mut response = Vec::new();
+            response.extend_from_slice(&request[0..2]);
+            response.extend_from_slice(&[0x81, 0x80]);
+            response.extend_from_slice(&[0x00, 0x01]);
+            let qtype = u16::from_be_bytes([request[len - 4], request[len - 3]]);
+            let answer_count = if qtype == 1 { 1_u16 } else { 0_u16 };
+            response.extend_from_slice(&answer_count.to_be_bytes());
+            response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+            response.extend_from_slice(&request[12..len]);
+
+            if qtype == 1 {
+                response.extend_from_slice(&[0xC0, 0x0C]);
+                response.extend_from_slice(&[0x00, 0x01]);
+                response.extend_from_slice(&[0x00, 0x01]);
+                response.extend_from_slice(&[0x00, 0x00, 0x00, 0x3C]);
+                response.extend_from_slice(&[0x00, 0x04]);
+                response.extend_from_slice(&[203, 0, 113, 10]);
+            }
+
+            socket.send_to(&response, peer).unwrap();
+        }
+    });
+
+    let addrs =
+        resolve_host_with_dns_server(&server.to_string(), "example.com", Duration::from_secs(1))
+            .unwrap();
+
+    assert!(addrs.contains(&"203.0.113.10:0".parse().unwrap()));
+    handle.join().unwrap();
 }
 
 #[test]

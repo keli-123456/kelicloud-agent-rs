@@ -224,6 +224,8 @@ fn system_metrics_options_follow_agent_config() {
             "203.0.113.10",
             "--custom-ipv6",
             "2607:f358:1a:e::ab0:39b7",
+            "--custom-dns",
+            "2606:4700:4700::1111",
             "--get-ip-addr-from-nic",
             "--memory-include-cache",
             "--memory-exclude-bcf",
@@ -245,6 +247,7 @@ fn system_metrics_options_follow_agent_config() {
     assert_eq!(options.include_mountpoints, "/;/data");
     assert_eq!(options.custom_ipv4, "203.0.113.10");
     assert_eq!(options.custom_ipv6, "2607:f358:1a:e::ab0:39b7");
+    assert_eq!(options.custom_dns, "2606:4700:4700::1111");
     assert!(options.get_ip_addr_from_nic);
     assert!(options.memory_include_cache);
     assert!(options.memory_report_raw_used);
