@@ -961,6 +961,25 @@ pub fn go_compatible_swap(info: &ProcMemInfo) -> MemoryValues {
     }
 }
 
+pub fn memory_values_from_meminfo_with_modes(
+    info: &ProcMemInfo,
+    include_cache: bool,
+    report_raw_used: bool,
+) -> Option<(MemoryValues, MemoryValues)> {
+    if info.mem_total <= 0 {
+        return None;
+    }
+
+    let ram = if include_cache {
+        go_compatible_ram_include_cache(info)
+    } else if report_raw_used {
+        go_compatible_ram_raw_used(info)
+    } else {
+        go_compatible_ram(info)
+    };
+    Some((ram, go_compatible_swap(info)))
+}
+
 pub fn go_compatible_disk(mounts: &[DiskMount]) -> DiskValues {
     let mut devices = HashMap::<String, DiskValues>::new();
 
@@ -1369,14 +1388,7 @@ pub fn collect_memory_values_with_modes(
     let meminfo = fs::read_to_string("/proc/meminfo")
         .ok()
         .map(|contents| parse_meminfo(&contents))?;
-    let ram = if include_cache {
-        go_compatible_ram_include_cache(&meminfo)
-    } else if report_raw_used {
-        go_compatible_ram_raw_used(&meminfo)
-    } else {
-        go_compatible_ram(&meminfo)
-    };
-    Some((ram, go_compatible_swap(&meminfo)))
+    memory_values_from_meminfo_with_modes(&meminfo, include_cache, report_raw_used)
 }
 
 pub fn collect_cpuinfo_name() -> Option<String> {
