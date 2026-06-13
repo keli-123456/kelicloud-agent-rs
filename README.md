@@ -98,6 +98,22 @@ Installer render helpers are side-effect free and useful for review or CI:
 ./install.sh render-env --endpoint https://panel.example.com --token TOKEN
 ```
 
+## Release Builds
+
+GitHub Actions publishes Linux binaries when a version tag is pushed:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow builds static musl binaries with `cross` and uploads assets
+that match the installer download names:
+
+- `kelicloud-agent-rs-linux-amd64`
+- `kelicloud-agent-rs-linux-arm64`
+- `kelicloud-agent-rs-linux-armv7`
+
 ## Verification
 
 ```bash
@@ -110,6 +126,6 @@ GitHub Actions runs the same checks on Linux for pushes to `main` and pull reque
 
 ## Next Milestones
 
-1. Add release builds for common Linux architectures.
-2. Run an end-to-end smoke test against a real kelicloud backend.
+1. Run an end-to-end smoke test against a real kelicloud backend.
+2. Add signed checksum files for release assets.
 3. Expand installer support after systemd deployment is stable.
