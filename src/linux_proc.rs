@@ -849,8 +849,12 @@ pub fn parse_nvidia_smi_xml(contents: &str) -> Vec<GpuMetric> {
         .into_iter()
         .map(|gpu| GpuMetric {
             name: xml_tag_text(gpu, "product_name").unwrap_or_default(),
-            memory_total: parse_mib_value(&xml_tag_text(gpu, "total").unwrap_or_default()),
-            memory_used: parse_mib_value(&xml_tag_text(gpu, "used").unwrap_or_default()),
+            memory_total: parse_mib_value(
+                &xml_child_tag_text(gpu, "fb_memory_usage", "total").unwrap_or_default(),
+            ),
+            memory_used: parse_mib_value(
+                &xml_child_tag_text(gpu, "fb_memory_usage", "used").unwrap_or_default(),
+            ),
             utilization: parse_percent_value(&xml_tag_text(gpu, "gpu_util").unwrap_or_default()),
             temperature: parse_temperature_value(
                 &xml_tag_text(gpu, "gpu_temp").unwrap_or_default(),
@@ -2605,6 +2609,11 @@ fn xml_tag_text(contents: &str, tag: &str) -> Option<String> {
     let (_, after_open) = contents.split_once(&open)?;
     let (value, _) = after_open.split_once(&close)?;
     Some(value.trim().to_string())
+}
+
+fn xml_child_tag_text(contents: &str, parent: &str, tag: &str) -> Option<String> {
+    let parent_body = xml_tag_text(contents, parent)?;
+    xml_tag_text(&parent_body, tag)
 }
 
 fn parse_mib_value(value: &str) -> i64 {
