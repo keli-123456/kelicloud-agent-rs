@@ -2141,17 +2141,30 @@ fn command_output_error(command: &str, output: &std::process::Output) -> String 
     }
 }
 
+const PUBLIC_IPV4_PROBE_URLS: &[&str] = &[
+    "https://edge-ip.html.zone/geo",
+    "https://vercel-ip.html.zone/geo",
+    "http://ipv4.ip.sb",
+    "https://api.ipify.org?format=json",
+];
+
+const PUBLIC_IPV6_PROBE_URLS: &[&str] = &[
+    "https://v6.ip.zxinc.org/info.php?type=json",
+    "https://api6.ipify.org?format=json",
+    "https://ipv6.icanhazip.com",
+    "https://api-ipv6.ip.sb/geoip",
+];
+
+pub fn public_ipv4_probe_urls() -> &'static [&'static str] {
+    PUBLIC_IPV4_PROBE_URLS
+}
+
+pub fn public_ipv6_probe_urls() -> &'static [&'static str] {
+    PUBLIC_IPV6_PROBE_URLS
+}
+
 fn probe_public_ipv4(client: &reqwest::blocking::Client) -> Option<String> {
-    const APIS: &[&str] = &[
-        "https://www.visa.cn/cdn-cgi/trace",
-        "https://www.qualcomm.cn/cdn-cgi/trace",
-        "https://www.toutiao.com/stream/widget/local_weather/data/",
-        "https://edge-ip.html.zone/geo",
-        "https://vercel-ip.html.zone/geo",
-        "http://ipv4.ip.sb",
-        "https://api.ipify.org?format=json",
-    ];
-    for api in APIS {
+    for api in public_ipv4_probe_urls() {
         let Ok(body) = client.get(*api).send().and_then(|response| response.text()) else {
             continue;
         };
@@ -2163,13 +2176,7 @@ fn probe_public_ipv4(client: &reqwest::blocking::Client) -> Option<String> {
 }
 
 fn probe_public_ipv6(client: &reqwest::blocking::Client) -> Option<String> {
-    const APIS: &[&str] = &[
-        "https://v6.ip.zxinc.org/info.php?type=json",
-        "https://api6.ipify.org?format=json",
-        "https://ipv6.icanhazip.com",
-        "https://api-ipv6.ip.sb/geoip",
-    ];
-    for api in APIS {
+    for api in public_ipv6_probe_urls() {
         let Ok(body) = client.get(*api).send().and_then(|response| response.text()) else {
             continue;
         };

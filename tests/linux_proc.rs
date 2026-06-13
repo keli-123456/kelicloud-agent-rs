@@ -14,9 +14,9 @@ use kelicloud_agent_rs::linux_proc::{
     parse_nvidia_smi_xml, parse_os_release_pretty_name, parse_proc_stat_cpu_sample,
     parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
     parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
-    reset_date_ymd, reset_timestamp_for_day, resolve_host_with_dns_server,
-    sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts, DiskMount, MemoryValues,
-    NetworkFilter, NetworkTotals,
+    public_ipv4_probe_urls, public_ipv6_probe_urls, reset_date_ymd, reset_timestamp_for_day,
+    resolve_host_with_dns_server, sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts,
+    DiskMount, MemoryValues, NetworkFilter, NetworkTotals,
 };
 use std::fs;
 use std::net::UdpSocket;
@@ -462,6 +462,28 @@ fn parse_public_ipv6_response_matches_go_agent_first_regex_match() {
     assert_eq!(
         parse_public_ipv6_response("ip=2001:db8:0:1:2:3:4:5:6\n").as_deref(),
         Some("2001:db8:0:1:2:3:4:5")
+    );
+}
+
+#[test]
+fn public_ip_probe_urls_match_go_agent_order() {
+    assert_eq!(
+        public_ipv4_probe_urls(),
+        &[
+            "https://edge-ip.html.zone/geo",
+            "https://vercel-ip.html.zone/geo",
+            "http://ipv4.ip.sb",
+            "https://api.ipify.org?format=json",
+        ]
+    );
+    assert_eq!(
+        public_ipv6_probe_urls(),
+        &[
+            "https://v6.ip.zxinc.org/info.php?type=json",
+            "https://api6.ipify.org?format=json",
+            "https://ipv6.icanhazip.com",
+            "https://api-ipv6.ip.sb/geoip",
+        ]
     );
 }
 
