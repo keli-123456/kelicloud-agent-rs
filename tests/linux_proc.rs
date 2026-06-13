@@ -1,8 +1,9 @@
 use chrono::{Local, TimeZone};
 use kelicloud_agent_rs::linux_proc::{
-    android_os_name_from_build_prop, collect_proc_metrics_sample_with_filter_and_proc_root,
-    count_process_entries, count_process_entries_in_dir, count_socket_entries,
-    cpu_name_from_sources, cpu_usage_percent_from_proc_stat_samples, detect_container_from_cgroup,
+    android_os_name_from_build_prop, android_os_name_from_getprop_outputs,
+    collect_proc_metrics_sample_with_filter_and_proc_root, count_process_entries,
+    count_process_entries_in_dir, count_socket_entries, cpu_name_from_sources,
+    cpu_usage_percent_from_proc_stat_samples, detect_container_from_cgroup,
     detect_container_from_markers, fnos_os_name_from_markers, go_compatible_disk,
     go_compatible_ram, go_compatible_ram_include_cache, go_compatible_ram_raw_used,
     go_compatible_swap, kernel_version_from_uname_output, linux_supported,
@@ -449,6 +450,15 @@ ro.product.brand=Google
         )
         .as_deref(),
         Some("Android 14 (Google  Pixel 8)")
+    );
+    assert_eq!(
+        android_os_name_from_getprop_outputs(b"\n", Some(b"Pixel 8\n"), Some(b"Google\n"))
+            .as_deref(),
+        Some("Android  (Google Pixel 8)")
+    );
+    assert_eq!(
+        android_os_name_from_getprop_outputs(b"", Some(b"Pixel 8\n"), Some(b"Google\n")),
+        None
     );
 }
 

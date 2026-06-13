@@ -466,6 +466,24 @@ pub fn android_os_name_from_build_prop(contents: &str) -> Option<String> {
     Some(android_os_name_from_parts(&version, &model, &brand))
 }
 
+pub fn android_os_name_from_getprop_outputs(
+    version_output: &[u8],
+    model_output: Option<&[u8]>,
+    brand_output: Option<&[u8]>,
+) -> Option<String> {
+    if version_output.is_empty() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(version_output).trim().to_string();
+    let model = model_output
+        .map(|output| String::from_utf8_lossy(output).trim().to_string())
+        .unwrap_or_default();
+    let brand = brand_output
+        .map(|output| String::from_utf8_lossy(output).trim().to_string())
+        .unwrap_or_default();
+    Some(android_os_name_from_parts(&version, &model, &brand))
+}
+
 pub fn kernel_version_from_uname_output(output: Option<&str>) -> String {
     match output {
         Some(output) => output.trim().to_string(),
@@ -1663,13 +1681,26 @@ fn collect_android_os_name() -> Option<String> {
         .arg("ro.build.version.release")
         .output()
     {
-        if output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !version.is_empty() {
-                let model = getprop_value("ro.product.model");
-                let brand = getprop_value("ro.product.brand");
-                return Some(android_os_name_from_parts(&version, &model, &brand));
-            }
+        if output.status.success() && !output.stdout.is_empty() {
+            let model = Command::new("getprop")
+                .arg("ro.product.model")
+                .output()
+                .ok();
+            let brand = Command::new("getprop")
+                .arg("ro.product.brand")
+                .output()
+                .ok();
+            return android_os_name_from_getprop_outputs(
+                &output.stdout,
+                model
+                    .as_ref()
+                    .filter(|output| output.status.success())
+                    .map(|output| output.stdout.as_slice()),
+                brand
+                    .as_ref()
+                    .filter(|output| output.status.success())
+                    .map(|output| output.stdout.as_slice()),
+            );
         }
     }
 
@@ -2320,16 +2351,6 @@ fn android_os_name_from_parts(version: &str, model: &str, brand: &str) -> String
     }
 
     result
-}
-
-fn getprop_value(key: &str) -> String {
-    Command::new("getprop")
-        .arg(key)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .unwrap_or_default()
 }
 
 #[cfg(target_arch = "x86")]
