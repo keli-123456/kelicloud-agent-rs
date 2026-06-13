@@ -5,6 +5,7 @@ use kelicloud_agent_rs::task::{
     build_task_result_url, HttpTaskResultUploader, LinuxTaskExecutor, TaskControlMessageHandler,
     TaskExecution, TaskExecutor, TaskResult, TaskResultUploader,
 };
+use kelicloud_agent_rs::token::SharedAgentToken;
 use kelicloud_agent_rs::transport::TransportError;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -208,6 +209,46 @@ fn http_task_result_uploader_posts_json_and_access_headers() {
     assert!(request.contains(r#""exit_code":0"#));
 }
 
+#[test]
+fn http_task_result_uploader_uses_updated_shared_token() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let received_for_thread = received.clone();
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            received_for_thread.lock().unwrap().push(request);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        }
+    });
+    let mut config = test_config(endpoint);
+    config.token = "stale-token".to_string();
+    let token = SharedAgentToken::new(config.token.clone());
+    let uploader = HttpTaskResultUploader::from_config_with_token_and_retry_delay(
+        &config,
+        token.clone(),
+        Duration::from_millis(0),
+    )
+    .unwrap();
+
+    uploader
+        .upload_task_result(&task_result("task-stale", "one"))
+        .unwrap();
+    token.set("fresh-token");
+    uploader
+        .upload_task_result(&task_result("task-fresh", "two"))
+        .unwrap();
+    server.join().unwrap();
+
+    let received = received.lock().unwrap();
+    assert!(received[0].starts_with("post /api/clients/task/result?token=stale-token http/1.1"));
+    assert!(received[1].starts_with("post /api/clients/task/result?token=fresh-token http/1.1"));
+}
+
 struct FixedTaskExecutor {
     result: String,
     exit_code: i32,
@@ -330,6 +371,15 @@ fn wait_for_uploaded_count(
         thread::sleep(Duration::from_millis(10));
     }
     false
+}
+
+fn task_result(task_id: &str, result: &str) -> TaskResult {
+    TaskResult {
+        task_id: task_id.to_string(),
+        result: result.to_string(),
+        exit_code: 0,
+        finished_at: "2026-06-13T00:00:00Z".to_string(),
+    }
 }
 
 fn read_http_request(stream: &mut std::net::TcpStream) -> String {

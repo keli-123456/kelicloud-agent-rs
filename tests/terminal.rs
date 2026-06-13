@@ -1,9 +1,13 @@
+use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::protocol::BackendMessage;
 use kelicloud_agent_rs::runtime::ControlMessageHandler;
 use kelicloud_agent_rs::terminal::{
     parse_terminal_client_text, TerminalClientCommand, TerminalConnector,
-    TerminalControlMessageHandler, TerminalError,
+    TerminalControlMessageHandler, TerminalError, TungsteniteTerminalConnector,
 };
+use kelicloud_agent_rs::token::SharedAgentToken;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -96,6 +100,41 @@ fn parse_terminal_client_text_treats_plain_text_as_input() {
     );
 }
 
+#[test]
+fn tungstenite_terminal_connector_uses_updated_shared_token() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let requests_for_thread = requests.clone();
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_ws_handshake(&mut stream);
+            requests_for_thread.lock().unwrap().push(request);
+            stream
+                .write_all(
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+        }
+    });
+    let mut config = test_config(endpoint);
+    config.token = "stale-token".to_string();
+    let token = SharedAgentToken::new(config.token.clone());
+    let connector = TungsteniteTerminalConnector::from_config_with_token(&config, token.clone());
+
+    let _ = connector.start_terminal("term-stale", true);
+    token.set("fresh-token");
+    let _ = connector.start_terminal("term-fresh", true);
+    server.join().unwrap();
+
+    let requests = requests.lock().unwrap();
+    assert!(requests[0]
+        .starts_with("get /api/clients/terminal?token=stale-token&id=term-stale http/1.1"));
+    assert!(requests[1]
+        .starts_with("get /api/clients/terminal?token=fresh-token&id=term-fresh http/1.1"));
+}
+
 #[derive(Clone)]
 struct RecordingTerminalConnector {
     calls: Arc<Mutex<Vec<(String, bool)>>>,
@@ -161,4 +200,50 @@ fn wait_for_call_count(
         thread::sleep(Duration::from_millis(10));
     }
     false
+}
+
+fn read_ws_handshake(stream: &mut std::net::TcpStream) -> String {
+    let mut buffer = Vec::new();
+    let mut chunk = [0; 1024];
+    loop {
+        let count = stream.read(&mut chunk).unwrap();
+        if count == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..count]);
+        if buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+            break;
+        }
+    }
+
+    String::from_utf8_lossy(&buffer).to_ascii_lowercase()
+}
+
+fn test_config(endpoint: String) -> AgentConfig {
+    AgentConfig {
+        endpoint,
+        token: "secret-token-value".to_string(),
+        auto_discovery_key: String::new(),
+        insecure: true,
+        disable_web_ssh: false,
+        interval_seconds: 1.0,
+        max_retries: 0,
+        reconnect_interval_seconds: 5,
+        info_report_interval_minutes: 5,
+        cf_access_client_id: String::new(),
+        cf_access_client_secret: String::new(),
+        include_nics: String::new(),
+        exclude_nics: String::new(),
+        include_mountpoints: String::new(),
+        custom_ipv4: String::new(),
+        custom_ipv6: String::new(),
+        custom_dns: String::new(),
+        get_ip_addr_from_nic: false,
+        memory_include_cache: false,
+        memory_report_raw_used: false,
+        enable_gpu: false,
+        month_rotate: 0,
+        host_proc: String::new(),
+        once: false,
+    }
 }

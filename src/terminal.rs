@@ -1,6 +1,7 @@
 use crate::config::AgentConfig;
 use crate::protocol::{build_terminal_ws_url, BackendMessage, ProtocolError};
 use crate::runtime::ControlMessageHandler;
+use crate::token::SharedAgentToken;
 use crate::transport::{access_headers, connect_websocket_request, HeaderPair, TransportError};
 use serde::Deserialize;
 use std::error::Error;
@@ -142,16 +143,20 @@ pub fn parse_terminal_client_text(bytes: &[u8]) -> TerminalClientCommand {
 #[derive(Debug, Clone)]
 pub struct TungsteniteTerminalConnector {
     endpoint: String,
-    token: String,
+    token: SharedAgentToken,
     headers: Vec<HeaderPair>,
     custom_dns: String,
 }
 
 impl TungsteniteTerminalConnector {
     pub fn from_config(config: &AgentConfig) -> Self {
+        Self::from_config_with_token(config, SharedAgentToken::new(config.token.clone()))
+    }
+
+    pub fn from_config_with_token(config: &AgentConfig, token: SharedAgentToken) -> Self {
         Self {
             endpoint: config.endpoint.clone(),
-            token: config.token.clone(),
+            token,
             headers: access_headers(config),
             custom_dns: config.custom_dns.clone(),
         }
@@ -164,7 +169,7 @@ impl TerminalConnector for TungsteniteTerminalConnector {
         request_id: &str,
         remote_control_disabled: bool,
     ) -> Result<(), TerminalError> {
-        let url = build_terminal_ws_url(&self.endpoint, &self.token, request_id)?;
+        let url = build_terminal_ws_url(&self.endpoint, &self.token.get(), request_id)?;
         let mut request = url.into_client_request().map_err(|error| {
             TerminalError::Transport(TransportError::RequestFailed(error.to_string()))
         })?;

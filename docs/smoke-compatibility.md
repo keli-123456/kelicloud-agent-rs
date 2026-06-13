@@ -59,6 +59,9 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
   the in-memory token, rebuild the failed URL, and retry once with the fresh
   token. If the failed token differs from the current in-memory token, recovery
   treats it as already rotated, matching the Go agent guard.
+- Task result upload and terminal connectors read a shared token at execution
+  time, so auto-discovery token recovery is propagated to later exec result
+  uploads and WebSSH terminal connection attempts.
 - Cloudflare Access headers are supported for basic info, report WebSocket,
   terminal WebSocket, and task result upload.
 
@@ -114,13 +117,12 @@ dynamic smoke produces logs:
    retries with the new token. If another thread has already rotated the token,
    it treats the stale-token error as recovered.
 
-   The Rust prototype now supports the startup registration/cache path above and
-   stale-token recovery for basic-info upload and report WebSocket connection.
-   Live smoke should still verify recovery with a real backend. One remaining
-   compatibility risk is that task result uploaders and terminal connectors are
-   created with the token available at startup; if a token rotates later during
-   the report loop, task result upload and terminal sessions may still use the
-   pre-rotation token until those components are made token-aware.
+   The Rust prototype now supports the startup registration/cache path above,
+   stale-token recovery for basic-info upload and report WebSocket connection,
+   and shared-token propagation to task result upload and terminal connection
+   attempts. Live smoke should still verify recovery with a real backend,
+   especially with an exec task and a WebSSH session after a forced token
+   rotation.
 
 3. Auto-update
 

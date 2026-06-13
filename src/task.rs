@@ -2,6 +2,7 @@ use crate::config::AgentConfig;
 use crate::linux_proc::CustomDnsResolver;
 use crate::protocol::BackendMessage;
 use crate::runtime::ControlMessageHandler;
+use crate::token::SharedAgentToken;
 use crate::transport::{access_headers, HeaderPair, TransportError};
 use chrono::Utc;
 use serde::Serialize;
@@ -280,7 +281,8 @@ where
 #[derive(Debug, Clone)]
 pub struct HttpTaskResultUploader {
     client: reqwest::blocking::Client,
-    url: String,
+    endpoint: String,
+    token: SharedAgentToken,
     headers: Vec<HeaderPair>,
     max_retries: u32,
     retry_delay: Duration,
@@ -295,6 +297,25 @@ impl HttpTaskResultUploader {
         config: &AgentConfig,
         retry_delay: Duration,
     ) -> Result<Self, TransportError> {
+        Self::from_config_with_token_and_retry_delay(
+            config,
+            SharedAgentToken::new(config.token.clone()),
+            retry_delay,
+        )
+    }
+
+    pub fn from_config_with_token(
+        config: &AgentConfig,
+        token: SharedAgentToken,
+    ) -> Result<Self, TransportError> {
+        Self::from_config_with_token_and_retry_delay(config, token, Duration::from_secs(2))
+    }
+
+    pub fn from_config_with_token_and_retry_delay(
+        config: &AgentConfig,
+        token: SharedAgentToken,
+        retry_delay: Duration,
+    ) -> Result<Self, TransportError> {
         let mut builder =
             reqwest::blocking::Client::builder().danger_accept_invalid_certs(config.insecure);
         let custom_dns = config.custom_dns.trim();
@@ -307,7 +328,8 @@ impl HttpTaskResultUploader {
 
         Ok(Self {
             client,
-            url: build_task_result_url(&config.endpoint, &config.token)?,
+            endpoint: config.endpoint.clone(),
+            token,
             headers: access_headers(config),
             max_retries: config.max_retries,
             retry_delay,
@@ -321,7 +343,8 @@ impl TaskResultUploader for HttpTaskResultUploader {
         let mut last_error = None;
 
         for attempt in 1..=total_attempts {
-            let mut request = self.client.post(&self.url).json(result);
+            let url = build_task_result_url(&self.endpoint, &self.token.get())?;
+            let mut request = self.client.post(&url).json(result);
             for (name, value) in &self.headers {
                 request = request.header(name, value);
             }

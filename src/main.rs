@@ -13,6 +13,7 @@ use kelicloud_agent_rs::task::{
     HttpTaskResultUploader, LinuxTaskExecutor, TaskControlMessageHandler,
 };
 use kelicloud_agent_rs::terminal::{TerminalControlMessageHandler, TungsteniteTerminalConnector};
+use kelicloud_agent_rs::token::{SharedAgentToken, SharedTokenRecovery};
 use kelicloud_agent_rs::transport::{ReqwestHttpTransport, TungsteniteWebSocketTransport};
 
 fn main() {
@@ -37,6 +38,7 @@ fn main() {
     }
 
     println!("{}", startup_summary(&config));
+    let shared_token = SharedAgentToken::new(config.token.clone());
 
     let basic_info_config = config.clone();
     let basic_info_provider = move || {
@@ -58,25 +60,26 @@ fn main() {
         }
     };
     let mut websocket = TungsteniteWebSocketTransport::from_config(&config);
-    let task_uploader = match HttpTaskResultUploader::from_config(&config) {
-        Ok(uploader) => uploader,
-        Err(error) => {
-            eprintln!("task uploader error: {error}");
-            std::process::exit(2);
-        }
-    };
+    let task_uploader =
+        match HttpTaskResultUploader::from_config_with_token(&config, shared_token.clone()) {
+            Ok(uploader) => uploader,
+            Err(error) => {
+                eprintln!("task uploader error: {error}");
+                std::process::exit(2);
+            }
+        };
     let cn_handler = CnConnectivityControlMessageHandler::new(cn_connectivity_state);
     let task_handler =
         TaskControlMessageHandler::new(LinuxTaskExecutor, task_uploader, config.disable_web_ssh);
     let terminal_handler = TerminalControlMessageHandler::new(
-        TungsteniteTerminalConnector::from_config(&config),
+        TungsteniteTerminalConnector::from_config_with_token(&config, shared_token.clone()),
         config.disable_web_ssh,
     );
     let control_handler = ChainControlMessageHandler::new(cn_handler, task_handler);
     let mut handler = ChainControlMessageHandler::new(control_handler, terminal_handler);
     let ping_executor = LinuxPingExecutor::default();
 
-    let mut auto_discovery_recovery =
+    let auto_discovery_recovery =
         match kelicloud_agent_rs::auto_discovery::token_recovery_from_config(&config) {
             Ok(recovery) => recovery,
             Err(error) => {
@@ -85,18 +88,20 @@ fn main() {
             }
         };
 
-    let result = match auto_discovery_recovery.as_mut() {
-        Some(recovery) if config.once => run_once_with_ping_and_token_recovery(
-            &mut config,
-            &basic_info_provider,
-            &report_generator,
-            &ping_executor,
-            &mut http,
-            &mut websocket,
-            &mut handler,
-            recovery,
-        ),
-        Some(recovery) => {
+    let result = if let Some(recovery) = auto_discovery_recovery {
+        let mut recovery = SharedTokenRecovery::new(recovery, shared_token);
+        if config.once {
+            run_once_with_ping_and_token_recovery(
+                &mut config,
+                &basic_info_provider,
+                &report_generator,
+                &ping_executor,
+                &mut http,
+                &mut websocket,
+                &mut handler,
+                &mut recovery,
+            )
+        } else {
             let mut delay = ThreadLoopDelay;
             run_report_cycles_with_ping_delay_and_token_recovery(
                 &mut config,
@@ -107,11 +112,12 @@ fn main() {
                 &mut websocket,
                 &mut handler,
                 &mut delay,
-                recovery,
+                &mut recovery,
                 usize::MAX,
             )
         }
-        None if config.once => run_once_with_ping(
+    } else if config.once {
+        run_once_with_ping(
             &config,
             &basic_info_provider,
             &report_generator,
@@ -119,21 +125,20 @@ fn main() {
             &mut http,
             &mut websocket,
             &mut handler,
-        ),
-        None => {
-            let mut delay = ThreadLoopDelay;
-            run_report_cycles_with_ping_delay(
-                &config,
-                &basic_info_provider,
-                &report_generator,
-                &ping_executor,
-                &mut http,
-                &mut websocket,
-                &mut handler,
-                &mut delay,
-                usize::MAX,
-            )
-        }
+        )
+    } else {
+        let mut delay = ThreadLoopDelay;
+        run_report_cycles_with_ping_delay(
+            &config,
+            &basic_info_provider,
+            &report_generator,
+            &ping_executor,
+            &mut http,
+            &mut websocket,
+            &mut handler,
+            &mut delay,
+            usize::MAX,
+        )
     };
 
     if let Err(error) = result {
