@@ -2,16 +2,17 @@ use chrono::{Local, TimeZone};
 use kelicloud_agent_rs::linux_proc::{
     android_os_name_from_build_prop, collect_proc_metrics_sample_with_filter_and_proc_root,
     count_process_entries, count_process_entries_in_dir, count_socket_entries,
-    detect_container_from_cgroup, fnos_os_name_from_markers, go_compatible_disk, go_compatible_ram,
-    go_compatible_ram_include_cache, go_compatible_swap, kernel_version_from_uname_output,
-    linux_supported, network_speed_from_samples, parse_amd_rocm_smi_json, parse_cpuinfo_name,
-    parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lspci_gpu_name,
-    parse_meminfo, parse_net_dev, parse_net_dev_interfaces, parse_net_dev_with_filter,
-    parse_net_static_total_between, parse_nvidia_smi_xml, parse_os_release_pretty_name,
-    parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
-    parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
-    reset_date_ymd, reset_timestamp_for_day, sysfs_drm_gpu_name_from_driver,
-    virtualization_from_cpuid_parts, DiskMount, NetworkFilter, NetworkTotals,
+    cpu_name_from_sources, detect_container_from_cgroup, fnos_os_name_from_markers,
+    go_compatible_disk, go_compatible_ram, go_compatible_ram_include_cache, go_compatible_swap,
+    kernel_version_from_uname_output, linux_supported, network_speed_from_samples,
+    parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output, parse_ip_address_list,
+    parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name, parse_meminfo, parse_net_dev,
+    parse_net_dev_interfaces, parse_net_dev_with_filter, parse_net_static_total_between,
+    parse_nvidia_smi_xml, parse_os_release_pretty_name, parse_public_ipv4_response,
+    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
+    proc_metrics_from_parts, proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
+    sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts, DiskMount, NetworkFilter,
+    NetworkTotals,
 };
 use std::fs;
 
@@ -136,6 +137,42 @@ Hardware    : ignored fallback
         parse_cpuinfo_name(contents).as_deref(),
         Some("AMD EPYC 7763 64-Core Processor")
     );
+}
+
+#[test]
+fn parse_lscpu_model_name_matches_go_agent_cpu_name_priority() {
+    let contents = r#"
+Architecture:             x86_64
+CPU(s):                   8
+Model name:               Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+Vendor ID:                GenuineIntel
+"#;
+
+    assert_eq!(
+        parse_lscpu_model_name(contents).as_deref(),
+        Some("Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz")
+    );
+    assert_eq!(parse_lscpu_model_name("Architecture: arm64\n"), None);
+}
+
+#[test]
+fn cpu_name_from_sources_matches_go_agent_priority_and_default() {
+    let lscpu = "Model name:  Neoverse-N1\n";
+    let cpuinfo = "Processor\t: ARMv8 Processor rev 1\n";
+
+    assert_eq!(
+        cpu_name_from_sources(Some(lscpu), Some("sysinfo brand"), Some(cpuinfo)),
+        "Neoverse-N1"
+    );
+    assert_eq!(
+        cpu_name_from_sources(None, Some("sysinfo brand"), Some(cpuinfo)),
+        "sysinfo brand"
+    );
+    assert_eq!(
+        cpu_name_from_sources(None, Some("  "), Some(cpuinfo)),
+        "ARMv8 Processor rev 1"
+    );
+    assert_eq!(cpu_name_from_sources(None, None, None), "Unknown");
 }
 
 fn temp_proc_root(label: &str) -> std::path::PathBuf {

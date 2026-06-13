@@ -233,6 +233,44 @@ pub fn parse_cpuinfo_name(contents: &str) -> Option<String> {
     processor_fallback
 }
 
+pub fn parse_lscpu_model_name(contents: &str) -> Option<String> {
+    for line in contents.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if key.trim() != "Model name" {
+            continue;
+        }
+
+        let name = value.trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+
+    None
+}
+
+pub fn cpu_name_from_sources(
+    lscpu_output: Option<&str>,
+    sysinfo_brand: Option<&str>,
+    cpuinfo_contents: Option<&str>,
+) -> String {
+    if let Some(name) = lscpu_output.and_then(parse_lscpu_model_name) {
+        return name;
+    }
+
+    if let Some(name) = sysinfo_brand.map(str::trim).filter(|name| !name.is_empty()) {
+        return name.to_string();
+    }
+
+    if let Some(name) = cpuinfo_contents.and_then(parse_cpuinfo_name) {
+        return name;
+    }
+
+    "Unknown".to_string()
+}
+
 pub fn parse_os_release_pretty_name(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let Some(value) = line.strip_prefix("PRETTY_NAME=") else {
@@ -1121,6 +1159,33 @@ pub fn collect_cpuinfo_name() -> Option<String> {
     fs::read_to_string("/proc/cpuinfo")
         .ok()
         .and_then(|contents| parse_cpuinfo_name(&contents))
+}
+
+pub fn collect_lscpu_model_name() -> Option<String> {
+    if !linux_supported() {
+        return None;
+    }
+
+    let output = Command::new("lscpu").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_lscpu_model_name(&String::from_utf8_lossy(&output.stdout))
+}
+
+pub fn collect_cpu_name(sysinfo_brand: Option<&str>) -> String {
+    if let Some(name) = collect_lscpu_model_name() {
+        return name;
+    }
+
+    let cpuinfo_contents = if linux_supported() {
+        fs::read_to_string("/proc/cpuinfo").ok()
+    } else {
+        None
+    };
+
+    cpu_name_from_sources(None, sysinfo_brand, cpuinfo_contents.as_deref())
 }
 
 pub fn collect_os_name() -> String {

@@ -321,12 +321,7 @@ impl SystemSnapshotCollector {
             crate::linux_proc::collect_memory_values_with_mode(self.metrics.memory_include_cache);
 
         let cpus = self.system.cpus();
-        let cpu_name = cpus
-            .first()
-            .map(|cpu| cpu.brand().trim().to_string())
-            .filter(|name| !name.is_empty())
-            .or_else(crate::linux_proc::collect_cpuinfo_name)
-            .unwrap_or_default();
+        let cpu_name = crate::linux_proc::collect_cpu_name(cpus.first().map(|cpu| cpu.brand()));
         let cpu_usage = if cpus.is_empty() {
             0.001
         } else {
