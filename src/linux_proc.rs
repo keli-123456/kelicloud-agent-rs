@@ -1138,14 +1138,17 @@ pub fn parse_net_dev(contents: &str) -> NetworkTotals {
 }
 
 pub fn parse_net_dev_with_filter(contents: &str, filter: &NetworkFilter) -> NetworkTotals {
-    parse_net_dev_interfaces(contents, filter).into_iter().fold(
-        NetworkTotals::default(),
-        |mut totals, interface| {
+    network_totals_from_interfaces(parse_net_dev_interfaces(contents, filter))
+}
+
+fn network_totals_from_interfaces(interfaces: Vec<NetworkInterfaceTotals>) -> NetworkTotals {
+    interfaces
+        .into_iter()
+        .fold(NetworkTotals::default(), |mut totals, interface| {
             totals.total_down += interface.total_down;
             totals.total_up += interface.total_up;
             totals
-        },
-    )
+        })
 }
 
 pub fn network_speed_from_samples(
@@ -1167,6 +1170,13 @@ pub fn parse_net_dev_interfaces(
     contents: &str,
     filter: &NetworkFilter,
 ) -> Vec<NetworkInterfaceTotals> {
+    parse_net_dev_interfaces_result(contents, filter).unwrap_or_default()
+}
+
+fn parse_net_dev_interfaces_result(
+    contents: &str,
+    filter: &NetworkFilter,
+) -> Result<Vec<NetworkInterfaceTotals>, String> {
     let mut interfaces = Vec::new();
     for line in contents.lines() {
         let Some((name, counters)) = line.split_once(':') else {
@@ -1182,8 +1192,8 @@ pub fn parse_net_dev_interfaces(
             continue;
         }
 
-        let rx_bytes = fields[0].parse::<i64>().unwrap_or(0);
-        let tx_bytes = fields[8].parse::<i64>().unwrap_or(0);
+        let rx_bytes = parse_net_dev_bytes(fields[0])?;
+        let tx_bytes = parse_net_dev_bytes(fields[8])?;
         interfaces.push(NetworkInterfaceTotals {
             name: name.to_string(),
             total_up: tx_bytes,
@@ -1191,7 +1201,14 @@ pub fn parse_net_dev_interfaces(
         });
     }
 
-    interfaces
+    Ok(interfaces)
+}
+
+fn parse_net_dev_bytes(value: &str) -> Result<i64, String> {
+    let bytes = value
+        .parse::<u64>()
+        .map_err(|error| format!("invalid network IO counter: {error}"))?;
+    Ok(i64::try_from(bytes).unwrap_or(i64::MAX))
 }
 
 pub fn parse_net_static_total_between(
@@ -1391,7 +1408,7 @@ pub fn collect_network_interfaces_with_filter(
 
     fs::read_to_string("/proc/net/dev")
         .ok()
-        .map(|contents| parse_net_dev_interfaces(&contents, filter))
+        .and_then(|contents| parse_net_dev_interfaces_result(&contents, filter).ok())
 }
 
 pub fn collect_network_totals_with_filter_and_host_proc(
@@ -1412,9 +1429,12 @@ pub fn collect_network_totals_with_filter_and_proc_root<P: AsRef<Path>>(
     proc_root: P,
     filter: &NetworkFilter,
 ) -> Result<NetworkTotals, String> {
-    fs::read_to_string(proc_root.as_ref().join("net").join("dev"))
-        .map(|contents| parse_net_dev_with_filter(&contents, filter))
-        .map_err(|_| "failed to get network IO counters: /proc/net/dev is not readable".to_string())
+    let error = "failed to get network IO counters: /proc/net/dev is not readable".to_string();
+    let contents = fs::read_to_string(proc_root.as_ref().join("net").join("dev"))
+        .map_err(|_| error.clone())?;
+    let interfaces =
+        parse_net_dev_interfaces_result(&contents, filter).map_err(|_| error.clone())?;
+    Ok(network_totals_from_interfaces(interfaces))
 }
 
 pub fn collect_net_static_total_between<P: AsRef<Path>>(

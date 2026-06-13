@@ -112,6 +112,36 @@ fn proc_metrics_sample_reports_go_agent_error_labels_for_missing_sources() {
 }
 
 #[test]
+fn proc_metrics_sample_rejects_negative_net_dev_counters_like_go_agent() {
+    let root = temp_proc_root("negative-net-dev");
+    fs::create_dir_all(root.join("net")).unwrap();
+    fs::write(root.join("loadavg"), "0.12 0.34 0.56 1/3 99\n").unwrap();
+    fs::write(root.join("uptime"), "123.45 67.89\n").unwrap();
+    fs::write(root.join("net").join("tcp"), "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n").unwrap();
+    fs::write(root.join("net").join("udp"), "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n").unwrap();
+    fs::write(
+        root.join("net").join("dev"),
+        r#"
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+ eth0: -10 0 0 0 0 0 0 0 20 0 0 0 0 0 0 0
+"#,
+    )
+    .unwrap();
+
+    let sample =
+        collect_proc_metrics_sample_with_filter_and_proc_root(&root, &NetworkFilter::default());
+    fs::remove_dir_all(&root).unwrap();
+
+    assert_eq!(sample.metrics.network.total_up, 0);
+    assert_eq!(sample.metrics.network.total_down, 0);
+    assert_eq!(
+        sample.errors.network_speed.as_deref(),
+        Some("failed to get network IO counters: /proc/net/dev is not readable")
+    );
+}
+
+#[test]
 fn network_speed_from_samples_matches_go_agent_one_second_delta() {
     let sample = network_speed_from_samples(
         NetworkTotals {
