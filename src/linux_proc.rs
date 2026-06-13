@@ -674,10 +674,13 @@ pub fn parse_lspci_gpu_name(contents: &str) -> Option<String> {
     ];
 
     let lines = contents.lines().collect::<Vec<_>>();
-    for vendor in PRIORITY_VENDORS {
-        for line in &lines {
-            let lower = line.to_ascii_lowercase();
-            if is_display_pci_line(&lower) && lower.contains(vendor) {
+    for line in &lines {
+        let lower = line.to_ascii_lowercase();
+        if is_display_pci_line(&lower) {
+            for vendor in PRIORITY_VENDORS {
+                if !lower.contains(vendor) {
+                    continue;
+                }
                 let name = extract_lspci_device_name(line)?;
                 if !is_excluded_gpu_name(&name) {
                     return Some(name);

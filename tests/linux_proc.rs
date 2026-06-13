@@ -433,6 +433,19 @@ fn parse_lspci_gpu_name_prefers_real_gpu_and_excludes_virtual_display() {
 }
 
 #[test]
+fn parse_lspci_gpu_name_uses_go_agent_line_order_for_priority_vendors() {
+    let contents = r#"
+00:02.0 VGA compatible controller: Intel Corporation UHD Graphics 770
+01:00.0 3D controller: NVIDIA Corporation AD102 [GeForce RTX 4090] (rev a1)
+"#;
+
+    assert_eq!(
+        parse_lspci_gpu_name(contents).as_deref(),
+        Some("Intel Corporation UHD Graphics 770")
+    );
+}
+
+#[test]
 fn sysfs_drm_gpu_name_matches_go_agent_arm_soc_and_driver_fallbacks() {
     assert_eq!(
         parse_soc_gpu_model("msm", b"qcom,adreno-750.1\0qcom,adreno").as_deref(),
