@@ -428,10 +428,6 @@ pub fn parse_synology_os_name(contents: &str) -> Option<String> {
     }
 
     let model = parts.last()?.to_ascii_uppercase();
-    if model.is_empty() {
-        return None;
-    }
-
     let mut name = format!("Synology {model} DSM");
     if !udc_check_state.is_empty() {
         name.push(' ');

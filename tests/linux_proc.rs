@@ -417,6 +417,10 @@ udc_check_state="7.2.1"
     );
     assert_eq!(parse_synology_os_name(r#"unique="synology_ds""#), None);
     assert_eq!(
+        parse_synology_os_name(r#"unique="synology_apollolake_""#).as_deref(),
+        Some("Synology  DSM")
+    );
+    assert_eq!(
         fnos_os_name_from_markers(Some("1.1.11\n"), true).as_deref(),
         Some("fnOS 1.1.11")
     );
