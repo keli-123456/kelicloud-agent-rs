@@ -8,4 +8,5 @@ pub mod report;
 pub mod runtime;
 pub mod system;
 pub mod task;
+pub mod terminal;
 pub mod transport;

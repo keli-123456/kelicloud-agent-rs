@@ -11,6 +11,7 @@ use kelicloud_agent_rs::system::{SystemReportGenerator, SystemSnapshotCollector}
 use kelicloud_agent_rs::task::{
     HttpTaskResultUploader, LinuxTaskExecutor, TaskControlMessageHandler,
 };
+use kelicloud_agent_rs::terminal::{TerminalControlMessageHandler, TungsteniteTerminalConnector};
 use kelicloud_agent_rs::transport::{ReqwestHttpTransport, TungsteniteWebSocketTransport};
 
 fn main() {
@@ -61,7 +62,12 @@ fn main() {
     let cn_handler = CnConnectivityControlMessageHandler::new(cn_connectivity_state);
     let task_handler =
         TaskControlMessageHandler::new(LinuxTaskExecutor, task_uploader, config.disable_web_ssh);
-    let mut handler = ChainControlMessageHandler::new(cn_handler, task_handler);
+    let terminal_handler = TerminalControlMessageHandler::new(
+        TungsteniteTerminalConnector::from_config(&config),
+        config.disable_web_ssh,
+    );
+    let control_handler = ChainControlMessageHandler::new(cn_handler, task_handler);
+    let mut handler = ChainControlMessageHandler::new(control_handler, terminal_handler);
     let ping_executor = LinuxPingExecutor::default();
 
     let result = if config.once {

@@ -188,12 +188,7 @@ impl WebSocketTransport for TungsteniteWebSocketTransport {
             request.headers_mut().insert(header_name, header_value);
         }
 
-        let (socket, _response) = if self.custom_dns.is_empty() {
-            tungstenite::connect(request)
-                .map_err(|error| TransportError::RequestFailed(error.to_string()))?
-        } else {
-            connect_websocket_with_custom_dns(request, &self.custom_dns)?
-        };
+        let (socket, _response) = connect_websocket_request(request, &self.custom_dns)?;
         Ok(TungsteniteReportSocket {
             socket,
             read_timeout: Duration::from_millis(100),
@@ -244,6 +239,24 @@ impl ReportSocket for TungsteniteReportSocket {
             .send(Message::Text(payload.into()))
             .map_err(|error| TransportError::RequestFailed(error.to_string()))
     }
+}
+
+pub(crate) fn connect_websocket_request(
+    request: tungstenite::handshake::client::Request,
+    custom_dns: &str,
+) -> Result<
+    (
+        WebSocket<MaybeTlsStream<TcpStream>>,
+        tungstenite::handshake::client::Response,
+    ),
+    TransportError,
+> {
+    if custom_dns.trim().is_empty() {
+        return tungstenite::connect(request)
+            .map_err(|error| TransportError::RequestFailed(error.to_string()));
+    }
+
+    connect_websocket_with_custom_dns(request, custom_dns)
 }
 
 fn connect_websocket_with_custom_dns(
