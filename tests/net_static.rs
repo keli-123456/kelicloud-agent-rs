@@ -81,6 +81,31 @@ fn sampler_loads_existing_file_and_prunes_expired_records_on_flush() {
 }
 
 #[test]
+fn sampler_uses_persisted_preserve_days_like_go_agent() {
+    let path = temp_net_static_path("persisted-config");
+    fs::write(
+        &path,
+        r#"{"interfaces":{"eth0":[{"timestamp":1,"tx":10,"rx":20},{"timestamp":90000,"tx":30,"rx":40}]},"config":{"data_preserve_day":1,"detect_interval":2,"save_interval":600,"nics":[]}}"#,
+    )
+    .unwrap();
+
+    let mut sampler = NetStaticSampler::with_config(NetStaticSamplerConfig {
+        path: path.clone(),
+        ..NetStaticSamplerConfig::default()
+    });
+
+    sampler.flush(90_000).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed =
+        parse_net_static_total_between(&contents, 0, 100_000, &NetworkFilter::default()).unwrap();
+    drop(sampler);
+    let _ = fs::remove_file(path);
+
+    assert_eq!(parsed.total_up, 30);
+    assert_eq!(parsed.total_down, 40);
+}
+
+#[test]
 fn parse_net_static_total_between_rejects_negative_counters_like_go_agent() {
     let contents = r#"
 {

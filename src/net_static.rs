@@ -155,7 +155,18 @@ impl NetStaticSampler {
             return;
         }
         match serde_json::from_str::<NetStaticFile>(&contents) {
-            Ok(file) => self.store = file.interfaces,
+            Ok(file) => {
+                self.store = file.interfaces;
+                if file.config.data_preserve_day != 0.0 {
+                    self.config.data_preserve_days = file.config.data_preserve_day;
+                }
+                if file.config.detect_interval != 0.0 {
+                    self.config.detect_interval_seconds = file.config.detect_interval;
+                }
+                if file.config.save_interval != 0.0 {
+                    self.config.save_interval_seconds = file.config.save_interval;
+                }
+            }
             Err(_) => {
                 let _ = fs::rename(
                     &self.config.path,
