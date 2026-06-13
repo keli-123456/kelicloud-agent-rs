@@ -717,6 +717,27 @@ fn disk_mounts_honor_include_mountpoints_like_go_agent() {
 }
 
 #[test]
+fn disk_include_mountpoints_uses_direct_usage_lookup_like_go_agent() {
+    let disk = kelicloud_agent_rs::linux_proc::go_compatible_disk_from_mountpoint_lookup(
+        "/missing;/data;/backup",
+        |mountpoint| match mountpoint {
+            "/data" => Some(kelicloud_agent_rs::linux_proc::DiskValues {
+                total: 3_000,
+                used: 500,
+            }),
+            "/backup" => Some(kelicloud_agent_rs::linux_proc::DiskValues {
+                total: 4_000,
+                used: 1_000,
+            }),
+            _ => None,
+        },
+    );
+
+    assert_eq!(disk.total, 7_000);
+    assert_eq!(disk.used, 1_500);
+}
+
+#[test]
 fn count_socket_entries_ignores_header() {
     let contents = r#"
   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode

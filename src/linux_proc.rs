@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::ffi::CString;
 use std::fs;
 use std::net::IpAddr;
 use std::path::Path;
@@ -877,6 +879,34 @@ pub fn go_compatible_disk_with_mountpoints(
             total.used += mount.used.clamp(0, mount.total.max(0));
             total
         })
+}
+
+pub fn go_compatible_disk_from_mountpoint_lookup<F>(
+    include_mountpoints: &str,
+    mut lookup: F,
+) -> DiskValues
+where
+    F: FnMut(&str) -> Option<DiskValues>,
+{
+    parse_semicolon_list(include_mountpoints)
+        .into_iter()
+        .filter_map(|mountpoint| lookup(&mountpoint))
+        .fold(DiskValues::default(), |mut total, values| {
+            total.total += values.total.max(0);
+            total.used += values.used.clamp(0, values.total.max(0));
+            total
+        })
+}
+
+pub fn collect_disk_values_with_mountpoints(
+    mounts: &[DiskMount],
+    include_mountpoints: &str,
+) -> DiskValues {
+    if parse_semicolon_list(include_mountpoints).is_empty() {
+        return go_compatible_disk(mounts);
+    }
+
+    go_compatible_disk_from_mountpoint_lookup(include_mountpoints, disk_usage_for_mountpoint)
 }
 
 pub fn parse_net_dev(contents: &str) -> NetworkTotals {
@@ -1898,6 +1928,39 @@ fn disk_device_id(mount: &DiskMount) -> String {
             .unwrap_or_else(|| mount.device.clone());
     }
     mount.device.clone()
+}
+
+#[cfg(target_os = "linux")]
+fn disk_usage_for_mountpoint(path: &str) -> Option<DiskValues> {
+    let path = CString::new(path).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return None;
+    }
+
+    let stat = unsafe { stat.assume_init() };
+    let block_size = if stat.f_frsize > 0 {
+        stat.f_frsize
+    } else {
+        stat.f_bsize
+    } as u128;
+    let total = stat.f_blocks as u128 * block_size;
+    let used = stat.f_blocks.saturating_sub(stat.f_bfree) as u128 * block_size;
+
+    Some(DiskValues {
+        total: u128_to_i64_saturating(total),
+        used: u128_to_i64_saturating(used),
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn disk_usage_for_mountpoint(_path: &str) -> Option<DiskValues> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn u128_to_i64_saturating(value: u128) -> i64 {
+    value.min(i64::MAX as u128) as i64
 }
 
 fn is_display_pci_line(lower_line: &str) -> bool {

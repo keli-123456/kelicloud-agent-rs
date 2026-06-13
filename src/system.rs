@@ -379,7 +379,7 @@ impl SystemSnapshotCollector {
                 }
             })
             .collect::<Vec<_>>();
-        let disk_values = crate::linux_proc::go_compatible_disk_with_mountpoints(
+        let disk_values = crate::linux_proc::collect_disk_values_with_mountpoints(
             &disk_mounts,
             &self.metrics.include_mountpoints,
         );
