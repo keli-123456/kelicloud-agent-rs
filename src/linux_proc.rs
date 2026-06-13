@@ -2377,8 +2377,8 @@ fn is_display_pci_line(lower_line: &str) -> bool {
 fn extract_lspci_device_name(line: &str) -> Option<String> {
     let (_, name) = line.rsplit_once(':')?;
     let mut name = name.trim();
-    if let Some((before_rev, _)) = name.rsplit_once("(rev ") {
-        name = before_rev.trim();
+    if let Some((before_suffix, _)) = name.rsplit_once('(') {
+        name = before_suffix.trim();
     }
     if name.is_empty() {
         None

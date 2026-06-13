@@ -529,6 +529,18 @@ fn parse_lspci_gpu_name_uses_go_agent_line_order_for_priority_vendors() {
 }
 
 #[test]
+fn parse_lspci_gpu_name_strips_any_trailing_parenthesized_suffix_like_go_agent() {
+    let contents = r#"
+00:02.0 VGA compatible controller: Intel Corporation UHD Graphics (Mobile)
+"#;
+
+    assert_eq!(
+        parse_lspci_gpu_name(contents).as_deref(),
+        Some("Intel Corporation UHD Graphics")
+    );
+}
+
+#[test]
 fn sysfs_drm_gpu_name_matches_go_agent_arm_soc_and_driver_fallbacks() {
     assert_eq!(
         parse_soc_gpu_model("msm", b"qcom,adreno-750.1\0qcom,adreno").as_deref(),
