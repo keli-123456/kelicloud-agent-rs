@@ -930,7 +930,7 @@ pub fn parse_meminfo(contents: &str) -> ProcMemInfo {
         let Some(key) = fields.next() else {
             continue;
         };
-        let Some(value) = fields.next().and_then(|value| value.parse::<i64>().ok()) else {
+        let Some(value) = fields.next().and_then(parse_meminfo_kib_value) else {
             continue;
         };
         let bytes = value.saturating_mul(1024);
@@ -953,6 +953,13 @@ pub fn parse_meminfo(contents: &str) -> ProcMemInfo {
     }
 
     info
+}
+
+fn parse_meminfo_kib_value(value: &str) -> Option<i64> {
+    value
+        .parse::<u64>()
+        .ok()
+        .and_then(|value| i64::try_from(value).ok())
 }
 
 pub fn go_compatible_ram(info: &ProcMemInfo) -> MemoryValues {

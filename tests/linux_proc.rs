@@ -823,6 +823,33 @@ SwapFree:         100 kB
 }
 
 #[test]
+fn parse_meminfo_ignores_negative_values_like_go_agent() {
+    let meminfo = parse_meminfo(
+        r#"
+MemTotal:        -1000 kB
+MemFree:         -100 kB
+Buffers:         -25 kB
+Cached:          -200 kB
+SwapTotal:       -500 kB
+SwapFree:        -100 kB
+SwapCached:      -25 kB
+Shmem:           -10 kB
+SReclaimable:    -50 kB
+"#,
+    );
+
+    assert_eq!(meminfo.mem_total, 0);
+    assert_eq!(meminfo.mem_free, 0);
+    assert_eq!(meminfo.buffers, 0);
+    assert_eq!(meminfo.cached, 0);
+    assert_eq!(meminfo.swap_total, 0);
+    assert_eq!(meminfo.swap_free, 0);
+    assert_eq!(meminfo.swap_cached, 0);
+    assert_eq!(meminfo.shmem, 0);
+    assert_eq!(meminfo.s_reclaimable, 0);
+}
+
+#[test]
 fn memory_values_from_meminfo_rejects_zero_total_like_go_agent_fallback() {
     let meminfo = parse_meminfo(
         r#"
