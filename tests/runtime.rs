@@ -22,6 +22,7 @@ fn startup_summary_redacts_token() {
     let config = AgentConfig {
         endpoint: "https://panel.example.com".to_string(),
         token: "secret-token-value".to_string(),
+        auto_discovery_key: String::new(),
         insecure: true,
         disable_web_ssh: true,
         interval_seconds: 1.0,
@@ -544,6 +545,7 @@ fn test_config() -> AgentConfig {
     AgentConfig {
         endpoint: "https://panel.example.com".to_string(),
         token: "secret-token-value".to_string(),
+        auto_discovery_key: String::new(),
         insecure: true,
         disable_web_ssh: true,
         interval_seconds: 1.0,

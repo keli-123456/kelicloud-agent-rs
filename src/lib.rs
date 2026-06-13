@@ -1,3 +1,4 @@
+pub mod auto_discovery;
 pub mod cn_connectivity;
 pub mod config;
 pub mod linux_proc;

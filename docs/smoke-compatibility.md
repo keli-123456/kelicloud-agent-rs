@@ -47,6 +47,12 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
   HTTP 401 invalid-token responses as typed invalid-token transport errors,
   preserving the operation name, token, status code, and response body for
   future auto-discovery recovery logic.
+- Startup auto-discovery supports `--auto-discovery` /
+  `AGENT_AUTO_DISCOVERY_KEY`, loads `auto-discovery.json` from the executable
+  directory when present, otherwise registers at
+  `/api/clients/register?name=<hostname>` with `{"key":"..."}`,
+  `Authorization: Bearer <auto-discovery-key>`, Cloudflare Access headers when
+  configured, and saves the returned `{uuid, token}` for normal report traffic.
 - Cloudflare Access headers are supported for basic info, report WebSocket,
   terminal WebSocket, and task result upload.
 
@@ -102,14 +108,13 @@ dynamic smoke produces logs:
    retries with the new token. If another thread has already rotated the token,
    it treats the stale-token error as recovered.
 
-   The Rust prototype currently requires a fixed endpoint and token. It ignores
-   Go-only flags such as `--auto-discovery`, has no `AGENT_AUTO_DISCOVERY_KEY`
-   field, and does not persist `auto-discovery.json`. It now classifies the
-   same invalid-token response shapes as typed transport errors, but it does not
-   yet clear cached discovery state, register, rotate the token, or retry the
-   failed operation. This is not a blocker for a static-token smoke test, but it
-   is a deployment compatibility gap if production relies on auto-discovery or
-   stale-token recovery.
+   The Rust prototype now supports the startup registration/cache path above and
+   classifies the same invalid-token response shapes as typed transport errors.
+   It does not yet clear cached discovery state, register, rotate the token, or
+   retry the failed operation after a stale-token response. This is not a
+   blocker for static-token smoke or first-start auto-discovery smoke, but it is
+   still a deployment compatibility gap if production relies on stale-token
+   recovery.
 
 3. Auto-update
 
@@ -125,7 +130,8 @@ dynamic smoke produces logs:
 
 ## Current Blockers
 
-- No local `AGENT_ENDPOINT` or `AGENT_TOKEN` is configured.
+- No local `AGENT_ENDPOINT` plus `AGENT_TOKEN` or `AGENT_AUTO_DISCOVERY_KEY` is
+  configured.
 - `gh` CLI is not installed locally, so this environment cannot dispatch
   GitHub Actions workflows.
 - No local WSL distribution or Docker Linux environment is installed.

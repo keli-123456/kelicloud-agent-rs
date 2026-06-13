@@ -5,6 +5,7 @@ Linux-only Rust prototype for a future kelicloud agent.
 This is not a replacement for the current Go agent yet. The Rust agent is intentionally scoped to Linux servers only:
 
 - Parse endpoint/token flags and environment variables.
+- Register with `--auto-discovery` / `AGENT_AUTO_DISCOVERY_KEY` on startup and cache the returned token in `auto-discovery.json`.
 - Upload a minimal `/api/clients/uploadBasicInfo` payload.
 - Connect `/api/clients/report` over WebSocket.
 - Send backend-compatible reports with real CPU, Go-compatible CPU usage floor, memory, swap, disk, uptime, and Go-compatible process metrics.
@@ -29,12 +30,19 @@ This is not a replacement for the current Go agent yet. The Rust agent is intent
 cargo run -- --endpoint https://panel.example.com --token TOKEN
 ```
 
+You can also omit `--token` when using backend auto-discovery:
+
+```bash
+cargo run -- --endpoint https://panel.example.com --auto-discovery DISCOVERY_KEY
+```
+
 Without `--once`, the command keeps running: upload basic info, open the report WebSocket, send reports at `--interval`, send WebSocket heartbeat pings, and reconnect after send failures. With `--once`, it performs one startup cycle and exits. Non-Linux platforms exit with a clear unsupported-platform message.
 
 Supported flags:
 
 - `--endpoint <url>` or `AGENT_ENDPOINT`
 - `--token <token>` or `AGENT_TOKEN`
+- `--auto-discovery <key>` or `AGENT_AUTO_DISCOVERY_KEY`
 - `--insecure`, `--ignore-unsafe-cert`, `AGENT_INSECURE=true`, or `AGENT_IGNORE_UNSAFE_CERT=true`
 - `--disable-web-ssh` or `AGENT_DISABLE_WEB_SSH=true`
 - `--once` or `AGENT_ONCE=true`

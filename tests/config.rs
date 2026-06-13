@@ -218,8 +218,6 @@ fn config_ignores_unknown_go_agent_flags_like_cobra() {
             "--token",
             "cli-token",
             "--disable-auto-update",
-            "--auto-discovery",
-            "discovery-key",
             "--show-warning",
             "--future-go-flag=value",
             "positional-arg",
@@ -230,6 +228,39 @@ fn config_ignores_unknown_go_agent_flags_like_cobra() {
 
     assert_eq!(config.endpoint, "https://cli.example.com");
     assert_eq!(config.token, "cli-token");
+}
+
+#[test]
+fn config_accepts_auto_discovery_key_without_static_token() {
+    let config = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--auto-discovery",
+            "discovery-key",
+        ],
+        |_| None,
+    )
+    .unwrap();
+
+    assert_eq!(config.endpoint, "https://cli.example.com");
+    assert_eq!(config.token, "");
+    assert_eq!(config.auto_discovery_key, "discovery-key");
+}
+
+#[test]
+fn config_accepts_auto_discovery_key_from_environment() {
+    let config = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_AUTO_DISCOVERY_KEY" => Some("env-discovery-key".to_string()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert_eq!(config.endpoint, "https://env.example.com");
+    assert_eq!(config.token, "");
+    assert_eq!(config.auto_discovery_key, "env-discovery-key");
 }
 
 #[test]
@@ -467,7 +498,8 @@ fn config_file_overrides_args_and_env_like_go_agent_json_config() {
             "memory_report_raw_used": true,
             "enable_gpu": true,
             "month_rotate": 9,
-            "host_proc": "/host/proc"
+            "host_proc": "/host/proc",
+            "auto_discovery_key": "file-discovery-key"
         }"#,
     )
     .unwrap();
@@ -516,6 +548,7 @@ fn config_file_overrides_args_and_env_like_go_agent_json_config() {
     assert!(config.enable_gpu);
     assert_eq!(config.month_rotate, 9);
     assert_eq!(config.host_proc, "/host/proc");
+    assert_eq!(config.auto_discovery_key, "file-discovery-key");
 }
 
 #[test]

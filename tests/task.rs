@@ -292,6 +292,7 @@ fn test_config(endpoint: String) -> AgentConfig {
     AgentConfig {
         endpoint,
         token: "secret-token-value".to_string(),
+        auto_discovery_key: String::new(),
         insecure: true,
         disable_web_ssh: false,
         interval_seconds: 1.0,

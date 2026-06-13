@@ -20,16 +20,20 @@ fn main() {
         std::process::exit(2);
     }
 
-    let config = match AgentConfig::from_env() {
+    let mut config = match AgentConfig::from_env() {
         Ok(config) => config,
         Err(error) => {
             eprintln!("configuration error: {error}");
             eprintln!(
-                "usage: kelicloud-agent-rs --endpoint https://panel.example.com --token TOKEN"
+                "usage: kelicloud-agent-rs --endpoint https://panel.example.com (--token TOKEN | --auto-discovery KEY)"
             );
             std::process::exit(2);
         }
     };
+    if let Err(error) = kelicloud_agent_rs::auto_discovery::resolve_auto_discovery(&mut config) {
+        eprintln!("auto-discovery error: {error}");
+        std::process::exit(2);
+    }
 
     println!("{}", startup_summary(&config));
 

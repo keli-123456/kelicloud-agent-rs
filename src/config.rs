@@ -8,6 +8,7 @@ use std::fs;
 pub struct AgentConfig {
     pub endpoint: String,
     pub token: String,
+    pub auto_discovery_key: String,
     pub insecure: bool,
     pub disable_web_ssh: bool,
     pub interval_seconds: f64,
@@ -71,6 +72,7 @@ impl AgentConfig {
     {
         let mut endpoint = clean_optional(env_lookup("AGENT_ENDPOINT"));
         let mut token = clean_optional(env_lookup("AGENT_TOKEN"));
+        let mut auto_discovery_key = clean_optional(env_lookup("AGENT_AUTO_DISCOVERY_KEY"));
         let mut insecure = env_lookup("AGENT_IGNORE_UNSAFE_CERT")
             .or_else(|| env_lookup("AGENT_INSECURE"))
             .as_deref()
@@ -137,6 +139,9 @@ impl AgentConfig {
                 }
                 "-t" => {
                     token = Some(next_value(&mut iter, "-t")?);
+                }
+                "--auto-discovery" => {
+                    auto_discovery_key = Some(next_value(&mut iter, "--auto-discovery")?);
                 }
                 "--insecure" => {
                     insecure = true;
@@ -241,6 +246,10 @@ impl AgentConfig {
                 _ if arg.starts_with("-t=") => {
                     token = clean_required(&arg["-t=".len()..], "-t")?;
                 }
+                _ if arg.starts_with("--auto-discovery=") => {
+                    auto_discovery_key =
+                        clean_required(&arg["--auto-discovery=".len()..], "--auto-discovery")?;
+                }
                 _ if arg.starts_with("--interval=") => {
                     interval_seconds = parse_f64("--interval", &arg["--interval=".len()..])?;
                 }
@@ -332,6 +341,11 @@ impl AgentConfig {
 
         apply_optional_string_env(&env_lookup, "AGENT_ENDPOINT", &mut endpoint);
         apply_optional_string_env(&env_lookup, "AGENT_TOKEN", &mut token);
+        apply_optional_string_env(
+            &env_lookup,
+            "AGENT_AUTO_DISCOVERY_KEY",
+            &mut auto_discovery_key,
+        );
         apply_bool_true_env(&env_lookup, "AGENT_IGNORE_UNSAFE_CERT", &mut insecure);
         apply_bool_true_env(&env_lookup, "AGENT_INSECURE", &mut insecure);
         apply_bool_true_env(&env_lookup, "AGENT_DISABLE_WEB_SSH", &mut disable_web_ssh);
@@ -396,6 +410,9 @@ impl AgentConfig {
             if let Some(value) = file_config.token {
                 token = clean_config_required_string(value);
             }
+            if let Some(value) = file_config.auto_discovery_key {
+                auto_discovery_key = clean_config_required_string(value);
+            }
             if let Some(value) = file_config.ignore_unsafe_cert {
                 insecure = value;
             }
@@ -459,9 +476,17 @@ impl AgentConfig {
             }
         }
 
+        let endpoint = endpoint.ok_or(ConfigError::MissingEndpoint)?;
+        let token = token.unwrap_or_default();
+        let auto_discovery_key = auto_discovery_key.unwrap_or_default();
+        if token.is_empty() && auto_discovery_key.is_empty() {
+            return Err(ConfigError::MissingToken);
+        }
+
         Ok(Self {
-            endpoint: endpoint.ok_or(ConfigError::MissingEndpoint)?,
-            token: token.ok_or(ConfigError::MissingToken)?,
+            endpoint,
+            token,
+            auto_discovery_key,
             insecure,
             disable_web_ssh,
             interval_seconds,
@@ -491,6 +516,7 @@ impl AgentConfig {
 struct FileConfig {
     endpoint: Option<String>,
     token: Option<String>,
+    auto_discovery_key: Option<String>,
     ignore_unsafe_cert: Option<bool>,
     disable_web_ssh: Option<bool>,
     interval: Option<f64>,

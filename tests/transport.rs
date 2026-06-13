@@ -11,6 +11,7 @@ fn config_with_cf(id: &str, secret: &str) -> AgentConfig {
     AgentConfig {
         endpoint: "https://panel.example.com".to_string(),
         token: "secret-token-value".to_string(),
+        auto_discovery_key: String::new(),
         insecure: false,
         disable_web_ssh: false,
         interval_seconds: 1.0,
