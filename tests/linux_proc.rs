@@ -12,10 +12,10 @@ use kelicloud_agent_rs::linux_proc::{
     parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lscpu_model_name,
     parse_lspci_gpu_name, parse_meminfo, parse_net_dev, parse_net_dev_interfaces,
     parse_net_dev_with_filter, parse_net_static_total_between, parse_nvidia_smi_xml,
-    parse_os_release_pretty_name, parse_proc_stat_cpu_sample, parse_public_ipv4_response,
-    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
-    proc_metrics_from_parts, proxmox_os_name_from_parts, public_ipv4_probe_urls,
-    public_ipv6_probe_urls, reset_date_ymd, reset_timestamp_for_day,
+    parse_os_release_pretty_name, parse_proc_mount_options, parse_proc_stat_cpu_sample,
+    parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
+    parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
+    public_ipv4_probe_urls, public_ipv6_probe_urls, reset_date_ymd, reset_timestamp_for_day,
     resolve_detailed_gpu_command_path_from_lookup, resolve_host_with_dns_server,
     rocm_smi_command_path, sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts,
     DiskMount, MemoryValues, NetworkFilter, NetworkTotals,
@@ -1262,6 +1262,7 @@ fn disk_mounts_filter_like_go_agent() {
             device: "/dev/loop0".to_string(),
             mountpoint: "/".to_string(),
             fstype: "overlay".to_string(),
+            opts: String::new(),
             total: 1_000,
             used: 400,
         },
@@ -1269,6 +1270,7 @@ fn disk_mounts_filter_like_go_agent() {
             device: "tmpfs".to_string(),
             mountpoint: "/run".to_string(),
             fstype: "tmpfs".to_string(),
+            opts: String::new(),
             total: 9_999,
             used: 9_999,
         },
@@ -1276,6 +1278,7 @@ fn disk_mounts_filter_like_go_agent() {
             device: "overlay".to_string(),
             mountpoint: "/var/lib/docker/overlay2".to_string(),
             fstype: "overlay".to_string(),
+            opts: String::new(),
             total: 9_999,
             used: 9_999,
         },
@@ -1283,6 +1286,7 @@ fn disk_mounts_filter_like_go_agent() {
             device: "/dev/sdb1".to_string(),
             mountpoint: "/data".to_string(),
             fstype: "ext4".to_string(),
+            opts: String::new(),
             total: 2_000,
             used: 100,
         },
@@ -1290,6 +1294,7 @@ fn disk_mounts_filter_like_go_agent() {
             device: "tank/app".to_string(),
             mountpoint: "/tank/app".to_string(),
             fstype: "zfs".to_string(),
+            opts: String::new(),
             total: 3_000,
             used: 1_000,
         },
@@ -1297,6 +1302,7 @@ fn disk_mounts_filter_like_go_agent() {
             device: "tank/logs".to_string(),
             mountpoint: "/tank/logs".to_string(),
             fstype: "zfs".to_string(),
+            opts: String::new(),
             total: 2_500,
             used: 800,
         },
@@ -1309,12 +1315,68 @@ fn disk_mounts_filter_like_go_agent() {
 }
 
 #[test]
+fn disk_mounts_filter_remote_network_opts_like_go_agent() {
+    let mounts = vec![
+        DiskMount {
+            device: "/dev/sda1".to_string(),
+            mountpoint: "/".to_string(),
+            fstype: "ext4".to_string(),
+            opts: "rw,relatime".to_string(),
+            total: 1_000,
+            used: 400,
+        },
+        DiskMount {
+            device: "//nas/share".to_string(),
+            mountpoint: "/mnt/share".to_string(),
+            fstype: "ext4".to_string(),
+            opts: "rw,remote".to_string(),
+            total: 9_999,
+            used: 9_999,
+        },
+        DiskMount {
+            device: "cloud".to_string(),
+            mountpoint: "/mnt/cloud".to_string(),
+            fstype: "ext4".to_string(),
+            opts: "rw,network".to_string(),
+            total: 8_888,
+            used: 8_888,
+        },
+    ];
+
+    let disk = go_compatible_disk(&mounts);
+
+    assert_eq!(disk.total, 1_000);
+    assert_eq!(disk.used, 400);
+}
+
+#[test]
+fn parse_proc_mount_options_maps_opts_by_mountpoint() {
+    let options = parse_proc_mount_options(
+        r#"/dev/sda1 / ext4 rw,relatime 0 0
+//nas/share /mnt/share ext4 rw,remote 0 0
+cloud /mnt/cloud ext4 rw,network 0 0
+"#,
+    );
+
+    assert_eq!(options.get("/").map(String::as_str), Some("rw,relatime"));
+    assert_eq!(
+        options.get("/mnt/share").map(String::as_str),
+        Some("rw,remote")
+    );
+    assert_eq!(
+        options.get("/mnt/cloud").map(String::as_str),
+        Some("rw,network")
+    );
+}
+
+#[test]
 fn disk_mounts_honor_include_mountpoints_like_go_agent() {
     let mounts = vec![
         DiskMount {
             device: "/dev/sda1".to_string(),
             mountpoint: "/".to_string(),
             fstype: "ext4".to_string(),
+            opts: String::new(),
             total: 1_000,
             used: 400,
         },
@@ -1322,6 +1384,7 @@ fn disk_mounts_honor_include_mountpoints_like_go_agent() {
             device: "tmpfs".to_string(),
             mountpoint: "/run".to_string(),
             fstype: "tmpfs".to_string(),
+            opts: String::new(),
             total: 2_000,
             used: 100,
         },
@@ -1329,6 +1392,7 @@ fn disk_mounts_honor_include_mountpoints_like_go_agent() {
             device: "/dev/sdb1".to_string(),
             mountpoint: "/data".to_string(),
             fstype: "ext4".to_string(),
+            opts: String::new(),
             total: 3_000,
             used: 500,
         },

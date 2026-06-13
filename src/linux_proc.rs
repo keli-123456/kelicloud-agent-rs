@@ -54,6 +54,7 @@ pub struct DiskMount {
     pub device: String,
     pub mountpoint: String,
     pub fstype: String,
+    pub opts: String,
     pub total: i64,
     pub used: i64,
 }
@@ -1131,6 +1132,30 @@ pub fn collect_disk_values_with_mountpoints(
     }
 
     go_compatible_disk_from_mountpoint_lookup(include_mountpoints, disk_usage_for_mountpoint)
+}
+
+pub fn collect_proc_mount_options() -> HashMap<String, String> {
+    if !linux_supported() {
+        return HashMap::new();
+    }
+
+    fs::read_to_string("/proc/mounts")
+        .map(|contents| parse_proc_mount_options(&contents))
+        .unwrap_or_default()
+}
+
+pub fn parse_proc_mount_options(contents: &str) -> HashMap<String, String> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 4 {
+                return None;
+            }
+
+            Some((decode_proc_mount_field(fields[1]), fields[3].to_string()))
+        })
+        .collect()
 }
 
 pub fn parse_net_dev(contents: &str) -> NetworkTotals {
@@ -2575,6 +2600,11 @@ fn is_physical_disk(mount: &DiskMount) -> bool {
         return false;
     }
 
+    let opts = mount.opts.to_lowercase();
+    if opts.contains("remote") || opts.contains("network") {
+        return false;
+    }
+
     !mount.device.starts_with("/dev/loop")
 }
 
@@ -2615,6 +2645,32 @@ fn disk_usage_for_mountpoint(path: &str) -> Option<DiskValues> {
 #[cfg(not(target_os = "linux"))]
 fn disk_usage_for_mountpoint(_path: &str) -> Option<DiskValues> {
     None
+}
+
+fn decode_proc_mount_field(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'\\' && index + 3 < bytes.len() {
+            let octal = &bytes[index + 1..index + 4];
+            if octal.iter().all(u8::is_ascii_digit) {
+                if let Ok(text) = std::str::from_utf8(octal) {
+                    if let Ok(value) = u8::from_str_radix(text, 8) {
+                        decoded.push(value);
+                        index += 4;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 #[cfg(target_os = "linux")]

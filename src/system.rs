@@ -394,14 +394,17 @@ impl SystemSnapshotCollector {
         };
 
         let disks = sysinfo::Disks::new_with_refreshed_list();
+        let mount_options = crate::linux_proc::collect_proc_mount_options();
         let disk_mounts = disks
             .iter()
             .map(|disk| {
                 let total = disk.total_space() as i64;
                 let available = disk.available_space() as i64;
+                let mountpoint = disk.mount_point().to_string_lossy().into_owned();
                 crate::linux_proc::DiskMount {
                     device: disk.name().to_string_lossy().into_owned(),
-                    mountpoint: disk.mount_point().to_string_lossy().into_owned(),
+                    opts: mount_options.get(&mountpoint).cloned().unwrap_or_default(),
+                    mountpoint,
                     fstype: disk.file_system().to_string_lossy().into_owned(),
                     total,
                     used: total.saturating_sub(available),
