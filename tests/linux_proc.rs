@@ -15,7 +15,8 @@ use kelicloud_agent_rs::linux_proc::{
     parse_os_release_pretty_name, parse_proc_stat_cpu_sample, parse_public_ipv4_response,
     parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
     proc_metrics_from_parts, proxmox_os_name_from_parts, public_ipv4_probe_urls,
-    public_ipv6_probe_urls, reset_date_ymd, reset_timestamp_for_day, resolve_host_with_dns_server,
+    public_ipv6_probe_urls, reset_date_ymd, reset_timestamp_for_day,
+    resolve_detailed_gpu_command_path_from_lookup, resolve_host_with_dns_server,
     rocm_smi_command_path, sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts,
     DiskMount, MemoryValues, NetworkFilter, NetworkTotals,
 };
@@ -943,6 +944,32 @@ fn detailed_gpu_parsers_zero_negative_unsigned_fields_like_go_agent() {
 fn detailed_gpu_command_paths_match_go_agent_linux_paths() {
     assert_eq!(nvidia_smi_command_path(), "/usr/bin/nvidia-smi");
     assert_eq!(rocm_smi_command_path(), "/opt/rocm/bin/rocm-smi");
+}
+
+#[test]
+fn detailed_gpu_command_resolution_matches_go_agent_start_fallback() {
+    assert_eq!(
+        resolve_detailed_gpu_command_path_from_lookup(
+            "/usr/bin/nvidia-smi",
+            true,
+            Some("/custom/bin/nvidia-smi")
+        )
+        .as_deref(),
+        Some("/usr/bin/nvidia-smi")
+    );
+    assert_eq!(
+        resolve_detailed_gpu_command_path_from_lookup(
+            "/usr/bin/nvidia-smi",
+            false,
+            Some("/custom/bin/nvidia-smi")
+        )
+        .as_deref(),
+        Some("/custom/bin/nvidia-smi")
+    );
+    assert_eq!(
+        resolve_detailed_gpu_command_path_from_lookup("/usr/bin/nvidia-smi", false, None),
+        None
+    );
 }
 
 #[test]

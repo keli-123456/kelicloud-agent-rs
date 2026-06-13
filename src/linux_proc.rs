@@ -2045,9 +2045,8 @@ pub fn collect_detailed_gpu_metrics_result() -> Result<Vec<GpuMetric>, String> {
 
     let mut errors = Vec::new();
 
-    if let Ok(output) = Command::new(nvidia_smi_command_path())
-        .args(["-q", "-x"])
-        .output()
+    if let Ok(output) =
+        run_detailed_gpu_command(nvidia_smi_command_path(), "nvidia-smi", &["-q", "-x"])
     {
         if output.status.success() {
             let metrics = parse_nvidia_smi_xml(&String::from_utf8_lossy(&output.stdout));
@@ -2062,10 +2061,11 @@ pub fn collect_detailed_gpu_metrics_result() -> Result<Vec<GpuMetric>, String> {
         errors.push("nvidia-smi not found".to_string());
     }
 
-    if let Ok(output) = Command::new(rocm_smi_command_path())
-        .args(["--showallinfo", "--json"])
-        .output()
-    {
+    if let Ok(output) = run_detailed_gpu_command(
+        rocm_smi_command_path(),
+        "rocm-smi",
+        &["--showallinfo", "--json"],
+    ) {
         if output.status.success() {
             let metrics = parse_amd_rocm_smi_json(&String::from_utf8_lossy(&output.stdout));
             if !metrics.is_empty() {
@@ -2093,9 +2093,8 @@ pub fn collect_detailed_gpu_models_result() -> Result<Vec<String>, String> {
 
     let mut errors = Vec::new();
 
-    if let Ok(output) = Command::new(nvidia_smi_command_path())
-        .args(["-q", "-x"])
-        .output()
+    if let Ok(output) =
+        run_detailed_gpu_command(nvidia_smi_command_path(), "nvidia-smi", &["-q", "-x"])
     {
         if output.status.success() {
             let models = parse_nvidia_smi_xml(&String::from_utf8_lossy(&output.stdout))
@@ -2114,10 +2113,11 @@ pub fn collect_detailed_gpu_models_result() -> Result<Vec<String>, String> {
         errors.push("nvidia-smi not found".to_string());
     }
 
-    if let Ok(output) = Command::new(rocm_smi_command_path())
-        .args(["--showallinfo", "--json"])
-        .output()
-    {
+    if let Ok(output) = run_detailed_gpu_command(
+        rocm_smi_command_path(),
+        "rocm-smi",
+        &["--showallinfo", "--json"],
+    ) {
         if output.status.success() {
             let models = parse_amd_rocm_smi_json(&String::from_utf8_lossy(&output.stdout))
                 .into_iter()
@@ -2144,6 +2144,54 @@ pub fn nvidia_smi_command_path() -> &'static str {
 
 pub fn rocm_smi_command_path() -> &'static str {
     "/opt/rocm/bin/rocm-smi"
+}
+
+fn run_detailed_gpu_command(
+    primary_path: &str,
+    command_name: &str,
+    args: &[&str],
+) -> Result<std::process::Output, String> {
+    let command_path = resolve_detailed_gpu_command_path(primary_path, command_name)
+        .ok_or_else(|| format!("{command_name} not found"))?;
+    Command::new(command_path)
+        .args(args)
+        .output()
+        .map_err(|_| format!("{command_name} not found"))
+}
+
+fn resolve_detailed_gpu_command_path(primary_path: &str, command_name: &str) -> Option<String> {
+    let primary_exists = Path::new(primary_path).is_file();
+    let path_lookup = if primary_exists {
+        None
+    } else {
+        find_command_in_path(command_name)
+    };
+    resolve_detailed_gpu_command_path_from_lookup(
+        primary_path,
+        primary_exists,
+        path_lookup.as_deref(),
+    )
+}
+
+pub fn resolve_detailed_gpu_command_path_from_lookup(
+    primary_path: &str,
+    primary_exists: bool,
+    path_lookup: Option<&str>,
+) -> Option<String> {
+    if primary_exists {
+        Some(primary_path.to_string())
+    } else {
+        path_lookup.map(str::to_string)
+    }
+}
+
+fn find_command_in_path(command_name: &str) -> Option<String> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(command_name))
+            .find(|candidate| candidate.is_file())
+            .map(|candidate| candidate.to_string_lossy().into_owned())
+    })
 }
 
 fn command_output_error(command: &str, output: &std::process::Output) -> String {
