@@ -44,6 +44,25 @@ pub trait ControlMessageHandler {
     fn handle(&mut self, message: BackendMessage);
 }
 
+pub trait BasicInfoProvider {
+    fn basic_info(&self) -> BasicInfo;
+}
+
+impl BasicInfoProvider for BasicInfo {
+    fn basic_info(&self) -> BasicInfo {
+        self.clone()
+    }
+}
+
+impl<F> BasicInfoProvider for F
+where
+    F: Fn() -> BasicInfo,
+{
+    fn basic_info(&self) -> BasicInfo {
+        self()
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct NoopControlMessageHandler;
 
@@ -81,9 +100,9 @@ impl LoopDelay for ThreadLoopDelay {
     }
 }
 
-pub fn run_once<H, W, G, C>(
+pub fn run_once<H, W, G, C, B>(
     config: &AgentConfig,
-    basic_info: &BasicInfo,
+    basic_info_provider: &B,
     report_generator: &G,
     http: &mut H,
     websocket: &mut W,
@@ -94,10 +113,12 @@ where
     W: WebSocketTransport,
     G: ReportGenerator,
     C: ControlMessageHandler,
+    B: BasicInfoProvider,
 {
     let headers = access_headers(config);
     let basic_info_url = build_basic_info_url(&config.endpoint, &config.token)?;
-    upload_basic_info_with_legacy_retry(http, &basic_info_url, &headers, basic_info)?;
+    let basic_info = basic_info_provider.basic_info();
+    upload_basic_info_with_legacy_retry(http, &basic_info_url, &headers, &basic_info)?;
 
     let report_url = build_report_ws_url(&config.endpoint, &config.token)?;
     let mut socket = websocket.connect_report(&report_url, &headers)?;
@@ -111,9 +132,9 @@ where
     Ok(())
 }
 
-pub fn run_once_with_ping<H, W, G, P, C>(
+pub fn run_once_with_ping<H, W, G, P, C, B>(
     config: &AgentConfig,
-    basic_info: &BasicInfo,
+    basic_info_provider: &B,
     report_generator: &G,
     ping_executor: &P,
     http: &mut H,
@@ -126,10 +147,12 @@ where
     G: ReportGenerator,
     P: PingExecutor,
     C: ControlMessageHandler,
+    B: BasicInfoProvider,
 {
     let headers = access_headers(config);
     let basic_info_url = build_basic_info_url(&config.endpoint, &config.token)?;
-    upload_basic_info_with_legacy_retry(http, &basic_info_url, &headers, basic_info)?;
+    let basic_info = basic_info_provider.basic_info();
+    upload_basic_info_with_legacy_retry(http, &basic_info_url, &headers, &basic_info)?;
 
     let report_url = build_report_ws_url(&config.endpoint, &config.token)?;
     let mut socket = websocket.connect_report(&report_url, &headers)?;
@@ -143,9 +166,9 @@ where
     Ok(())
 }
 
-pub fn run_report_cycles<H, W, G, C>(
+pub fn run_report_cycles<H, W, G, C, B>(
     config: &AgentConfig,
-    basic_info: &BasicInfo,
+    basic_info_provider: &B,
     report_generator: &G,
     http: &mut H,
     websocket: &mut W,
@@ -157,11 +180,12 @@ where
     W: WebSocketTransport,
     G: ReportGenerator,
     C: ControlMessageHandler,
+    B: BasicInfoProvider,
 {
     let mut delay = NoopLoopDelay;
     run_report_cycles_with_delay(
         config,
-        basic_info,
+        basic_info_provider,
         report_generator,
         http,
         websocket,
@@ -171,9 +195,9 @@ where
     )
 }
 
-pub fn run_report_cycles_with_delay<H, W, G, C, D>(
+pub fn run_report_cycles_with_delay<H, W, G, C, D, B>(
     config: &AgentConfig,
-    basic_info: &BasicInfo,
+    basic_info_provider: &B,
     report_generator: &G,
     http: &mut H,
     websocket: &mut W,
@@ -187,11 +211,12 @@ where
     G: ReportGenerator,
     C: ControlMessageHandler,
     D: LoopDelay,
+    B: BasicInfoProvider,
 {
     let ping_executor = NoopPingExecutor;
     run_report_cycles_with_ping_delay(
         config,
-        basic_info,
+        basic_info_provider,
         report_generator,
         &ping_executor,
         http,
@@ -202,9 +227,9 @@ where
     )
 }
 
-pub fn run_report_cycles_with_ping_delay<H, W, G, P, C, D>(
+pub fn run_report_cycles_with_ping_delay<H, W, G, P, C, D, B>(
     config: &AgentConfig,
-    basic_info: &BasicInfo,
+    basic_info_provider: &B,
     report_generator: &G,
     ping_executor: &P,
     http: &mut H,
@@ -220,17 +245,28 @@ where
     P: PingExecutor,
     C: ControlMessageHandler,
     D: LoopDelay,
+    B: BasicInfoProvider,
 {
     let headers = access_headers(config);
     let basic_info_url = build_basic_info_url(&config.endpoint, &config.token)?;
-    upload_basic_info_with_legacy_retry(http, &basic_info_url, &headers, basic_info)?;
 
     let report_url = build_report_ws_url(&config.endpoint, &config.token)?;
     let heartbeat_every = heartbeat_interval_cycles(config.interval_seconds);
+    let basic_info_every =
+        basic_info_interval_cycles(config.interval_seconds, config.info_report_interval_minutes);
     let mut socket: Option<W::Socket> = None;
     let mut connect_failures = 0_u32;
 
     for cycle in 0..cycles {
+        if cycle % basic_info_every == 0 {
+            let basic_info = basic_info_provider.basic_info();
+            let upload_result =
+                upload_basic_info_with_legacy_retry(http, &basic_info_url, &headers, &basic_info);
+            if cycle == 0 {
+                upload_result?;
+            }
+        }
+
         if socket.is_none() {
             match websocket.connect_report(&report_url, &headers) {
                 Ok(next_socket) => {
@@ -339,6 +375,22 @@ fn heartbeat_interval_cycles(interval_seconds: f64) -> usize {
     }
 
     (30.0 / interval_seconds).ceil().max(1.0) as usize
+}
+
+fn basic_info_interval_cycles(
+    report_interval_seconds: f64,
+    info_report_interval_minutes: u64,
+) -> usize {
+    if !report_interval_seconds.is_finite()
+        || report_interval_seconds <= 0.0
+        || info_report_interval_minutes == 0
+    {
+        return 1;
+    }
+
+    ((info_report_interval_minutes as f64 * 60.0) / report_interval_seconds)
+        .ceil()
+        .max(1.0) as usize
 }
 
 pub fn startup_summary(config: &AgentConfig) -> String {

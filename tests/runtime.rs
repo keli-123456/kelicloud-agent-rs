@@ -273,6 +273,87 @@ fn run_report_cycles_reconnects_after_send_failure() {
 }
 
 #[test]
+fn run_report_cycles_refreshes_basic_info_on_info_report_interval() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let uploaded_kernel_versions = Rc::new(RefCell::new(Vec::new()));
+    let mut config = test_config();
+    config.interval_seconds = 60.0;
+    config.info_report_interval_minutes = 1;
+    let mut http = FakeHttp::new(events.clone())
+        .with_uploaded_kernel_versions(uploaded_kernel_versions.clone());
+    let mut websocket = FakeWebSocketTransport::new(events.clone(), None);
+    let mut handler = RecordingHandler::default();
+    let rotating_provider = RotatingBasicInfoProvider::new(["6.8-a", "6.8-b"]);
+    let provider = || rotating_provider.basic_info();
+
+    run_report_cycles(
+        &config,
+        &provider,
+        &FixedReportGenerator(test_report(31.0)),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(
+        uploaded_kernel_versions.borrow().as_slice(),
+        ["6.8-a".to_string(), "6.8-b".to_string()]
+    );
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
+            "send_report",
+            "send_ping",
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "send_report",
+            "send_ping",
+        ]
+    );
+}
+
+#[test]
+fn run_report_cycles_keeps_reporting_when_periodic_basic_info_refresh_fails() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut config = test_config();
+    config.interval_seconds = 60.0;
+    config.info_report_interval_minutes = 1;
+    let mut http = FakeHttp::new(events.clone()).with_upload_failures_after_successes(1, 2);
+    let mut websocket = FakeWebSocketTransport::new(events.clone(), None);
+    let mut handler = RecordingHandler::default();
+
+    run_report_cycles(
+        &config,
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(31.0)),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
+            "send_report",
+            "send_ping",
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "upload_error",
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "upload_error",
+            "send_report",
+            "send_ping",
+        ]
+    );
+}
+
+#[test]
 fn run_report_cycles_with_delay_waits_between_cycles() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut config = test_config();
@@ -433,9 +514,40 @@ impl ReportGenerator for FixedReportGenerator {
     }
 }
 
+struct RotatingBasicInfoProvider {
+    kernel_versions: Vec<String>,
+    index: RefCell<usize>,
+}
+
+impl RotatingBasicInfoProvider {
+    fn new<const N: usize>(kernel_versions: [&str; N]) -> Self {
+        Self {
+            kernel_versions: kernel_versions
+                .into_iter()
+                .map(ToString::to_string)
+                .collect(),
+            index: RefCell::new(0),
+        }
+    }
+
+    fn basic_info(&self) -> BasicInfo {
+        let mut basic_info = test_basic_info();
+        let mut index = self.index.borrow_mut();
+        let kernel_version = self
+            .kernel_versions
+            .get(*index)
+            .cloned()
+            .unwrap_or_else(|| self.kernel_versions.last().cloned().unwrap_or_default());
+        *index += 1;
+        basic_info.kernel_version = kernel_version;
+        basic_info
+    }
+}
+
 struct FakeHttp {
     events: Rc<RefCell<Vec<String>>>,
     upload_failures_remaining: Rc<RefCell<usize>>,
+    upload_failures_after_successes: Rc<RefCell<Option<(usize, usize)>>>,
     uploaded_kernel_versions: Rc<RefCell<Vec<String>>>,
 }
 
@@ -444,12 +556,18 @@ impl FakeHttp {
         Self {
             events,
             upload_failures_remaining: Rc::new(RefCell::new(0)),
+            upload_failures_after_successes: Rc::new(RefCell::new(None)),
             uploaded_kernel_versions: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
     fn with_upload_failures(self, failures: usize) -> Self {
         *self.upload_failures_remaining.borrow_mut() = failures;
+        self
+    }
+
+    fn with_upload_failures_after_successes(self, successes: usize, failures: usize) -> Self {
+        *self.upload_failures_after_successes.borrow_mut() = Some((successes, failures));
         self
     }
 
@@ -478,6 +596,22 @@ impl HttpTransport for FakeHttp {
             *failures -= 1;
             self.events.borrow_mut().push("upload_error".to_string());
             return Err(TransportError::RequestFailed("legacy schema".to_string()));
+        }
+        drop(failures);
+
+        let mut delayed_failures = self.upload_failures_after_successes.borrow_mut();
+        if let Some((successes_before_failure, failures_remaining)) = delayed_failures.as_mut() {
+            if *successes_before_failure == 0 && *failures_remaining > 0 {
+                *failures_remaining -= 1;
+                self.events.borrow_mut().push("upload_error".to_string());
+                if *failures_remaining == 0 {
+                    *delayed_failures = None;
+                }
+                return Err(TransportError::RequestFailed(
+                    "periodic upload failed".to_string(),
+                ));
+            }
+            *successes_before_failure = successes_before_failure.saturating_sub(1);
         }
         Ok(())
     }

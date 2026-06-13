@@ -28,8 +28,11 @@ fn main() {
 
     println!("{}", startup_summary(&config));
 
-    let mut collector = SystemSnapshotCollector::from_config(&config);
-    let basic_info = collector.collect().to_basic_info(env!("CARGO_PKG_VERSION"));
+    let basic_info_provider = || {
+        let mut collector = SystemSnapshotCollector::from_config(&config);
+        collector.collect().to_basic_info(env!("CARGO_PKG_VERSION"))
+    };
+    let collector = SystemSnapshotCollector::from_config(&config);
     let cn_connectivity_state = CnConnectivityState::default();
     cn_connectivity_state.start_probe_loop();
     let report_generator = CnConnectivityReportGenerator::new(
@@ -50,7 +53,7 @@ fn main() {
     let result = if config.once {
         run_once_with_ping(
             &config,
-            &basic_info,
+            &basic_info_provider,
             &report_generator,
             &ping_executor,
             &mut http,
@@ -61,7 +64,7 @@ fn main() {
         let mut delay = ThreadLoopDelay;
         run_report_cycles_with_ping_delay(
             &config,
-            &basic_info,
+            &basic_info_provider,
             &report_generator,
             &ping_executor,
             &mut http,
