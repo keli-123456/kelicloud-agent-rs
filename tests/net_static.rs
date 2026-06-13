@@ -1,0 +1,89 @@
+use kelicloud_agent_rs::linux_proc::{
+    parse_net_static_total_between, NetworkFilter, NetworkTotals,
+};
+use kelicloud_agent_rs::net_static::{InterfaceCounter, NetStaticSampler, NetStaticSamplerConfig};
+use std::fs;
+
+#[test]
+fn sampler_records_deltas_and_flushes_go_compatible_json() {
+    let path = temp_net_static_path("delta");
+    let mut sampler = NetStaticSampler::with_config(NetStaticSamplerConfig {
+        path: path.clone(),
+        data_preserve_days: 31.0,
+        detect_interval_seconds: 2.0,
+        save_interval_seconds: 600.0,
+        nics: Vec::new(),
+    });
+    let filter = NetworkFilter::default();
+
+    sampler.sample(100, &[InterfaceCounter::new("eth0", 1_000, 2_000)]);
+    sampler.sample(101, &[InterfaceCounter::new("eth0", 1_100, 2_200)]);
+    assert_eq!(
+        sampler.total_between(0, 200, &filter),
+        NetworkTotals::default()
+    );
+
+    sampler.sample(102, &[InterfaceCounter::new("eth0", 1_300, 2_500)]);
+    assert_eq!(
+        sampler.total_between(0, 200, &filter),
+        NetworkTotals {
+            total_up: 300,
+            total_down: 500,
+        }
+    );
+
+    sampler.flush(160).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed = parse_net_static_total_between(&contents, 0, 200, &filter).unwrap();
+    drop(sampler);
+    let _ = fs::remove_file(path);
+
+    assert!(contents.contains("\"interfaces\""));
+    assert!(contents.contains("\"config\""));
+    assert_eq!(parsed.total_up, 300);
+    assert_eq!(parsed.total_down, 500);
+}
+
+#[test]
+fn sampler_loads_existing_file_and_prunes_expired_records_on_flush() {
+    let path = temp_net_static_path("load");
+    fs::write(
+        &path,
+        r#"{"interfaces":{"eth0":[{"timestamp":1,"tx":10,"rx":20},{"timestamp":90000,"tx":30,"rx":40}]},"config":{"data_preserve_day":1,"detect_interval":2,"save_interval":600,"nics":[]}}"#,
+    )
+    .unwrap();
+
+    let mut sampler = NetStaticSampler::with_config(NetStaticSamplerConfig {
+        path: path.clone(),
+        data_preserve_days: 1.0,
+        detect_interval_seconds: 2.0,
+        save_interval_seconds: 600.0,
+        nics: Vec::new(),
+    });
+
+    assert_eq!(
+        sampler.total_between(0, 100_000, &NetworkFilter::default()),
+        NetworkTotals {
+            total_up: 40,
+            total_down: 60,
+        }
+    );
+
+    sampler.flush(90_000).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed =
+        parse_net_static_total_between(&contents, 0, 100_000, &NetworkFilter::default()).unwrap();
+    drop(sampler);
+    let _ = fs::remove_file(path);
+
+    assert_eq!(parsed.total_up, 30);
+    assert_eq!(parsed.total_down, 40);
+}
+
+fn temp_net_static_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-net-static-{name}-{}-{}.json",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ))
+}
