@@ -744,7 +744,6 @@ pub fn parse_nvidia_smi_xml(contents: &str) -> Vec<GpuMetric> {
                 &xml_tag_text(gpu, "gpu_temp").unwrap_or_default(),
             ),
         })
-        .filter(|metric| !metric.name.is_empty())
         .collect()
 }
 
@@ -781,7 +780,6 @@ pub fn parse_amd_rocm_smi_json(contents: &str) -> Vec<GpuMetric> {
                 "Temperature (Sensor junction) (C)",
             )),
         })
-        .filter(|metric| !metric.name.is_empty())
         .collect()
 }
 

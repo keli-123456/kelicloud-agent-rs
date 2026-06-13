@@ -502,6 +502,53 @@ fn parse_amd_rocm_smi_json_extracts_detailed_gpu_metrics() {
 }
 
 #[test]
+fn detailed_gpu_parsers_keep_entries_with_missing_names_like_go_agent() {
+    let nvidia_xml = r#"
+<nvidia_smi_log>
+  <gpu>
+    <fb_memory_usage>
+      <total>8192 MiB</total>
+      <used>512 MiB</used>
+    </fb_memory_usage>
+    <utilization>
+      <gpu_util>7 %</gpu_util>
+    </utilization>
+    <temperature>
+      <gpu_temp>41 C</gpu_temp>
+    </temperature>
+  </gpu>
+</nvidia_smi_log>
+"#;
+    let nvidia_metrics = parse_nvidia_smi_xml(nvidia_xml);
+
+    assert_eq!(nvidia_metrics.len(), 1);
+    assert_eq!(nvidia_metrics[0].name, "");
+    assert_eq!(nvidia_metrics[0].memory_total, 8192 * 1024 * 1024);
+    assert_eq!(nvidia_metrics[0].memory_used, 512 * 1024 * 1024);
+    assert_eq!(nvidia_metrics[0].utilization, 7.0);
+    assert_eq!(nvidia_metrics[0].temperature, 41);
+
+    let amd_json = r#"
+{
+  "card0": {
+    "GPU use (%)": "9",
+    "VRAM Total Memory (B)": "17179869184",
+    "VRAM Total Used Memory (B)": "268435456",
+    "Temperature (Sensor junction) (C)": "44"
+  }
+}
+"#;
+    let amd_metrics = parse_amd_rocm_smi_json(amd_json);
+
+    assert_eq!(amd_metrics.len(), 1);
+    assert_eq!(amd_metrics[0].name, "");
+    assert_eq!(amd_metrics[0].memory_total, 17_179_869_184);
+    assert_eq!(amd_metrics[0].memory_used, 268_435_456);
+    assert_eq!(amd_metrics[0].utilization, 9.0);
+    assert_eq!(amd_metrics[0].temperature, 44);
+}
+
+#[test]
 fn parse_meminfo_calculates_go_compatible_memory() {
     let contents = r#"
 MemTotal:        1000 kB
