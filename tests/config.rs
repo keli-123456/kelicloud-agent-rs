@@ -187,6 +187,27 @@ fn config_supports_go_agent_metric_options() {
 }
 
 #[test]
+fn config_ignores_deprecated_go_agent_memory_mode_available_flag() {
+    for deprecated_flag in ["--memory-mode-available", "-memory-mode-available"] {
+        let config = AgentConfig::from_args_and_env(
+            [
+                "kelicloud-agent-rs",
+                "--endpoint",
+                "https://cli.example.com",
+                "--token",
+                "cli-token",
+                deprecated_flag,
+            ],
+            |_| None,
+        )
+        .unwrap();
+
+        assert!(!config.memory_include_cache);
+        assert!(!config.memory_report_raw_used);
+    }
+}
+
+#[test]
 fn config_accepts_go_agent_custom_dns_option() {
     let from_cli = AgentConfig::from_args_and_env(
         [

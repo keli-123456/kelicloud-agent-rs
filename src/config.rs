@@ -208,6 +208,7 @@ impl AgentConfig {
                 "--memory-exclude-bcf" => {
                     memory_report_raw_used = true;
                 }
+                "--memory-mode-available" | "-memory-mode-available" => {}
                 "--enable-gpu" | "--gpu" => {
                     enable_gpu = true;
                 }
