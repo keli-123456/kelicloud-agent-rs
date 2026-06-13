@@ -289,6 +289,35 @@ pub fn parse_cpuinfo_name(contents: &str) -> Option<String> {
     None
 }
 
+fn parse_cpuinfo_vendor_family_name(contents: &str) -> Option<String> {
+    let mut vendor = "";
+    let mut family = "";
+
+    for line in contents.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+
+        match key.trim() {
+            "vendor_id" if vendor.is_empty() => vendor = value.trim(),
+            "cpu family" if family.is_empty() => family = value.trim(),
+            _ => {}
+        }
+
+        if !vendor.is_empty() && !family.is_empty() {
+            break;
+        }
+    }
+
+    let name = format!("{vendor} {family}");
+    let name = name.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
 pub fn parse_lscpu_model_name(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let Some((key, value)) = line.split_once(':') else {
@@ -318,6 +347,10 @@ pub fn cpu_name_from_sources(
 
     if let Some(name) = sysinfo_brand.map(str::trim).filter(|name| !name.is_empty()) {
         return name.to_string();
+    }
+
+    if let Some(name) = cpuinfo_contents.and_then(parse_cpuinfo_vendor_family_name) {
+        return name;
     }
 
     if let Some(name) = cpuinfo_contents.and_then(parse_cpuinfo_name) {

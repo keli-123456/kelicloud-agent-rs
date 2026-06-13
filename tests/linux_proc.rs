@@ -337,7 +337,7 @@ cpu family  : 6
     assert_eq!(parse_cpuinfo_name(cpuinfo_vendor_family), None);
     assert_eq!(
         cpu_name_from_sources(None, Some("  "), Some(cpuinfo_vendor_family)),
-        "Unknown"
+        "GenuineIntel 6"
     );
     assert_eq!(cpu_name_from_sources(None, None, None), "Unknown");
 }
