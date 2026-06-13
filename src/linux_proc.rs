@@ -3081,6 +3081,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
     use std::thread;
+    use std::time::{Duration, Instant};
 
     #[derive(Clone)]
     struct StaticResolver {
@@ -3121,8 +3122,8 @@ mod tests {
             Some("203.0.113.10")
         );
 
-        v4_server.join().unwrap();
-        drop(v6_server);
+        assert!(v4_server.join().unwrap());
+        assert!(!v6_server.join().unwrap());
 
         let (v4_listener, v6_listener, port) = bind_dual_stack_loopback_listeners();
         let v4_server = serve_one_response(v4_listener, "ip=203.0.113.10\n");
@@ -3147,8 +3148,8 @@ mod tests {
             Some("2001:db8::1")
         );
 
-        v6_server.join().unwrap();
-        drop(v4_server);
+        assert!(v6_server.join().unwrap());
+        assert!(!v4_server.join().unwrap());
     }
 
     fn bind_dual_stack_loopback_listeners() -> (TcpListener, TcpListener, u16) {
@@ -3158,18 +3159,34 @@ mod tests {
         (v4, v6, port)
     }
 
-    fn serve_one_response(listener: TcpListener, body: &'static str) -> thread::JoinHandle<()> {
+    fn serve_one_response(listener: TcpListener, body: &'static str) -> thread::JoinHandle<bool> {
         thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 512];
-            let _ = stream.read(&mut request);
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            )
-            .unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_millis(250);
+
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut request = [0_u8; 512];
+                        let _ = stream.read(&mut request);
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                        .unwrap();
+                        return true;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return false;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => return false,
+                }
+            }
         })
     }
 }
