@@ -28,15 +28,62 @@ COOKIE_JAR=""
 BACKEND_LOG=""
 AGENT_LOG=""
 HELPER_LOG=""
+CURRENT_STAGE="startup"
 
 log() {
     printf '%s\n' "$*"
 }
 
+github_escape() {
+    local value="$1"
+    value="${value//'%'/'%25'}"
+    value="${value//$'\r'/'%0D'}"
+    value="${value//$'\n'/'%0A'}"
+    printf '%s' "${value}"
+}
+
+emit_error() {
+    local message="$1"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        printf '::error title=Local backend smoke::%s\n' "$(github_escape "${message}")"
+    fi
+    printf 'error: %s\n' "${message}" >&2
+}
+
 die() {
-    printf 'error: %s\n' "$*" >&2
+    emit_error "$*"
     exit 1
 }
+
+set_stage() {
+    CURRENT_STAGE="$1"
+    log "==> ${CURRENT_STAGE}"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        printf '::notice title=Local backend smoke::%s\n' "$(github_escape "${CURRENT_STAGE}")"
+    fi
+}
+
+log_tail_for_error() {
+    local output=""
+    local file
+    for file in "${BACKEND_LOG}" "${AGENT_LOG}" "${HELPER_LOG}"; do
+        if [[ -n "${file}" && -f "${file}" ]]; then
+            output+=$'\n\n'
+            output+="--- ${file} tail ---"
+            output+=$'\n'
+            output+="$(tail -n 40 "${file}" 2>/dev/null || true)"
+        fi
+    done
+    printf '%s' "${output}"
+}
+
+on_error() {
+    local status="$?"
+    trap - ERR
+    emit_error "failed during ${CURRENT_STAGE} (exit ${status})$(log_tail_for_error)"
+    exit "${status}"
+}
+trap on_error ERR
 
 repo_root() {
     local script_dir
@@ -361,16 +408,27 @@ main() {
     fi
     WORK_DIR="${SMOKE_WORK_DIR}"
 
+    set_stage "wait for MySQL"
     wait_for_mysql
+    set_stage "prepare backend"
     prepare_backend
+    set_stage "start backend"
     start_backend
+    set_stage "login admin"
     login_admin
+    set_stage "create smoke client"
     create_client
+    set_stage "start agent"
     start_agent "${root}"
+    set_stage "enable CN connectivity probe"
     enable_cn_connectivity_probe
+    set_stage "trigger exec"
     trigger_exec
+    set_stage "trigger ping"
     trigger_ping
+    set_stage "trigger terminal"
     trigger_terminal "${root}"
+    set_stage "print smoke summary"
     print_summary "${root}"
 
     log "Local backend smoke finished. Logs are in ${SMOKE_LOG_DIR}"

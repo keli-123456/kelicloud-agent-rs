@@ -20,6 +20,9 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
     assert!(script.contains("smoke: task_result_uploaded"));
     assert!(script.contains("smoke: terminal_session_started"));
     assert!(script.contains("smoke: cn_connectivity_config_received"));
+    assert!(script.contains("trap on_error ERR"));
+    assert!(script.contains("CURRENT_STAGE"));
+    assert!(script.contains("::error title=Local backend smoke::"));
 }
 
 #[test]
