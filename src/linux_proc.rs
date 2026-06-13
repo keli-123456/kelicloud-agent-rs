@@ -2142,6 +2142,9 @@ fn command_output_error(command: &str, output: &std::process::Output) -> String 
 }
 
 const PUBLIC_IPV4_PROBE_URLS: &[&str] = &[
+    "https://www.visa.cn/cdn-cgi/trace",
+    "https://www.qualcomm.cn/cdn-cgi/trace",
+    "https://www.toutiao.com/stream/widget/local_weather/data/",
     "https://edge-ip.html.zone/geo",
     "https://vercel-ip.html.zone/geo",
     "http://ipv4.ip.sb",

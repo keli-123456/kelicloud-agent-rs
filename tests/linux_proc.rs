@@ -470,6 +470,9 @@ fn public_ip_probe_urls_match_go_agent_order() {
     assert_eq!(
         public_ipv4_probe_urls(),
         &[
+            "https://www.visa.cn/cdn-cgi/trace",
+            "https://www.qualcomm.cn/cdn-cgi/trace",
+            "https://www.toutiao.com/stream/widget/local_weather/data/",
             "https://edge-ip.html.zone/geo",
             "https://vercel-ip.html.zone/geo",
             "http://ipv4.ip.sb",
