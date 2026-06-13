@@ -33,3 +33,27 @@ fn smoke_workflow_path() -> PathBuf {
         .join("workflows")
         .join("smoke.yml")
 }
+
+#[test]
+fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
+    let workflow = std::fs::read_to_string(local_backend_smoke_workflow_path()).unwrap();
+
+    assert!(workflow.contains("name: Local Backend Smoke"));
+    assert!(workflow.contains("push:"));
+    assert!(workflow.contains("workflow_dispatch:"));
+    assert!(workflow.contains("mysql:8.4"));
+    assert!(workflow.contains("KOMARI_DB_HOST: 127.0.0.1"));
+    assert!(workflow.contains("actions/setup-go@v5"));
+    assert!(workflow.contains("actions/setup-node@v4"));
+    assert!(workflow.contains("rustup toolchain install stable"));
+    assert!(workflow.contains("bash scripts/smoke-local-backend.sh"));
+    assert!(workflow.contains("actions/upload-artifact@v4"));
+    assert!(workflow.contains("smoke-logs/*"));
+}
+
+fn local_backend_smoke_workflow_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".github")
+        .join("workflows")
+        .join("local-backend-smoke.yml")
+}

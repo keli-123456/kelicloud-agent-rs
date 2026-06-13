@@ -1,3 +1,4 @@
+pub mod admin_terminal_smoke;
 pub mod auto_discovery;
 pub mod backend_protocol_smoke;
 pub mod cn_connectivity;

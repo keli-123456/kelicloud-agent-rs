@@ -2,15 +2,18 @@
 
 Status: cross-platform backend protocol smoke has run against a real kelicloud
 backend and passed the data-plane checks: basic-info upload, report WebSocket
-connection, report send, and database persistence. Full Linux live smoke has
-not run yet, so ping, exec, terminal, and CN connectivity control-plane evidence
-is still pending.
+connection, report send, and database persistence. A repeatable local-backend
+Linux smoke entry point now exists for control-plane checks, but the first
+GitHub-hosted run is still pending.
 
 ## Smoke Entry Points
 
 - Cross-platform backend data-plane: `cargo run --locked --bin backend-protocol-smoke`.
 - Local Linux: `scripts/smoke-live.sh --mode live --duration 120`.
+- Local real backend Linux: `scripts/smoke-local-backend.sh`.
 - GitHub Actions: manually run the `Smoke` workflow.
+- GitHub Actions real backend: the `Local Backend Smoke` workflow runs on pushes
+  to `main` and can also be run manually.
 - Required secret: `KELICLOUD_SMOKE_TOKEN`.
 - Alternative required secret: `KELICLOUD_SMOKE_AUTO_DISCOVERY_KEY`.
 - Optional secrets: `KELICLOUD_SMOKE_ENDPOINT`,
@@ -40,8 +43,10 @@ proves the current HTTP/WebSocket payload shape is accepted by the real backend.
 
 Missing evidence from that run is expected because no live panel action was
 triggered: ping task result upload, exec task result upload, terminal session,
-and CN connectivity config receipt. Those remain the scope of the Linux live
-smoke checklist below.
+and CN connectivity config receipt. `scripts/smoke-local-backend.sh` now covers
+those automatically by starting kelicloud, creating a smoke client, enabling CN
+connectivity settings, dispatching an exec task, creating a TCP ping task, and
+opening an admin WebSSH terminal through `admin-terminal-smoke`.
 
 ## Static Parity Evidence
 
@@ -98,6 +103,12 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
   compatibility summary. Use `--require-summary-pass` only for runs where the
   panel actions are intentionally triggered; it fails the smoke when evidence is
   missing or failed.
+- The local backend smoke path clones the backend, prepares the current web
+  bundle through `scripts/prepare-frontend.sh`, starts a MySQL-backed kelicloud
+  server, creates a smoke client, triggers exec/ping/terminal/CN actions through
+  real admin APIs, and runs `smoke-summary --require-pass`. Its companion
+  `Local Backend Smoke` workflow provides the Linux host that this Windows
+  workstation lacks.
 
 ## First Dynamic Smoke Checks
 
@@ -178,9 +189,7 @@ dynamic smoke produces logs:
 
 - Full agent live smoke needs a Linux execution environment because the agent
   binary intentionally exits on non-Linux platforms.
-- No online `AGENT_ENDPOINT` plus `AGENT_TOKEN` or
-  `AGENT_AUTO_DISCOVERY_KEY` is configured for repeatable remote smoke.
-- `gh` CLI is not installed locally, so this environment cannot dispatch
-  GitHub Actions workflows.
-- No local WSL distribution or Docker Linux environment is installed.
-- Public GitHub API shows `Smoke` workflow is active but has zero runs.
+- This workstation does not have bash, WSL, or Docker, so
+  `scripts/smoke-local-backend.sh` cannot be executed locally here.
+- The first `Local Backend Smoke` GitHub Actions run has not completed yet; its
+  result should become the first full Linux control-plane evidence record.

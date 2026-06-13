@@ -197,6 +197,21 @@ Linux shell on your workstation:
 7. Download the `kelicloud-agent-rs-smoke-logs` artifact after the run.
    It includes both raw `*.log` files and generated `*.summary.md` files.
 
+For a repeatable real-backend control-plane smoke, use the local backend smoke
+entry point on Linux:
+
+```bash
+scripts/smoke-local-backend.sh
+```
+
+That script clones `keli-123456/kelicloud`, prepares the web bundle with the
+backend's `scripts/prepare-frontend.sh`, starts a MySQL-backed kelicloud server,
+creates a client token, runs `kelicloud-agent-rs`, and then drives admin APIs
+for CN connectivity config, script exec, TCP ping, and WebSSH terminal. It ends
+by running `smoke-summary --require-pass` against the captured agent log. The
+same path runs automatically in the `Local Backend Smoke` GitHub Actions
+workflow on pushes to `main`.
+
 ## Release Builds
 
 GitHub Actions publishes Linux binaries when a version tag is pushed:

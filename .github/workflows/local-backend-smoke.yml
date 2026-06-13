@@ -1,0 +1,81 @@
+name: Local Backend Smoke
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-backend-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  KOMARI_DB_HOST: 127.0.0.1
+  KOMARI_DB_PORT: 3306
+  KOMARI_DB_USER: root
+  KOMARI_DB_PASS: rootpass
+  KOMARI_DB_NAME: komari
+  KELICLOUD_BACKEND_REF: main
+  KOMARI_FRONTEND_REF: main
+  SMOKE_LOG_DIR: smoke-logs
+
+jobs:
+  linux:
+    name: Linux Control Plane
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: komari
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.11"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install MySQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
+
+      - name: Run local backend smoke
+        run: bash scripts/smoke-local-backend.sh
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kelicloud-agent-rs-local-backend-smoke
+          path: smoke-logs/*
+          if-no-files-found: ignore
