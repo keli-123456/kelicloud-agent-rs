@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+const HIGH_LATENCY_THRESHOLD_MS: u128 = 1000;
+const HIGH_LATENCY_RETRIES: usize = 3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PingTask {
     pub task_id: u32,
@@ -96,17 +99,36 @@ impl Default for LinuxPingExecutor {
 
 impl PingExecutor for LinuxPingExecutor {
     fn run(&self, task: &PingTask) -> PingResult {
-        let value = match task.ping_type.as_str() {
+        let value = measure_with_high_latency_retries(|| match task.ping_type.as_str() {
             "icmp" => icmp_ping(&task.target, self.timeout),
             "tcp" => tcp_ping(&task.target, self.timeout),
             "http" => http_ping(&task.target, self.timeout),
             _ => None,
-        }
+        })
         .map(|latency| latency.min(i32::MAX as u128) as i32)
         .unwrap_or(-1);
 
         PingResult::now(task, value)
     }
+}
+
+fn measure_with_high_latency_retries<F>(mut measure: F) -> Option<u128>
+where
+    F: FnMut() -> Option<u128>,
+{
+    let first = measure()?;
+    if first <= HIGH_LATENCY_THRESHOLD_MS {
+        return Some(first);
+    }
+
+    for _ in 0..HIGH_LATENCY_RETRIES {
+        let next = measure()?;
+        if next <= HIGH_LATENCY_THRESHOLD_MS {
+            return Some(next);
+        }
+    }
+
+    None
 }
 
 pub fn parse_linux_ping_latency_ms(output: &str) -> Option<i32> {
@@ -226,7 +248,7 @@ fn split_explicit_host_port(target: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{host_without_port, socket_address_or_default};
+    use super::{host_without_port, measure_with_high_latency_retries, socket_address_or_default};
 
     #[test]
     fn socket_address_adds_default_port_to_ipv6_literal() {
@@ -241,5 +263,23 @@ mod tests {
             host_without_port("2607:f358:1a:e::ab0:39b7"),
             "2607:f358:1a:e::ab0:39b7"
         );
+    }
+
+    #[test]
+    fn high_latency_ping_retries_until_normal_latency_like_go_agent() {
+        let mut measurements = [Some(1200), Some(1300), Some(42)].into_iter();
+
+        let result = measure_with_high_latency_retries(|| measurements.next().unwrap());
+
+        assert_eq!(result, Some(42));
+    }
+
+    #[test]
+    fn high_latency_ping_returns_none_after_three_high_retries_like_go_agent() {
+        let mut measurements = [Some(1200), Some(1300), Some(1400), Some(1500)].into_iter();
+
+        let result = measure_with_high_latency_retries(|| measurements.next().unwrap());
+
+        assert_eq!(result, None);
     }
 }

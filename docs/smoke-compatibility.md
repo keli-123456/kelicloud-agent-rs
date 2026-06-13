@@ -31,6 +31,10 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
   upload to `/api/clients/task/result?token=...`.
 - Ping control messages upload `ping_result` with `task_id`, `ping_type`,
   `value`, and `finished_at`.
+- Ping high-latency behavior matches the Go agent: a first successful
+  measurement above 1000 ms is retried up to three times; a later measurement at
+  or below 1000 ms is reported, while repeated high latency or retry failure is
+  reported as `-1`.
 - Terminal control messages open `/api/clients/terminal?token=...&id=...`,
   create a Linux PTY, support input and resize messages, and send terminal
   output back over WebSocket.
@@ -70,34 +74,27 @@ dynamic smoke produces logs:
    acceptable, but exec, ping, or terminal requests may be delayed until the next
    report cycle and may not be processed while report sends are failing.
 
-2. Ping high-latency retry behavior
-
-   The Go agent retries high-latency ping results above 1000 ms up to three
-   times before reporting. The Rust agent currently reports the first successful
-   measurement. If panel ping quality indicators rely on that smoothing, Rust
-   may show more transient high-latency values.
-
-3. IDN endpoint handling
+2. IDN endpoint handling
 
    The Go agent explicitly converts report and terminal WebSocket URLs from IDN
    to ASCII. The Rust agent does not currently perform an explicit IDN
    conversion. Smoke should include an IDN endpoint only if production actually
    uses one.
 
-4. Auto-discovery and token recovery
+3. Auto-discovery and token recovery
 
    The Go agent has auto-discovery and invalid-token recovery hooks. The Rust
    prototype currently requires a fixed endpoint and token. This is not a
    problem for a static-token smoke test, but it is a deployment compatibility
    gap if production relies on auto-discovery.
 
-5. Auto-update
+4. Auto-update
 
    The Go agent checks for updates unless disabled. The Rust prototype does not
    implement auto-update. This is intentionally outside the first smoke path,
    but it matters before replacement rollout.
 
-6. Non-systemd installation
+5. Non-systemd installation
 
    The Go installer supports multiple init systems. The Rust installer currently
    targets systemd only. Runtime smoke can still pass, but installation parity is
