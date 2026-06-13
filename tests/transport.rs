@@ -2,7 +2,7 @@ use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::report::BasicInfo;
 use kelicloud_agent_rs::transport::{
     access_headers, build_basic_info_url, HttpTransport, ReportSocket, ReqwestHttpTransport,
-    TungsteniteWebSocketTransport, WebSocketTransport,
+    TransportError, TungsteniteWebSocketTransport, WebSocketTransport,
 };
 use std::io::{Read, Write};
 use std::net::{TcpListener, UdpSocket};
@@ -65,6 +65,113 @@ fn access_headers_include_cloudflare_pair_when_both_values_are_present() {
 fn access_headers_are_empty_when_cloudflare_pair_is_incomplete() {
     assert!(access_headers(&config_with_cf("cf-id", "")).is_empty());
     assert!(access_headers(&config_with_cf("", "cf-secret")).is_empty());
+}
+
+#[test]
+fn basic_info_upload_classifies_go_agent_invalid_token_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 25\r\n\r\n{\"error\":\"invalid token\"}",
+            )
+            .unwrap();
+    });
+    let mut transport = ReqwestHttpTransport::new(false).expect("transport");
+
+    let err = transport
+        .upload_basic_info(
+            &format!(
+                "http://127.0.0.1:{}/api/clients/uploadBasicInfo?token=secret-token",
+                addr.port()
+            ),
+            &[],
+            &basic_info(),
+        )
+        .unwrap_err();
+    server.join().unwrap();
+
+    assert_eq!(
+        err,
+        TransportError::InvalidClientToken {
+            operation: "upload basic info".to_string(),
+            token: "secret-token".to_string(),
+            status_code: 401,
+            detail: r#"{"error":"invalid token"}"#.to_string(),
+        }
+    );
+}
+
+#[test]
+fn websocket_connect_classifies_go_agent_invalid_token_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 25\r\n\r\n{\"error\":\"invalid token\"}",
+            )
+            .unwrap();
+    });
+    let mut transport = TungsteniteWebSocketTransport::new();
+
+    let err = match transport.connect_report(
+        &format!(
+            "ws://127.0.0.1:{}/api/clients/report?token=secret-token",
+            addr.port()
+        ),
+        &[],
+    ) {
+        Ok(_) => panic!("expected invalid token error"),
+        Err(error) => error,
+    };
+    server.join().unwrap();
+
+    assert_eq!(
+        err,
+        TransportError::InvalidClientToken {
+            operation: "connect websocket".to_string(),
+            token: "secret-token".to_string(),
+            status_code: 401,
+            detail: r#"{"error":"invalid token"}"#.to_string(),
+        }
+    );
+}
+
+#[test]
+fn basic_info_upload_keeps_other_unauthorized_responses_generic() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 13\r\n\r\naccess denied")
+            .unwrap();
+    });
+    let mut transport = ReqwestHttpTransport::new(false).expect("transport");
+
+    let err = transport
+        .upload_basic_info(
+            &format!(
+                "http://127.0.0.1:{}/api/clients/uploadBasicInfo?token=secret-token",
+                addr.port()
+            ),
+            &[],
+            &basic_info(),
+        )
+        .unwrap_err();
+    server.join().unwrap();
+
+    assert!(matches!(err, TransportError::RequestFailed(_)));
 }
 
 #[test]

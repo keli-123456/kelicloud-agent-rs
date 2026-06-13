@@ -21,6 +21,12 @@ pub enum TransportError {
     EmptyEndpoint,
     EmptyToken,
     UnsupportedScheme(String),
+    InvalidClientToken {
+        operation: String,
+        token: String,
+        status_code: u16,
+        detail: String,
+    },
     RequestFailed(String),
     SocketClosed,
 }
@@ -31,6 +37,21 @@ impl fmt::Display for TransportError {
             Self::EmptyEndpoint => write!(f, "endpoint is required"),
             Self::EmptyToken => write!(f, "token is required"),
             Self::UnsupportedScheme(scheme) => write!(f, "unsupported endpoint scheme: {scheme}"),
+            Self::InvalidClientToken {
+                operation,
+                status_code,
+                detail,
+                ..
+            } => {
+                if detail.is_empty() {
+                    write!(
+                        f,
+                        "invalid client token during {operation}: status={status_code}"
+                    )
+                } else {
+                    write!(f, "invalid client token during {operation}: {detail}")
+                }
+            }
             Self::RequestFailed(message) => write!(f, "request failed: {message}"),
             Self::SocketClosed => write!(f, "websocket closed"),
         }
@@ -142,9 +163,12 @@ impl HttpTransport for ReqwestHttpTransport {
 
         let status = response.status();
         let body = response.text().unwrap_or_default();
-        Err(TransportError::RequestFailed(format!(
-            "status={status} {body}"
-        )))
+        Err(classify_client_token_response(
+            "upload basic info",
+            &token_from_url(url),
+            status.as_u16(),
+            &body,
+        ))
     }
 }
 
@@ -252,8 +276,9 @@ pub(crate) fn connect_websocket_request(
     TransportError,
 > {
     if custom_dns.trim().is_empty() {
+        let token = token_from_request(&request);
         return tungstenite::connect(request)
-            .map_err(|error| TransportError::RequestFailed(error.to_string()));
+            .map_err(|error| classify_websocket_error("connect websocket", &token, error));
     }
 
     connect_websocket_with_custom_dns(request, custom_dns)
@@ -291,13 +316,18 @@ fn connect_websocket_with_custom_dns(
                 stream
                     .set_nodelay(true)
                     .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+                let token = token_from_request(&request);
                 return client_tls_with_config(request, stream, None, None).map_err(|error| {
-                    TransportError::RequestFailed(match error {
-                        tungstenite::handshake::HandshakeError::Failure(error) => error.to_string(),
-                        tungstenite::handshake::HandshakeError::Interrupted(_) => {
-                            "websocket handshake interrupted".to_string()
+                    match error {
+                        tungstenite::handshake::HandshakeError::Failure(error) => {
+                            classify_websocket_error("connect websocket", &token, error)
                         }
-                    })
+                        tungstenite::handshake::HandshakeError::Interrupted(_) => {
+                            TransportError::RequestFailed(
+                                "websocket handshake interrupted".to_string(),
+                            )
+                        }
+                    }
                 });
             }
             Err(error) => last_error = Some(error),
@@ -309,6 +339,113 @@ fn connect_websocket_with_custom_dns(
             .map(|error| error.to_string())
             .unwrap_or_else(|| "custom DNS returned no websocket addresses".to_string()),
     ))
+}
+
+fn classify_websocket_error(
+    operation: &str,
+    token: &str,
+    error: tungstenite::Error,
+) -> TransportError {
+    match error {
+        tungstenite::Error::Http(response) => {
+            let detail = response
+                .body()
+                .as_ref()
+                .map(|body| String::from_utf8_lossy(body).to_string())
+                .unwrap_or_default();
+            classify_client_token_response(operation, token, response.status().as_u16(), &detail)
+        }
+        error => TransportError::RequestFailed(error.to_string()),
+    }
+}
+
+fn classify_client_token_response(
+    operation: &str,
+    token: &str,
+    status_code: u16,
+    body: &str,
+) -> TransportError {
+    let detail = body.trim().to_string();
+    if indicates_invalid_client_token_response(status_code, &detail) {
+        return TransportError::InvalidClientToken {
+            operation: operation.to_string(),
+            token: token.trim().to_string(),
+            status_code,
+            detail,
+        };
+    }
+
+    if detail.is_empty() {
+        TransportError::RequestFailed(format!("status={status_code}"))
+    } else {
+        TransportError::RequestFailed(format!("status={status_code} {detail}"))
+    }
+}
+
+fn indicates_invalid_client_token_response(status_code: u16, body: &str) -> bool {
+    if status_code != 401 {
+        return false;
+    }
+
+    let body = body.trim().to_ascii_lowercase();
+    if body.is_empty() {
+        return false;
+    }
+
+    body.contains("invalid token")
+        || body.contains("token is required")
+        || body.contains("failed to validate token")
+}
+
+fn token_from_request(request: &tungstenite::handshake::client::Request) -> String {
+    request
+        .uri()
+        .query()
+        .map(token_from_query)
+        .unwrap_or_default()
+}
+
+fn token_from_url(url: &str) -> String {
+    url.split_once('?')
+        .map(|(_, query)| token_from_query(query))
+        .unwrap_or_default()
+}
+
+fn token_from_query(query: &str) -> String {
+    query
+        .split('&')
+        .filter_map(|part| part.split_once('='))
+        .find_map(|(key, value)| (key == "token").then(|| percent_decode(value)))
+        .unwrap_or_default()
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hi = hex_value(bytes[index + 1]);
+            let lo = hex_value(bytes[index + 2]);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                output.push((hi << 4) | lo);
+                index += 3;
+                continue;
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).to_string()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 impl TungsteniteReportSocket {

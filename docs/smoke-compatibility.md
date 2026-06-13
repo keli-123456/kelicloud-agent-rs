@@ -43,6 +43,10 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
 - The report loop drains buffered backend control messages at the start of each
   cycle and again after a successful report send, so queued exec, ping, and
   terminal requests do not have to wait behind the next report payload.
+- Basic-info upload and report WebSocket connection classify Go-agent-style
+  HTTP 401 invalid-token responses as typed invalid-token transport errors,
+  preserving the operation name, token, status code, and response body for
+  future auto-discovery recovery logic.
 - Cloudflare Access headers are supported for basic info, report WebSocket,
   terminal WebSocket, and task result upload.
 
@@ -100,11 +104,12 @@ dynamic smoke produces logs:
 
    The Rust prototype currently requires a fixed endpoint and token. It ignores
    Go-only flags such as `--auto-discovery`, has no `AGENT_AUTO_DISCOVERY_KEY`
-   field, does not persist `auto-discovery.json`, and surfaces 401 responses as
-   generic transport failures rather than typed invalid-token errors. This is
-   not a blocker for a static-token smoke test, but it is a deployment
-   compatibility gap if production relies on auto-discovery or stale-token
-   recovery.
+   field, and does not persist `auto-discovery.json`. It now classifies the
+   same invalid-token response shapes as typed transport errors, but it does not
+   yet clear cached discovery state, register, rotate the token, or retry the
+   failed operation. This is not a blocker for a static-token smoke test, but it
+   is a deployment compatibility gap if production relies on auto-discovery or
+   stale-token recovery.
 
 3. Auto-update
 
