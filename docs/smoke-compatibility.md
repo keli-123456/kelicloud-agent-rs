@@ -1,12 +1,14 @@
 # kelicloud-agent-rs Smoke Compatibility Notes
 
-Status: dynamic smoke has not run yet. GitHub recognizes the `Smoke` workflow,
-but the public workflow run list currently has no Smoke runs. A real run still
-needs `KELICLOUD_SMOKE_TOKEN` and either the `endpoint` workflow input or
-`KELICLOUD_SMOKE_ENDPOINT`.
+Status: cross-platform backend protocol smoke has run against a real kelicloud
+backend and passed the data-plane checks: basic-info upload, report WebSocket
+connection, report send, and database persistence. Full Linux live smoke has
+not run yet, so ping, exec, terminal, and CN connectivity control-plane evidence
+is still pending.
 
 ## Smoke Entry Points
 
+- Cross-platform backend data-plane: `cargo run --locked --bin backend-protocol-smoke`.
 - Local Linux: `scripts/smoke-live.sh --mode live --duration 120`.
 - GitHub Actions: manually run the `Smoke` workflow.
 - Required secret: `KELICLOUD_SMOKE_TOKEN`.
@@ -17,6 +19,29 @@ needs `KELICLOUD_SMOKE_TOKEN` and either the `endpoint` workflow input or
 - Optional inputs: `endpoint`, `mode`, `duration`, `expect_success_log`,
   `custom_dns`, `insecure`, `require_summary_pass`.
 - Smoke log summarizer: `cargo run --locked --bin smoke-summary -- <log-file>`.
+
+## Dynamic Smoke Evidence
+
+The backend protocol smoke helper exists for workstations that cannot execute
+the Linux-only agent binary. It uses the same `ReqwestHttpTransport` and
+`TungsteniteWebSocketTransport` implementations as the main agent, but feeds
+deterministic Linux-like payloads instead of collecting host metrics.
+
+Observed data-plane evidence from the first real-backend run:
+
+- `smoke: basic_info_uploaded`
+- `smoke: report_websocket_connected`
+- `smoke: report_sent`
+- `agent loop: completed`
+
+The backend database also persisted the smoke client as `linux/amd64` and wrote
+the latest report row with CPU, TCP/UDP connection, and network counters. This
+proves the current HTTP/WebSocket payload shape is accepted by the real backend.
+
+Missing evidence from that run is expected because no live panel action was
+triggered: ping task result upload, exec task result upload, terminal session,
+and CN connectivity config receipt. Those remain the scope of the Linux live
+smoke checklist below.
 
 ## Static Parity Evidence
 
@@ -151,8 +176,10 @@ dynamic smoke produces logs:
 
 ## Current Blockers
 
-- No local `AGENT_ENDPOINT` plus `AGENT_TOKEN` or `AGENT_AUTO_DISCOVERY_KEY` is
-  configured.
+- Full agent live smoke needs a Linux execution environment because the agent
+  binary intentionally exits on non-Linux platforms.
+- No online `AGENT_ENDPOINT` plus `AGENT_TOKEN` or
+  `AGENT_AUTO_DISCOVERY_KEY` is configured for repeatable remote smoke.
 - `gh` CLI is not installed locally, so this environment cannot dispatch
   GitHub Actions workflows.
 - No local WSL distribution or Docker Linux environment is installed.

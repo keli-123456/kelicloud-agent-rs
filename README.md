@@ -108,6 +108,17 @@ Installer render helpers are side-effect free and useful for review or CI:
 
 ## Live Smoke Test
 
+For a cross-platform data-plane check against a real backend, use the backend
+protocol smoke helper. It does not collect host metrics or run Linux-only
+control-plane handlers; it sends deterministic Linux-like basic info and report
+payloads through the same HTTP and WebSocket transports used by the agent:
+
+```bash
+AGENT_ENDPOINT=https://panel.example.com \
+AGENT_TOKEN=TOKEN \
+cargo run --locked --bin backend-protocol-smoke
+```
+
 Use the Linux-only smoke script when you want to test against a real kelicloud
 backend without committing secrets:
 
