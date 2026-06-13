@@ -279,9 +279,10 @@ cpu family  : 6
         cpu_name_from_sources(None, Some("  "), Some(cpuinfo)),
         "ARMv8 Processor rev 1"
     );
+    assert_eq!(parse_cpuinfo_name(cpuinfo_vendor_family), None);
     assert_eq!(
         cpu_name_from_sources(None, Some("  "), Some(cpuinfo_vendor_family)),
-        "GenuineIntel 6"
+        "Unknown"
     );
     assert_eq!(cpu_name_from_sources(None, None, None), "Unknown");
 }

@@ -272,9 +272,6 @@ pub fn proc_metrics_from_parts(
 }
 
 pub fn parse_cpuinfo_name(contents: &str) -> Option<String> {
-    let mut vendor_id = String::new();
-    let mut family = String::new();
-
     for line in contents.lines() {
         if line.starts_with("Model\t")
             || line.starts_with("Hardware\t")
@@ -287,25 +284,6 @@ pub fn parse_cpuinfo_name(contents: &str) -> Option<String> {
                 }
             }
         }
-
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        let name = value.trim();
-        if name.is_empty() {
-            continue;
-        }
-
-        match key.trim() {
-            "vendor_id" => vendor_id = name.to_string(),
-            "cpu family" => family = name.to_string(),
-            _ => {}
-        }
-    }
-
-    let vendor_family = format!("{vendor_id} {family}").trim().to_string();
-    if !vendor_family.is_empty() {
-        return Some(vendor_family);
     }
 
     None
