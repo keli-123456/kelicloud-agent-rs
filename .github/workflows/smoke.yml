@@ -24,6 +24,18 @@ on:
         description: "Optional log text that must appear in the smoke log."
         required: false
         type: string
+      custom_dns:
+        description: "Optional custom DNS server passed to the agent."
+        required: false
+        type: string
+      insecure:
+        description: "Pass --insecure to the agent."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: read
@@ -43,9 +55,13 @@ jobs:
     env:
       AGENT_ENDPOINT: ${{ inputs.endpoint != '' && inputs.endpoint || secrets.KELICLOUD_SMOKE_ENDPOINT }}
       AGENT_TOKEN: ${{ secrets.KELICLOUD_SMOKE_TOKEN }}
+      AGENT_CF_ACCESS_CLIENT_ID: ${{ secrets.KELICLOUD_SMOKE_CF_ACCESS_CLIENT_ID }}
+      AGENT_CF_ACCESS_CLIENT_SECRET: ${{ secrets.KELICLOUD_SMOKE_CF_ACCESS_CLIENT_SECRET }}
       SMOKE_MODE: ${{ inputs.mode }}
       SMOKE_DURATION: ${{ inputs.duration }}
       SMOKE_EXPECT_SUCCESS_LOG: ${{ inputs.expect_success_log }}
+      SMOKE_CUSTOM_DNS: ${{ inputs.custom_dns }}
+      SMOKE_INSECURE: ${{ inputs.insecure }}
       TMPDIR: smoke-logs
 
     steps:
@@ -69,6 +85,9 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$AGENT_TOKEN"
+          if [ -n "${AGENT_CF_ACCESS_CLIENT_SECRET}" ]; then
+            echo "::add-mask::$AGENT_CF_ACCESS_CLIENT_SECRET"
+          fi
 
       - name: Run live smoke
         run: |
@@ -78,6 +97,12 @@ jobs:
           )
           if [ -n "${SMOKE_EXPECT_SUCCESS_LOG}" ]; then
             args+=(--expect-success-log "${SMOKE_EXPECT_SUCCESS_LOG}")
+          fi
+          if [ -n "${SMOKE_CUSTOM_DNS}" ]; then
+            args+=(--custom-dns "${SMOKE_CUSTOM_DNS}")
+          fi
+          if [ "${SMOKE_INSECURE}" = "true" ]; then
+            args+=(--insecure)
           fi
           scripts/smoke-live.sh "${args[@]}"
 

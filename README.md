@@ -127,15 +127,21 @@ scripts/smoke-live.sh \
 During live mode, verify that ping tasks, script exec tasks, and terminal
 sessions reach the agent. The script treats the configured duration being
 reached as success because the normal agent loop is expected to keep running.
+Use `docs/smoke-compatibility.md` as the first-run checklist and compatibility
+watchlist.
 
 You can also run the same smoke test from GitHub Actions when you do not have a
 Linux shell on your workstation:
 
 1. Add repository secret `KELICLOUD_SMOKE_TOKEN`.
 2. Optionally add repository secret `KELICLOUD_SMOKE_ENDPOINT`.
-3. Open the `Smoke` workflow, choose `Run workflow`, and select `once` or `live`.
-4. If `KELICLOUD_SMOKE_ENDPOINT` is not set, fill the `endpoint` workflow input.
-5. Download the `kelicloud-agent-rs-smoke-logs` artifact after the run.
+3. If the panel is behind Cloudflare Access, also add
+   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_ID` and
+   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_SECRET`.
+4. Open the `Smoke` workflow, choose `Run workflow`, and select `once` or `live`.
+5. If `KELICLOUD_SMOKE_ENDPOINT` is not set, fill the `endpoint` workflow input.
+6. Fill optional `custom_dns` or set `insecure` when the target environment needs them.
+7. Download the `kelicloud-agent-rs-smoke-logs` artifact after the run.
 
 ## Release Builds
 
