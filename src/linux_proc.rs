@@ -2045,7 +2045,10 @@ pub fn collect_detailed_gpu_metrics_result() -> Result<Vec<GpuMetric>, String> {
 
     let mut errors = Vec::new();
 
-    if let Ok(output) = Command::new("nvidia-smi").args(["-q", "-x"]).output() {
+    if let Ok(output) = Command::new(nvidia_smi_command_path())
+        .args(["-q", "-x"])
+        .output()
+    {
         if output.status.success() {
             let metrics = parse_nvidia_smi_xml(&String::from_utf8_lossy(&output.stdout));
             if !metrics.is_empty() {
@@ -2059,7 +2062,7 @@ pub fn collect_detailed_gpu_metrics_result() -> Result<Vec<GpuMetric>, String> {
         errors.push("nvidia-smi not found".to_string());
     }
 
-    if let Ok(output) = Command::new("rocm-smi")
+    if let Ok(output) = Command::new(rocm_smi_command_path())
         .args(["--showallinfo", "--json"])
         .output()
     {
@@ -2090,7 +2093,10 @@ pub fn collect_detailed_gpu_models_result() -> Result<Vec<String>, String> {
 
     let mut errors = Vec::new();
 
-    if let Ok(output) = Command::new("nvidia-smi").args(["-q", "-x"]).output() {
+    if let Ok(output) = Command::new(nvidia_smi_command_path())
+        .args(["-q", "-x"])
+        .output()
+    {
         if output.status.success() {
             let models = parse_nvidia_smi_xml(&String::from_utf8_lossy(&output.stdout))
                 .into_iter()
@@ -2108,7 +2114,7 @@ pub fn collect_detailed_gpu_models_result() -> Result<Vec<String>, String> {
         errors.push("nvidia-smi not found".to_string());
     }
 
-    if let Ok(output) = Command::new("rocm-smi")
+    if let Ok(output) = Command::new(rocm_smi_command_path())
         .args(["--showallinfo", "--json"])
         .output()
     {
@@ -2130,6 +2136,14 @@ pub fn collect_detailed_gpu_models_result() -> Result<Vec<String>, String> {
     }
 
     Err(errors.join("; "))
+}
+
+pub fn nvidia_smi_command_path() -> &'static str {
+    "/usr/bin/nvidia-smi"
+}
+
+pub fn rocm_smi_command_path() -> &'static str {
+    "/opt/rocm/bin/rocm-smi"
 }
 
 fn command_output_error(command: &str, output: &std::process::Output) -> String {

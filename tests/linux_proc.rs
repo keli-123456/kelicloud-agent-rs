@@ -8,14 +8,15 @@ use kelicloud_agent_rs::linux_proc::{
     go_compatible_swap, kernel_version_from_uname_output, linux_supported,
     memory_selection_from_meminfo_with_modes, memory_values_from_meminfo_with_modes,
     network_speed_from_samples, nic_ip_addresses_from_ip_addr_show_output, normalize_dns_server,
-    parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output, parse_ip_address_list,
-    parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name, parse_meminfo, parse_net_dev,
-    parse_net_dev_interfaces, parse_net_dev_with_filter, parse_net_static_total_between,
-    parse_nvidia_smi_xml, parse_os_release_pretty_name, parse_proc_stat_cpu_sample,
-    parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
-    parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
-    public_ipv4_probe_urls, public_ipv6_probe_urls, reset_date_ymd, reset_timestamp_for_day,
-    resolve_host_with_dns_server, sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts,
+    nvidia_smi_command_path, parse_amd_rocm_smi_json, parse_cpuinfo_name,
+    parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lscpu_model_name,
+    parse_lspci_gpu_name, parse_meminfo, parse_net_dev, parse_net_dev_interfaces,
+    parse_net_dev_with_filter, parse_net_static_total_between, parse_nvidia_smi_xml,
+    parse_os_release_pretty_name, parse_proc_stat_cpu_sample, parse_public_ipv4_response,
+    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
+    proc_metrics_from_parts, proxmox_os_name_from_parts, public_ipv4_probe_urls,
+    public_ipv6_probe_urls, reset_date_ymd, reset_timestamp_for_day, resolve_host_with_dns_server,
+    rocm_smi_command_path, sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts,
     DiskMount, MemoryValues, NetworkFilter, NetworkTotals,
 };
 use std::fs;
@@ -936,6 +937,12 @@ fn detailed_gpu_parsers_zero_negative_unsigned_fields_like_go_agent() {
     assert_eq!(amd_metrics[0].memory_used, 0);
     assert_eq!(amd_metrics[0].utilization, -9.0);
     assert_eq!(amd_metrics[0].temperature, 0);
+}
+
+#[test]
+fn detailed_gpu_command_paths_match_go_agent_linux_paths() {
+    assert_eq!(nvidia_smi_command_path(), "/usr/bin/nvidia-smi");
+    assert_eq!(rocm_smi_command_path(), "/opt/rocm/bin/rocm-smi");
 }
 
 #[test]
