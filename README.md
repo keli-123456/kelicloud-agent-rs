@@ -18,6 +18,8 @@ This is not a replacement for the current Go agent yet. The Rust agent is intent
 - Parse backend control messages for CN connectivity config, terminal, exec, and ping.
 - Keep a report loop running with interval sleep, heartbeat ping, and reconnect after send failures.
 - Execute backend ping tasks on Linux for TCP, HTTP, and ICMP, then upload `ping_result` messages.
+- Execute backend remote exec tasks in the background and upload task results.
+- Handle backend WebSSH terminal sessions through a dedicated WebSocket and Linux PTY.
 - Avoid printing full tokens in startup output.
 - Provide `--once` for a single debug cycle.
 
@@ -57,12 +59,15 @@ Supported flags:
 ## Verification
 
 ```bash
-cargo fmt --check
-cargo test
+cargo fmt --all -- --check
+cargo check --locked --all-targets
+cargo test --locked --all-targets
 ```
+
+GitHub Actions runs the same checks on Linux for pushes to `main` and pull requests.
 
 ## Next Milestones
 
-1. Add task execution with explicit shell selection.
-2. Add terminal session support after protocol compatibility is proven.
-3. Add Linux release workflow only after the runtime path is stable.
+1. Add a Linux install script and systemd service template.
+2. Add release builds for common Linux architectures.
+3. Run an end-to-end smoke test against a real kelicloud backend.
