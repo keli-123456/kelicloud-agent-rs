@@ -350,7 +350,12 @@ pub fn parse_synology_os_name(contents: &str) -> Option<String> {
         return None;
     }
 
-    let model = unique.split('_').last()?.to_ascii_uppercase();
+    let parts = unique.split('_').collect::<Vec<_>>();
+    if parts.len() < 3 {
+        return None;
+    }
+
+    let model = parts.last()?.to_ascii_uppercase();
     if model.is_empty() {
         return None;
     }
