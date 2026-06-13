@@ -28,7 +28,7 @@ fn config_reads_endpoint_and_token_from_environment() {
 }
 
 #[test]
-fn config_command_line_overrides_environment() {
+fn config_environment_overrides_command_line_like_go_agent() {
     let args = [
         "kelicloud-agent-rs",
         "--endpoint",
@@ -38,9 +38,70 @@ fn config_command_line_overrides_environment() {
     ];
     let config = AgentConfig::from_args_and_env(args, env_lookup).unwrap();
 
-    assert_eq!(config.endpoint, "https://cli.example.com");
-    assert_eq!(config.token, "cli-token");
+    assert_eq!(config.endpoint, "https://env.example.com");
+    assert_eq!(config.token, "env-token");
     assert!(config.insecure);
+}
+
+#[test]
+fn config_environment_overrides_command_line_metric_options_like_go_agent() {
+    let args = [
+        "kelicloud-agent-rs",
+        "--endpoint",
+        "https://cli.example.com",
+        "--token",
+        "cli-token",
+        "--include-nics",
+        "cli0",
+        "--exclude-nics",
+        "cli1",
+        "--include-mountpoint",
+        "/cli",
+        "--custom-ipv4",
+        "203.0.113.10",
+        "--custom-ipv6",
+        "2001:db8::10",
+        "--custom-dns",
+        "1.1.1.1",
+        "--get-ip-addr-from-nic",
+        "--memory-include-cache",
+        "--memory-exclude-bcf",
+        "--gpu",
+        "--month-rotate",
+        "15",
+    ];
+    let config = AgentConfig::from_args_and_env(args, |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_INCLUDE_NICS" => Some("env0".to_string()),
+        "AGENT_EXCLUDE_NICS" => Some("env1".to_string()),
+        "AGENT_INCLUDE_MOUNTPOINTS" => Some("/env".to_string()),
+        "AGENT_CUSTOM_IPV4" => Some("198.51.100.10".to_string()),
+        "AGENT_CUSTOM_IPV6" => Some("2607:f358:1a:e::ab0:39b7".to_string()),
+        "AGENT_CUSTOM_DNS" => Some("8.8.8.8".to_string()),
+        "AGENT_GET_IP_ADDR_FROM_NIC" => Some("false".to_string()),
+        "AGENT_MEMORY_INCLUDE_CACHE" => Some("false".to_string()),
+        "AGENT_MEMORY_REPORT_RAW_USED" => Some("false".to_string()),
+        "AGENT_ENABLE_GPU" => Some("false".to_string()),
+        "AGENT_MONTH_ROTATE" => Some("9".to_string()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert_eq!(config.endpoint, "https://env.example.com");
+    assert_eq!(config.token, "env-token");
+    assert_eq!(config.include_nics, "env0");
+    assert_eq!(config.exclude_nics, "env1");
+    assert_eq!(config.include_mountpoints, "/env");
+    assert_eq!(config.custom_ipv4, "198.51.100.10");
+    assert_eq!(config.custom_ipv6, "2607:f358:1a:e::ab0:39b7");
+    assert_eq!(config.custom_dns, "8.8.8.8");
+    // Go's loadFromEnv only turns bools on for "true"/"1"; "false" leaves CLI true.
+    assert!(config.get_ip_addr_from_nic);
+    assert!(config.memory_include_cache);
+    assert!(config.memory_report_raw_used);
+    assert!(config.enable_gpu);
+    assert_eq!(config.month_rotate, 9);
 }
 
 #[test]

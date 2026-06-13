@@ -330,6 +330,64 @@ impl AgentConfig {
             }
         }
 
+        apply_optional_string_env(&env_lookup, "AGENT_ENDPOINT", &mut endpoint);
+        apply_optional_string_env(&env_lookup, "AGENT_TOKEN", &mut token);
+        apply_bool_true_env(&env_lookup, "AGENT_IGNORE_UNSAFE_CERT", &mut insecure);
+        apply_bool_true_env(&env_lookup, "AGENT_INSECURE", &mut insecure);
+        apply_bool_true_env(&env_lookup, "AGENT_DISABLE_WEB_SSH", &mut disable_web_ssh);
+        apply_f64_env(&env_lookup, "AGENT_INTERVAL", &mut interval_seconds);
+        apply_u32_env(&env_lookup, "AGENT_MAX_RETRIES", &mut max_retries);
+        apply_u64_env(
+            &env_lookup,
+            "AGENT_RECONNECT_INTERVAL",
+            &mut reconnect_interval_seconds,
+        );
+        apply_u64_env(
+            &env_lookup,
+            "AGENT_INFO_REPORT_INTERVAL",
+            &mut info_report_interval_minutes,
+        );
+        apply_string_env(
+            &env_lookup,
+            "AGENT_CF_ACCESS_CLIENT_ID",
+            &mut cf_access_client_id,
+        );
+        apply_string_env(
+            &env_lookup,
+            "AGENT_CF_ACCESS_CLIENT_SECRET",
+            &mut cf_access_client_secret,
+        );
+        apply_string_env(&env_lookup, "AGENT_INCLUDE_NICS", &mut include_nics);
+        apply_string_env(&env_lookup, "AGENT_EXCLUDE_NICS", &mut exclude_nics);
+        apply_string_env(
+            &env_lookup,
+            "AGENT_INCLUDE_MOUNTPOINTS",
+            &mut include_mountpoints,
+        );
+        apply_string_env(&env_lookup, "AGENT_CUSTOM_IPV4", &mut custom_ipv4);
+        apply_string_env(&env_lookup, "AGENT_CUSTOM_IPV6", &mut custom_ipv6);
+        apply_string_env(&env_lookup, "AGENT_CUSTOM_DNS", &mut custom_dns);
+        apply_bool_true_env(
+            &env_lookup,
+            "AGENT_GET_IP_ADDR_FROM_NIC",
+            &mut get_ip_addr_from_nic,
+        );
+        apply_bool_true_env(
+            &env_lookup,
+            "AGENT_MEMORY_INCLUDE_CACHE",
+            &mut memory_include_cache,
+        );
+        apply_bool_true_env(
+            &env_lookup,
+            "AGENT_MEMORY_REPORT_RAW_USED",
+            &mut memory_report_raw_used,
+        );
+        apply_bool_true_env(&env_lookup, "AGENT_ENABLE_GPU", &mut enable_gpu);
+        apply_u32_env(&env_lookup, "AGENT_MONTH_ROTATE", &mut month_rotate);
+        apply_string_env(&env_lookup, "HOST_PROC", &mut host_proc);
+        apply_string_env(&env_lookup, "AGENT_CONFIG_FILE", &mut config_file);
+        apply_bool_true_env(&env_lookup, "AGENT_ONCE", &mut once);
+
         if !config_file.is_empty() {
             let file_config = read_file_config(&config_file)?;
             if let Some(value) = file_config.endpoint {
@@ -535,6 +593,66 @@ where
     match clean_optional(env_lookup(key)) {
         Some(value) => Ok(parse_u64(key, &value).unwrap_or(default)),
         None => Ok(default),
+    }
+}
+
+fn apply_optional_string_env<F>(env_lookup: &F, key: &str, target: &mut Option<String>)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup(key)) {
+        *target = Some(value);
+    }
+}
+
+fn apply_string_env<F>(env_lookup: &F, key: &str, target: &mut String)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup(key)) {
+        *target = value;
+    }
+}
+
+fn apply_bool_true_env<F>(env_lookup: &F, key: &str, target: &mut bool)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if env_lookup(key).as_deref().is_some_and(parse_bool) {
+        *target = true;
+    }
+}
+
+fn apply_f64_env<F>(env_lookup: &F, key: &'static str, target: &mut f64)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup(key)) {
+        if let Ok(parsed) = parse_f64(key, &value) {
+            *target = parsed;
+        }
+    }
+}
+
+fn apply_u32_env<F>(env_lookup: &F, key: &'static str, target: &mut u32)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup(key)) {
+        if let Ok(parsed) = parse_u32(key, &value) {
+            *target = parsed;
+        }
+    }
+}
+
+fn apply_u64_env<F>(env_lookup: &F, key: &'static str, target: &mut u64)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup(key)) {
+        if let Ok(parsed) = parse_u64(key, &value) {
+            *target = parsed;
+        }
     }
 }
 
