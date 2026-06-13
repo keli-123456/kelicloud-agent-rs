@@ -2524,50 +2524,76 @@ fn consume_ipv4_digits(bytes: &[u8], cursor: &mut usize) -> Option<()> {
 }
 
 fn find_go_ipv6_regex_match(contents: &str) -> Option<&str> {
-    contents
-        .split(|ch: char| !(ch.is_ascii_hexdigit() || ch == ':'))
-        .filter(|candidate| candidate.contains(':'))
-        .find(|candidate| matches_go_ipv6_regex(candidate))
+    let bytes = contents.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !bytes[start].is_ascii_hexdigit() {
+            start += 1;
+            continue;
+        }
+
+        if let Some(end) =
+            match_go_ipv6_full(bytes, start).or_else(|| match_go_ipv6_compressed(bytes, start))
+        {
+            return Some(&contents[start..end]);
+        }
+        start += 1;
+    }
+
+    None
 }
 
-fn matches_go_ipv6_regex(candidate: &str) -> bool {
-    if candidate.is_empty()
-        || candidate
-            .bytes()
-            .any(|byte| !(byte.is_ascii_hexdigit() || byte == b':'))
-    {
-        return false;
+fn match_go_ipv6_full(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut cursor = start;
+    for _ in 0..7 {
+        consume_hex_group(bytes, &mut cursor)?;
+        if bytes.get(cursor) != Some(&b':') {
+            return None;
+        }
+        cursor += 1;
+    }
+    consume_hex_group(bytes, &mut cursor)?;
+    Some(cursor)
+}
+
+fn match_go_ipv6_compressed(bytes: &[u8], start: usize) -> Option<usize> {
+    for prefix_groups in (1..=6).rev() {
+        let mut cursor = start;
+        let mut matched_prefix = true;
+        for _ in 0..prefix_groups {
+            if consume_hex_group(bytes, &mut cursor).is_none() || bytes.get(cursor) != Some(&b':') {
+                matched_prefix = false;
+                break;
+            }
+            cursor += 1;
+        }
+        if !matched_prefix || bytes.get(cursor) != Some(&b':') {
+            continue;
+        }
+        cursor += 1;
+
+        for _ in 0..4 {
+            let before = cursor;
+            if consume_hex_group(bytes, &mut cursor).is_some() && bytes.get(cursor) == Some(&b':') {
+                cursor += 1;
+            } else {
+                cursor = before;
+                break;
+            }
+        }
+        let _ = consume_hex_group(bytes, &mut cursor);
+        return Some(cursor);
     }
 
-    let parts = candidate.split(':').collect::<Vec<_>>();
-    if parts.iter().any(|part| part.len() > 4) {
-        return false;
-    }
+    None
+}
 
-    if !candidate.contains("::") {
-        return parts.len() == 8 && parts.iter().all(|part| !part.is_empty());
+fn consume_hex_group(bytes: &[u8], cursor: &mut usize) -> Option<()> {
+    let start = *cursor;
+    while *cursor < bytes.len() && bytes[*cursor].is_ascii_hexdigit() && *cursor - start < 4 {
+        *cursor += 1;
     }
-
-    let Some((prefix, suffix)) = candidate.split_once("::") else {
-        return false;
-    };
-    if prefix.is_empty() || suffix.contains("::") {
-        return false;
-    }
-
-    let prefix_groups = prefix.split(':').collect::<Vec<_>>();
-    if prefix_groups.is_empty()
-        || prefix_groups.len() > 6
-        || prefix_groups.iter().any(|part| part.is_empty())
-    {
-        return false;
-    }
-
-    if suffix.is_empty() {
-        return true;
-    }
-    let suffix_groups = suffix.split(':').collect::<Vec<_>>();
-    suffix_groups.len() <= 5 && suffix_groups.iter().all(|part| !part.is_empty())
+    (*cursor > start).then_some(())
 }
 
 fn actual_reset_date(year: i32, month: u32, reset_day: u32) -> (i32, u32, u32) {

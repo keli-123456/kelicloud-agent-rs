@@ -374,6 +374,10 @@ fn parse_public_ipv6_response_matches_go_agent_first_regex_match() {
             .as_deref(),
         Some("fe80::1")
     );
+    assert_eq!(
+        parse_public_ipv6_response("ip=2001:db8:0:1:2:3:4:5:6\n").as_deref(),
+        Some("2001:db8:0:1:2:3:4:5")
+    );
 }
 
 #[test]
