@@ -513,7 +513,7 @@ where
     F: Fn(&str) -> Option<String>,
 {
     match clean_optional(env_lookup(key)) {
-        Some(value) => parse_f64(key, &value),
+        Some(value) => Ok(parse_f64(key, &value).unwrap_or(default)),
         None => Ok(default),
     }
 }
@@ -523,7 +523,7 @@ where
     F: Fn(&str) -> Option<String>,
 {
     match clean_optional(env_lookup(key)) {
-        Some(value) => parse_u32(key, &value),
+        Some(value) => Ok(parse_u32(key, &value).unwrap_or(default)),
         None => Ok(default),
     }
 }
@@ -533,7 +533,7 @@ where
     F: Fn(&str) -> Option<String>,
 {
     match clean_optional(env_lookup(key)) {
-        Some(value) => parse_u64(key, &value),
+        Some(value) => Ok(parse_u64(key, &value).unwrap_or(default)),
         None => Ok(default),
     }
 }
