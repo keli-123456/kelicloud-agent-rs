@@ -356,6 +356,18 @@ fn detect_container_from_cgroup_matches_common_runtime_markers() {
         detect_container_from_cgroup(kube).as_deref(),
         Some("kubernetes")
     );
+    assert_eq!(
+        detect_container_from_cgroup("0::/system.slice/docker/service\n"),
+        None
+    );
+    assert_eq!(
+        detect_container_from_cgroup("0::/kubepods.slice/kubepods-burstable.slice\n"),
+        None
+    );
+    assert_eq!(
+        detect_container_from_cgroup("0::/system.slice/crio-monitor.scope\n"),
+        None
+    );
 }
 
 #[test]

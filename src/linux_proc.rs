@@ -526,26 +526,79 @@ pub fn parse_public_ipv6_response(contents: &str) -> Option<String> {
 }
 
 pub fn detect_container_from_cgroup(contents: &str) -> Option<String> {
-    let lower = contents.to_ascii_lowercase();
-    if lower.contains("/docker-")
-        || lower.contains("/docker/")
-        || lower.contains("/cri-containerd-")
-    {
-        return Some("docker".to_string());
-    }
-    if lower.contains("/libpod-") || lower.contains("/podman-") || lower.contains("/podman/") {
-        return Some("podman".to_string());
-    }
-    if lower.contains("/crio-") {
-        return Some("container".to_string());
-    }
-    if lower.contains("/kubepods") {
-        return Some("kubernetes".to_string());
-    }
-    if lower.contains("/lxc/") {
-        return Some("lxc".to_string());
+    for line in contents.lines().map(|line| line.to_ascii_lowercase()) {
+        if line_has_container_id_after(
+            &line,
+            &[
+                "/docker-",
+                "/docker/",
+                "/cri-containerd-",
+                "/cri-containerd/",
+            ],
+        ) {
+            return Some("docker".to_string());
+        }
+        if line_has_container_id_after(&line, &["/libpod-", "/libpod_", "/podman-", "/podman_"]) {
+            return Some("podman".to_string());
+        }
+        if line_has_required_scoped_container_id_after(&line, "/crio-") {
+            return Some("container".to_string());
+        }
+        if line_has_kubepods_uid(&line) {
+            return Some("kubernetes".to_string());
+        }
+        if line
+            .rsplit_once("/lxc/")
+            .is_some_and(|(_, tail)| !tail.is_empty() && !tail.contains('/'))
+        {
+            return Some("lxc".to_string());
+        }
     }
     None
+}
+
+fn line_has_container_id_after(line: &str, markers: &[&str]) -> bool {
+    markers.iter().any(|marker| {
+        line.rsplit_once(marker)
+            .map(|(_, tail)| strip_optional_scope(tail))
+            .is_some_and(is_container_hex_id)
+    })
+}
+
+fn line_has_required_scoped_container_id_after(line: &str, marker: &str) -> bool {
+    line.rsplit_once(marker)
+        .and_then(|(_, tail)| tail.strip_suffix(".scope"))
+        .is_some_and(is_container_hex_id)
+}
+
+fn strip_optional_scope(value: &str) -> &str {
+    value.strip_suffix(".scope").unwrap_or(value)
+}
+
+fn is_container_hex_id(value: &str) -> bool {
+    (12..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn line_has_kubepods_uid(line: &str) -> bool {
+    line.match_indices("/kubepods").any(|(idx, marker)| {
+        let after = &line[idx + marker.len()..];
+        matches!(after.as_bytes().first(), Some(b'/' | b'.')) && contains_uuid(after)
+    })
+}
+
+fn contains_uuid(value: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(36)
+        .any(|candidate| is_uuid_bytes(candidate))
+}
+
+fn is_uuid_bytes(value: &[u8]) -> bool {
+    value.len() == 36
+        && value.iter().enumerate().all(|(idx, byte)| match idx {
+            8 | 13 | 18 | 23 => *byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
+        })
 }
 
 pub fn detect_container_from_markers(
