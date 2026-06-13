@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
@@ -1272,21 +1272,27 @@ pub fn reset_date_ymd(reset_day: u32, year: i32, month: u32, day: u32) -> (i32, 
 }
 
 pub fn count_socket_entries(contents: &str) -> i32 {
-    contents
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .filter(|line| !line.starts_with("sl "))
-        .filter(|line| proc_net_socket_row_is_valid(line))
-        .count() as i32
+    let mut keys = HashSet::new();
+    for line in contents.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with("sl ") {
+            continue;
+        }
+        if let Some(key) = proc_net_socket_row_key(line) {
+            keys.insert(key);
+        }
+    }
+    keys.len() as i32
 }
 
-fn proc_net_socket_row_is_valid(line: &str) -> bool {
+fn proc_net_socket_row_key(line: &str) -> Option<String> {
     let fields = line.split_whitespace().collect::<Vec<_>>();
-    fields.len() >= 10
-        && fields.first().is_some_and(|field| field.ends_with(':'))
-        && proc_net_socket_addr_is_valid(fields[1])
-        && proc_net_socket_addr_is_valid(fields[2])
+    if fields.len() < 10 || !fields.first().is_some_and(|field| field.ends_with(':')) {
+        return None;
+    }
+    if !proc_net_socket_addr_is_valid(fields[1]) || !proc_net_socket_addr_is_valid(fields[2]) {
+        return None;
+    }
+    Some(format!("{}|{}|{}", fields[1], fields[2], fields[3]))
 }
 
 fn proc_net_socket_addr_is_valid(value: &str) -> bool {
