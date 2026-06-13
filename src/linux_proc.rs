@@ -855,9 +855,11 @@ pub fn parse_nvidia_smi_xml(contents: &str) -> Vec<GpuMetric> {
             memory_used: parse_mib_value(
                 &xml_child_tag_text(gpu, "fb_memory_usage", "used").unwrap_or_default(),
             ),
-            utilization: parse_percent_value(&xml_tag_text(gpu, "gpu_util").unwrap_or_default()),
+            utilization: parse_percent_value(
+                &xml_child_tag_text(gpu, "utilization", "gpu_util").unwrap_or_default(),
+            ),
             temperature: parse_temperature_value(
-                &xml_tag_text(gpu, "gpu_temp").unwrap_or_default(),
+                &xml_child_tag_text(gpu, "temperature", "gpu_temp").unwrap_or_default(),
             ),
         })
         .collect()

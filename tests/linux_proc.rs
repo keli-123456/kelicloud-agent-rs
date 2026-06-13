@@ -680,6 +680,37 @@ fn parse_nvidia_smi_xml_uses_framebuffer_memory_like_go_agent() {
 }
 
 #[test]
+fn parse_nvidia_smi_xml_uses_structured_utilization_and_temperature_like_go_agent() {
+    let xml = r#"
+<nvidia_smi_log>
+  <gpu>
+    <product_name>NVIDIA A100</product_name>
+    <diagnostics>
+      <gpu_util>99 %</gpu_util>
+      <gpu_temp>99 C</gpu_temp>
+    </diagnostics>
+    <fb_memory_usage>
+      <total>40960 MiB</total>
+      <used>20480 MiB</used>
+    </fb_memory_usage>
+    <utilization>
+      <gpu_util>50 %</gpu_util>
+    </utilization>
+    <temperature>
+      <gpu_temp>58 C</gpu_temp>
+    </temperature>
+  </gpu>
+</nvidia_smi_log>
+"#;
+
+    let metrics = parse_nvidia_smi_xml(xml);
+
+    assert_eq!(metrics.len(), 1);
+    assert_eq!(metrics[0].utilization, 50.0);
+    assert_eq!(metrics[0].temperature, 58);
+}
+
+#[test]
 fn parse_amd_rocm_smi_json_extracts_detailed_gpu_metrics() {
     let json = r#"
 {
