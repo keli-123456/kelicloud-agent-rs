@@ -787,6 +787,32 @@ fn parse_nvidia_smi_xml_extracts_detailed_gpu_metrics() {
 }
 
 #[test]
+fn parse_nvidia_smi_xml_decodes_text_entities_like_go_agent() {
+    let xml = r#"
+<nvidia_smi_log>
+  <gpu>
+    <product_name>NVIDIA A&amp;B &#x34;&#53;</product_name>
+    <fb_memory_usage>
+      <total>8192 MiB</total>
+      <used>512 MiB</used>
+    </fb_memory_usage>
+    <utilization>
+      <gpu_util>7 %</gpu_util>
+    </utilization>
+    <temperature>
+      <gpu_temp>41 C</gpu_temp>
+    </temperature>
+  </gpu>
+</nvidia_smi_log>
+"#;
+
+    let metrics = parse_nvidia_smi_xml(xml);
+
+    assert_eq!(metrics.len(), 1);
+    assert_eq!(metrics[0].name, "NVIDIA A&B 45");
+}
+
+#[test]
 fn parse_nvidia_smi_xml_accepts_gpu_tags_with_attributes_like_go_agent() {
     let xml = r#"
 <nvidia_smi_log>

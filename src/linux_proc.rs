@@ -2840,17 +2840,21 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
-fn xml_tag_text(contents: &str, tag: &str) -> Option<String> {
+fn xml_tag_raw<'a>(contents: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let (_, after_open) = contents.split_once(&open)?;
     let (value, _) = after_open.split_once(&close)?;
-    Some(value.trim().to_string())
+    Some(value)
+}
+
+fn xml_tag_text(contents: &str, tag: &str) -> Option<String> {
+    xml_tag_raw(contents, tag).map(|value| decode_xml_text(value.trim()))
 }
 
 fn xml_child_tag_text(contents: &str, parent: &str, tag: &str) -> Option<String> {
-    let parent_body = xml_tag_text(contents, parent)?;
-    xml_tag_text(&parent_body, tag)
+    let parent_body = xml_tag_raw(contents, parent)?;
+    xml_tag_text(parent_body, tag)
 }
 
 fn parse_mib_value(value: &str) -> i64 {
@@ -2880,6 +2884,48 @@ fn parse_percent_value(value: &str) -> f64 {
 
 fn parse_temperature_value(value: &str) -> i64 {
     parse_unsigned_i64_value(value)
+}
+
+fn decode_xml_text(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(entity_start) = rest.find('&') {
+        decoded.push_str(&rest[..entity_start]);
+        rest = &rest[entity_start..];
+        let Some(entity_end) = rest.find(';') else {
+            decoded.push_str(rest);
+            return decoded;
+        };
+        let entity = &rest[1..entity_end];
+        if let Some(ch) = decode_xml_entity(entity) {
+            decoded.push(ch);
+        } else {
+            decoded.push_str(&rest[..=entity_end]);
+        }
+        rest = &rest[entity_end + 1..];
+    }
+    decoded.push_str(rest);
+    decoded
+}
+
+fn decode_xml_entity(entity: &str) -> Option<char> {
+    match entity {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => {
+            if let Some(hex) = entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+            {
+                return u32::from_str_radix(hex, 16).ok().and_then(char::from_u32);
+            }
+            let decimal = entity.strip_prefix('#')?;
+            decimal.parse::<u32>().ok().and_then(char::from_u32)
+        }
+    }
 }
 
 fn json_string(card: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
