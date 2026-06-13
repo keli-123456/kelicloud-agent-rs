@@ -320,12 +320,9 @@ fn parse_cpuinfo_vendor_family_name(contents: &str) -> Option<String> {
 
 pub fn parse_lscpu_model_name(contents: &str) -> Option<String> {
     for line in contents.lines() {
-        let Some((key, value)) = line.split_once(':') else {
+        let Some(value) = line.strip_prefix("Model name:") else {
             continue;
         };
-        if key.trim() != "Model name" {
-            continue;
-        }
 
         let name = value.trim();
         if !name.is_empty() {
