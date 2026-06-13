@@ -115,6 +115,12 @@ pub struct LoadAverage {
     pub process_count: i32,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProcStatCpuSample {
+    pub total: u64,
+    pub idle: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ProcMetrics {
     pub load1: f64,
@@ -166,6 +172,51 @@ pub fn parse_loadavg(contents: &str) -> Option<LoadAverage> {
 pub fn parse_uptime(contents: &str) -> Option<i64> {
     let seconds = contents.split_whitespace().next()?.parse::<f64>().ok()?;
     Some(seconds.floor() as i64)
+}
+
+pub fn parse_proc_stat_cpu_sample(contents: &str) -> Option<ProcStatCpuSample> {
+    for line in contents.lines().map(str::trim) {
+        let Some(fields) = line.strip_prefix("cpu ") else {
+            continue;
+        };
+        let ticks = fields
+            .split_whitespace()
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        if ticks.len() < 4 {
+            return None;
+        }
+
+        let total = ticks.iter().sum::<u64>();
+        if total == 0 {
+            return None;
+        }
+        let idle = ticks[3] + ticks.get(4).copied().unwrap_or(0);
+        return Some(ProcStatCpuSample { total, idle });
+    }
+
+    None
+}
+
+pub fn cpu_usage_percent_from_proc_stat_samples(
+    first: ProcStatCpuSample,
+    second: ProcStatCpuSample,
+) -> Option<f64> {
+    if second.total <= first.total || second.idle < first.idle {
+        return None;
+    }
+
+    let total_delta = second.total - first.total;
+    if total_delta == 0 {
+        return None;
+    }
+    let idle_delta = second.idle - first.idle;
+    if idle_delta > total_delta {
+        return None;
+    }
+
+    Some(((total_delta - idle_delta) as f64 / total_delta as f64) * 100.0)
 }
 
 pub fn count_process_entries<I, S>(entry_names: I) -> i32
@@ -1161,6 +1212,21 @@ pub fn collect_proc_metrics_sample_with_filter_and_host_proc(
     Some(collect_proc_metrics_sample_with_filter_and_proc_root(
         proc_root, filter,
     ))
+}
+
+pub fn collect_proc_stat_cpu_sample_with_host_proc(host_proc: &str) -> Option<ProcStatCpuSample> {
+    if !linux_supported() {
+        return None;
+    }
+
+    read_proc_stat_cpu_sample_with_proc_root(proc_root_for(host_proc))
+}
+
+pub fn read_proc_stat_cpu_sample_with_proc_root<P: AsRef<Path>>(
+    proc_root: P,
+) -> Option<ProcStatCpuSample> {
+    let contents = fs::read_to_string(proc_root.as_ref().join("stat")).ok()?;
+    parse_proc_stat_cpu_sample(&contents)
 }
 
 pub fn collect_proc_metrics_sample_with_filter_and_proc_root<P: AsRef<Path>>(

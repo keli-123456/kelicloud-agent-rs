@@ -1,5 +1,5 @@
 use crate::config::AgentConfig;
-use crate::linux_proc::{GpuMetric, ProcMetricErrors};
+use crate::linux_proc::{GpuMetric, ProcMetricErrors, ProcStatCpuSample};
 use crate::net_static::{InterfaceCounter, NetStaticSampler, NetStaticSamplerConfig};
 use crate::report::{
     go_runtime_arch_name, BasicInfo, ConnectionsReport, CpuReport, DiskReport, GpuDetailedInfo,
@@ -226,6 +226,19 @@ pub fn go_compatible_cpu_usage(usage: f64) -> f64 {
     }
 }
 
+pub fn cpu_usage_from_proc_stat_or_fallback(
+    first: Option<ProcStatCpuSample>,
+    second: Option<ProcStatCpuSample>,
+    fallback: f64,
+) -> f64 {
+    first
+        .zip(second)
+        .and_then(|(first, second)| {
+            crate::linux_proc::cpu_usage_percent_from_proc_stat_samples(first, second)
+        })
+        .unwrap_or(fallback)
+}
+
 pub fn select_basic_info_ip_addresses(
     get_ip_addr_from_nic: bool,
     nic_addresses: Option<crate::linux_proc::IpAddresses>,
@@ -356,10 +369,12 @@ impl SystemSnapshotCollector {
             self.metrics.memory_include_cache,
             self.metrics.memory_report_raw_used,
         );
+        let first_cpu_sample =
+            crate::linux_proc::collect_proc_stat_cpu_sample_with_host_proc(&self.metrics.host_proc);
 
         let cpus = self.system.cpus();
         let cpu_name = crate::linux_proc::collect_cpu_name(cpus.first().map(|cpu| cpu.brand()));
-        let cpu_usage = if cpus.is_empty() {
+        let fallback_cpu_usage = if cpus.is_empty() {
             0.001
         } else {
             let total = cpus
@@ -397,35 +412,47 @@ impl SystemSnapshotCollector {
             total: first_network,
             speed: crate::linux_proc::NetworkTotals::default(),
         };
-        if proc_sample
+        let should_sample_network = proc_sample
             .as_ref()
-            .is_some_and(|sample| sample.errors.network_speed.is_none())
-        {
+            .is_some_and(|sample| sample.errors.network_speed.is_none());
+        let mut second_cpu_sample = None;
+        if should_sample_network || first_cpu_sample.is_some() {
             if self.metrics.network_speed_sample_millis > 0 {
                 std::thread::sleep(Duration::from_millis(
                     self.metrics.network_speed_sample_millis,
                 ));
             }
-            if let Some(second_network) =
-                crate::linux_proc::collect_network_totals_with_filter_and_host_proc(
-                    &network_filter,
-                    &self.metrics.host_proc,
-                )
-            {
-                match second_network {
-                    Ok(second_network) => {
-                        network_speed_sample = crate::linux_proc::network_speed_from_samples(
-                            first_network,
-                            second_network,
-                            self.metrics.network_speed_sample_millis as f64 / 1000.0,
-                        );
-                    }
-                    Err(error) => {
-                        append_report_error(&mut message, "network speed", error);
+            second_cpu_sample = crate::linux_proc::collect_proc_stat_cpu_sample_with_host_proc(
+                &self.metrics.host_proc,
+            );
+
+            if should_sample_network {
+                if let Some(second_network) =
+                    crate::linux_proc::collect_network_totals_with_filter_and_host_proc(
+                        &network_filter,
+                        &self.metrics.host_proc,
+                    )
+                {
+                    match second_network {
+                        Ok(second_network) => {
+                            network_speed_sample = crate::linux_proc::network_speed_from_samples(
+                                first_network,
+                                second_network,
+                                self.metrics.network_speed_sample_millis as f64 / 1000.0,
+                            );
+                        }
+                        Err(error) => {
+                            append_report_error(&mut message, "network speed", error);
+                        }
                     }
                 }
             }
         }
+        let cpu_usage = cpu_usage_from_proc_stat_or_fallback(
+            first_cpu_sample,
+            second_cpu_sample,
+            fallback_cpu_usage,
+        );
         let now_local = chrono::Local::now();
         let now_unix = now_local.timestamp().max(0) as u64;
         if let Some(sampler) = self.net_static_sampler.as_mut() {

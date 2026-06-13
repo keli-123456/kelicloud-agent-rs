@@ -2,19 +2,19 @@ use chrono::{Local, TimeZone};
 use kelicloud_agent_rs::linux_proc::{
     android_os_name_from_build_prop, collect_proc_metrics_sample_with_filter_and_proc_root,
     count_process_entries, count_process_entries_in_dir, count_socket_entries,
-    cpu_name_from_sources, detect_container_from_cgroup, detect_container_from_markers,
-    fnos_os_name_from_markers, go_compatible_disk, go_compatible_ram,
-    go_compatible_ram_include_cache, go_compatible_ram_raw_used, go_compatible_swap,
-    kernel_version_from_uname_output, linux_supported, network_speed_from_samples,
-    normalize_dns_server, parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output,
-    parse_ip_address_list, parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name,
-    parse_meminfo, parse_net_dev, parse_net_dev_interfaces, parse_net_dev_with_filter,
-    parse_net_static_total_between, parse_nvidia_smi_xml, parse_os_release_pretty_name,
-    parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
-    parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
-    reset_date_ymd, reset_timestamp_for_day, resolve_host_with_dns_server,
-    sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts, DiskMount, NetworkFilter,
-    NetworkTotals,
+    cpu_name_from_sources, cpu_usage_percent_from_proc_stat_samples, detect_container_from_cgroup,
+    detect_container_from_markers, fnos_os_name_from_markers, go_compatible_disk,
+    go_compatible_ram, go_compatible_ram_include_cache, go_compatible_ram_raw_used,
+    go_compatible_swap, kernel_version_from_uname_output, linux_supported,
+    network_speed_from_samples, normalize_dns_server, parse_amd_rocm_smi_json, parse_cpuinfo_name,
+    parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lscpu_model_name,
+    parse_lspci_gpu_name, parse_meminfo, parse_net_dev, parse_net_dev_interfaces,
+    parse_net_dev_with_filter, parse_net_static_total_between, parse_nvidia_smi_xml,
+    parse_os_release_pretty_name, parse_proc_stat_cpu_sample, parse_public_ipv4_response,
+    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
+    proc_metrics_from_parts, proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
+    resolve_host_with_dns_server, sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts,
+    DiskMount, NetworkFilter, NetworkTotals,
 };
 use std::fs;
 use std::net::UdpSocket;
@@ -127,6 +127,29 @@ fn network_speed_from_samples_matches_go_agent_one_second_delta() {
     assert_eq!(sample.total.total_down, 2_600);
     assert_eq!(sample.speed.total_up, 750);
     assert_eq!(sample.speed.total_down, 600);
+}
+
+#[test]
+fn cpu_usage_from_proc_stat_samples_matches_gopsutil_percent_formula() {
+    let first = parse_proc_stat_cpu_sample(
+        r#"
+cpu0 999 999 999 999
+cpu 100 10 40 850 20 0 10 0 0 0
+"#,
+    )
+    .unwrap();
+    let second = parse_proc_stat_cpu_sample(
+        r#"
+cpu 130 15 55 900 25 0 15 0 0 0
+cpu0 999 999 999 999
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        cpu_usage_percent_from_proc_stat_samples(first, second).unwrap(),
+        50.0
+    );
 }
 
 #[test]

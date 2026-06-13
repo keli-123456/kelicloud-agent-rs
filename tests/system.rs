@@ -1,11 +1,11 @@
 use kelicloud_agent_rs::config::AgentConfig;
-use kelicloud_agent_rs::linux_proc::{GpuMetric, IpAddresses, ProcMetricErrors};
+use kelicloud_agent_rs::linux_proc::{GpuMetric, IpAddresses, ProcMetricErrors, ProcStatCpuSample};
 use kelicloud_agent_rs::report::{GpuReport, ReportGenerator};
 use kelicloud_agent_rs::system::{
-    append_report_error, go_compatible_cpu_usage, gpu_report_from_detailed_result,
-    gpu_report_from_detailed_results, gpu_report_from_metrics, proc_metric_errors_to_message,
-    select_basic_info_ip_addresses, SystemMetricsOptions, SystemReportGenerator, SystemSnapshot,
-    SystemSnapshotCollector,
+    append_report_error, cpu_usage_from_proc_stat_or_fallback, go_compatible_cpu_usage,
+    gpu_report_from_detailed_result, gpu_report_from_detailed_results, gpu_report_from_metrics,
+    proc_metric_errors_to_message, select_basic_info_ip_addresses, SystemMetricsOptions,
+    SystemReportGenerator, SystemSnapshot, SystemSnapshotCollector,
 };
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -96,6 +96,27 @@ fn go_compatible_cpu_usage_matches_go_agent_floor() {
     assert_eq!(go_compatible_cpu_usage(0.0005), 0.001);
     assert_eq!(go_compatible_cpu_usage(0.001), 0.001);
     assert_eq!(go_compatible_cpu_usage(0.005), 0.005);
+}
+
+#[test]
+fn cpu_usage_from_proc_stat_samples_takes_priority_over_sysinfo_fallback() {
+    let first = ProcStatCpuSample {
+        total: 1_030,
+        idle: 870,
+    };
+    let second = ProcStatCpuSample {
+        total: 1_140,
+        idle: 925,
+    };
+
+    assert_eq!(
+        cpu_usage_from_proc_stat_or_fallback(Some(first), Some(second), 17.0),
+        50.0
+    );
+    assert_eq!(
+        cpu_usage_from_proc_stat_or_fallback(Some(first), None, 17.0),
+        17.0
+    );
 }
 
 #[test]
