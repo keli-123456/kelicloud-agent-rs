@@ -45,11 +45,44 @@ fn sampler_records_deltas_and_flushes_go_compatible_json() {
 }
 
 #[test]
-fn sampler_loads_existing_file_and_prunes_expired_records_on_flush() {
-    let path = temp_net_static_path("load");
+fn sampler_prunes_expired_records_on_load_like_go_agent() {
+    let path = temp_net_static_path("load-prune");
+    let now = chrono::Local::now().timestamp().max(0) as u64;
+    let old = now.saturating_sub(2 * 24 * 60 * 60);
     fs::write(
         &path,
-        r#"{"interfaces":{"eth0":[{"timestamp":1,"tx":10,"rx":20},{"timestamp":90000,"tx":30,"rx":40}]},"config":{"data_preserve_day":1,"detect_interval":2,"save_interval":600,"nics":[]}}"#,
+        format!(
+            r#"{{"interfaces":{{"eth0":[{{"timestamp":{old},"tx":10,"rx":20}},{{"timestamp":{now},"tx":30,"rx":40}}]}},"config":{{"data_preserve_day":1,"detect_interval":2,"save_interval":600,"nics":[]}}}}"#
+        ),
+    )
+    .unwrap();
+
+    let sampler = NetStaticSampler::with_config(NetStaticSamplerConfig {
+        path: path.clone(),
+        data_preserve_days: 1.0,
+        detect_interval_seconds: 2.0,
+        save_interval_seconds: 600.0,
+        nics: Vec::new(),
+    });
+
+    let totals = sampler.total_between(0, now + 1, &NetworkFilter::default());
+    drop(sampler);
+    let _ = fs::remove_file(path);
+
+    assert_eq!(totals.total_up, 30);
+    assert_eq!(totals.total_down, 40);
+}
+
+#[test]
+fn sampler_loads_existing_file_and_prunes_expired_records_on_load() {
+    let path = temp_net_static_path("load");
+    let now = chrono::Local::now().timestamp().max(0) as u64;
+    let old = now.saturating_sub(2 * 24 * 60 * 60);
+    fs::write(
+        &path,
+        format!(
+            r#"{{"interfaces":{{"eth0":[{{"timestamp":{old},"tx":10,"rx":20}},{{"timestamp":{now},"tx":30,"rx":40}}]}},"config":{{"data_preserve_day":1,"detect_interval":2,"save_interval":600,"nics":[]}}}}"#
+        ),
     )
     .unwrap();
 
@@ -62,17 +95,17 @@ fn sampler_loads_existing_file_and_prunes_expired_records_on_flush() {
     });
 
     assert_eq!(
-        sampler.total_between(0, 100_000, &NetworkFilter::default()),
+        sampler.total_between(0, now + 1, &NetworkFilter::default()),
         NetworkTotals {
-            total_up: 40,
-            total_down: 60,
+            total_up: 30,
+            total_down: 40,
         }
     );
 
-    sampler.flush(90_000).unwrap();
+    sampler.flush(now).unwrap();
     let contents = fs::read_to_string(&path).unwrap();
     let parsed =
-        parse_net_static_total_between(&contents, 0, 100_000, &NetworkFilter::default()).unwrap();
+        parse_net_static_total_between(&contents, 0, now + 1, &NetworkFilter::default()).unwrap();
     drop(sampler);
     let _ = fs::remove_file(path);
 
@@ -83,9 +116,13 @@ fn sampler_loads_existing_file_and_prunes_expired_records_on_flush() {
 #[test]
 fn sampler_uses_persisted_preserve_days_like_go_agent() {
     let path = temp_net_static_path("persisted-config");
+    let now = chrono::Local::now().timestamp().max(0) as u64;
+    let old = now.saturating_sub(2 * 24 * 60 * 60);
     fs::write(
         &path,
-        r#"{"interfaces":{"eth0":[{"timestamp":1,"tx":10,"rx":20},{"timestamp":90000,"tx":30,"rx":40}]},"config":{"data_preserve_day":1,"detect_interval":2,"save_interval":600,"nics":[]}}"#,
+        format!(
+            r#"{{"interfaces":{{"eth0":[{{"timestamp":{old},"tx":10,"rx":20}},{{"timestamp":{now},"tx":30,"rx":40}}]}},"config":{{"data_preserve_day":1,"detect_interval":2,"save_interval":600,"nics":[]}}}}"#
+        ),
     )
     .unwrap();
 
@@ -94,10 +131,10 @@ fn sampler_uses_persisted_preserve_days_like_go_agent() {
         ..NetStaticSamplerConfig::default()
     });
 
-    sampler.flush(90_000).unwrap();
+    sampler.flush(now).unwrap();
     let contents = fs::read_to_string(&path).unwrap();
     let parsed =
-        parse_net_static_total_between(&contents, 0, 100_000, &NetworkFilter::default()).unwrap();
+        parse_net_static_total_between(&contents, 0, now + 1, &NetworkFilter::default()).unwrap();
     drop(sampler);
     let _ = fs::remove_file(path);
 

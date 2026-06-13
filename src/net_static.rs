@@ -84,6 +84,8 @@ impl NetStaticSampler {
             last_save_at: None,
         };
         sampler.load_from_file();
+        let now = chrono::Local::now().timestamp().max(0) as u64;
+        sampler.purge_expired(now);
         sampler
     }
 
