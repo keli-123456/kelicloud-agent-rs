@@ -23,6 +23,8 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
     assert!(script.contains("trap on_error ERR"));
     assert!(script.contains("CURRENT_STAGE"));
     assert!(script.contains("::error title=Local backend smoke::"));
+    assert!(script.contains("sys.argv[1]"));
+    assert!(!script.contains("os.environ[\"ADMIN_USERNAME\"]"));
 }
 
 #[test]

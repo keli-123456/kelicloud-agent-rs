@@ -289,9 +289,9 @@ login_admin() {
     local login_payload
     login_payload="$(python3 -c '
 import json
-import os
-print(json.dumps({"username": os.environ["ADMIN_USERNAME"], "password": os.environ["ADMIN_PASSWORD"]}))
-')"
+import sys
+print(json.dumps({"username": sys.argv[1], "password": sys.argv[2]}))
+' "${ADMIN_USERNAME}" "${ADMIN_PASSWORD}")"
 
     local response
     response="$(curl -fsS -c "${COOKIE_JAR}" \
