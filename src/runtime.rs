@@ -106,12 +106,33 @@ pub trait LoopDelay {
     fn sleep_reconnect_interval(&mut self, seconds: u64);
 }
 
+pub trait TokenRecovery {
+    fn recover_from_transport_error(
+        &mut self,
+        config: &mut AgentConfig,
+        error: &TransportError,
+    ) -> bool;
+}
+
 #[derive(Debug, Default)]
 pub struct NoopLoopDelay;
 
 impl LoopDelay for NoopLoopDelay {
     fn sleep_report_interval(&mut self, _seconds: f64) {}
     fn sleep_reconnect_interval(&mut self, _seconds: u64) {}
+}
+
+#[derive(Debug, Default)]
+pub struct NoopTokenRecovery;
+
+impl TokenRecovery for NoopTokenRecovery {
+    fn recover_from_transport_error(
+        &mut self,
+        _config: &mut AgentConfig,
+        _error: &TransportError,
+    ) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Default)]
@@ -180,19 +201,97 @@ where
     C: ControlMessageHandler,
     B: BasicInfoProvider,
 {
-    let headers = access_headers(config);
-    let basic_info_url = build_basic_info_url(&config.endpoint, &config.token)?;
-    let basic_info = basic_info_provider.basic_info();
-    upload_basic_info_with_legacy_retry(http, &basic_info_url, &headers, &basic_info)?;
+    let mut config = config.clone();
+    let mut recovery = NoopTokenRecovery;
+    run_once_with_ping_and_token_recovery(
+        &mut config,
+        basic_info_provider,
+        report_generator,
+        ping_executor,
+        http,
+        websocket,
+        handler,
+        &mut recovery,
+    )
+}
 
-    let report_url = build_report_ws_url(&config.endpoint, &config.token)?;
-    let mut socket = websocket.connect_report(&report_url, &headers)?;
+pub fn run_once_with_ping_and_token_recovery<H, W, G, P, C, B, R>(
+    config: &mut AgentConfig,
+    basic_info_provider: &B,
+    report_generator: &G,
+    ping_executor: &P,
+    http: &mut H,
+    websocket: &mut W,
+    handler: &mut C,
+    recovery: &mut R,
+) -> Result<(), RuntimeError>
+where
+    H: HttpTransport,
+    W: WebSocketTransport,
+    G: ReportGenerator,
+    P: PingExecutor,
+    C: ControlMessageHandler,
+    B: BasicInfoProvider,
+    R: TokenRecovery,
+{
+    let headers = access_headers(config);
+    let basic_info = basic_info_provider.basic_info();
+    upload_basic_info_with_token_recovery(config, http, &headers, &basic_info, recovery)?;
+
+    let mut socket = connect_report_with_token_recovery(config, websocket, &headers, recovery)?;
     let report = report_generator.generate();
     socket.send_report(&report)?;
 
     drain_backend_messages(&mut socket, handler, ping_executor)?;
 
     Ok(())
+}
+
+fn upload_basic_info_with_token_recovery<H, R>(
+    config: &mut AgentConfig,
+    http: &mut H,
+    headers: &[HeaderPair],
+    basic_info: &BasicInfo,
+    recovery: &mut R,
+) -> Result<(), RuntimeError>
+where
+    H: HttpTransport,
+    R: TokenRecovery,
+{
+    let mut recovered = false;
+    loop {
+        let basic_info_url = build_basic_info_url(&config.endpoint, &config.token)?;
+        match upload_basic_info_with_legacy_retry(http, &basic_info_url, headers, basic_info) {
+            Ok(()) => return Ok(()),
+            Err(error) if !recovered && recovery.recover_from_transport_error(config, &error) => {
+                recovered = true;
+            }
+            Err(error) => return Err(RuntimeError::Transport(error)),
+        }
+    }
+}
+
+fn connect_report_with_token_recovery<W, R>(
+    config: &mut AgentConfig,
+    websocket: &mut W,
+    headers: &[HeaderPair],
+    recovery: &mut R,
+) -> Result<W::Socket, RuntimeError>
+where
+    W: WebSocketTransport,
+    R: TokenRecovery,
+{
+    let mut recovered = false;
+    loop {
+        let report_url = build_report_ws_url(&config.endpoint, &config.token)?;
+        match websocket.connect_report(&report_url, headers) {
+            Ok(socket) => return Ok(socket),
+            Err(error) if !recovered && recovery.recover_from_transport_error(config, &error) => {
+                recovered = true;
+            }
+            Err(error) => return Err(RuntimeError::Transport(error)),
+        }
+    }
 }
 
 pub fn run_report_cycles<H, W, G, C, B>(
@@ -276,10 +375,45 @@ where
     D: LoopDelay,
     B: BasicInfoProvider,
 {
-    let headers = access_headers(config);
-    let basic_info_url = build_basic_info_url(&config.endpoint, &config.token)?;
+    let mut config = config.clone();
+    let mut recovery = NoopTokenRecovery;
+    run_report_cycles_with_ping_delay_and_token_recovery(
+        &mut config,
+        basic_info_provider,
+        report_generator,
+        ping_executor,
+        http,
+        websocket,
+        handler,
+        delay,
+        &mut recovery,
+        cycles,
+    )
+}
 
-    let report_url = build_report_ws_url(&config.endpoint, &config.token)?;
+pub fn run_report_cycles_with_ping_delay_and_token_recovery<H, W, G, P, C, D, B, R>(
+    config: &mut AgentConfig,
+    basic_info_provider: &B,
+    report_generator: &G,
+    ping_executor: &P,
+    http: &mut H,
+    websocket: &mut W,
+    handler: &mut C,
+    delay: &mut D,
+    recovery: &mut R,
+    cycles: usize,
+) -> Result<(), RuntimeError>
+where
+    H: HttpTransport,
+    W: WebSocketTransport,
+    G: ReportGenerator,
+    P: PingExecutor,
+    C: ControlMessageHandler,
+    D: LoopDelay,
+    B: BasicInfoProvider,
+    R: TokenRecovery,
+{
+    let headers = access_headers(config);
     let report_interval_seconds = report_tick_interval_seconds(config.interval_seconds);
     let heartbeat_every = heartbeat_interval_cycles(report_interval_seconds);
     let basic_info_every =
@@ -290,15 +424,20 @@ where
     for cycle in 0..cycles {
         if cycle % basic_info_every == 0 {
             let basic_info = basic_info_provider.basic_info();
-            let upload_result =
-                upload_basic_info_with_legacy_retry(http, &basic_info_url, &headers, &basic_info);
+            let upload_result = upload_basic_info_with_token_recovery(
+                config,
+                http,
+                &headers,
+                &basic_info,
+                recovery,
+            );
             if cycle == 0 {
                 upload_result?;
             }
         }
 
         if socket.is_none() {
-            match websocket.connect_report(&report_url, &headers) {
+            match connect_report_with_token_recovery(config, websocket, &headers, recovery) {
                 Ok(next_socket) => {
                     socket = Some(next_socket);
                     connect_failures = 0;
@@ -306,7 +445,7 @@ where
                 Err(error) => {
                     connect_failures += 1;
                     if connect_failures > config.max_retries {
-                        return Err(RuntimeError::Transport(error));
+                        return Err(error);
                     }
                     delay.sleep_reconnect_interval(config.reconnect_interval_seconds);
                     continue;
@@ -377,6 +516,9 @@ where
     match http.upload_basic_info(url, headers, basic_info) {
         Ok(()) => Ok(()),
         Err(error) => {
+            if matches!(error, TransportError::InvalidClientToken { .. }) {
+                return Err(error);
+            }
             if basic_info.kernel_version.is_empty() {
                 return Err(error);
             }

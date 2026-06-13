@@ -109,11 +109,19 @@ Installer render helpers are side-effect free and useful for review or CI:
 ## Live Smoke Test
 
 Use the Linux-only smoke script when you want to test against a real kelicloud
-backend and token without committing secrets:
+backend without committing secrets:
 
 ```bash
 AGENT_ENDPOINT=https://panel.example.com \
 AGENT_TOKEN=TOKEN \
+scripts/smoke-live.sh
+```
+
+Or use auto-discovery instead of a static token:
+
+```bash
+AGENT_ENDPOINT=https://panel.example.com \
+AGENT_AUTO_DISCOVERY_KEY=KEY \
 scripts/smoke-live.sh
 ```
 
@@ -141,7 +149,8 @@ watchlist.
 You can also run the same smoke test from GitHub Actions when you do not have a
 Linux shell on your workstation:
 
-1. Add repository secret `KELICLOUD_SMOKE_TOKEN`.
+1. Add repository secret `KELICLOUD_SMOKE_TOKEN` or
+   `KELICLOUD_SMOKE_AUTO_DISCOVERY_KEY`.
 2. Optionally add repository secret `KELICLOUD_SMOKE_ENDPOINT`.
 3. If the panel is behind Cloudflare Access, also add
    `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_ID` and

@@ -7,6 +7,7 @@ BIN_PATH=""
 BUILD_BINARY="true"
 ENDPOINT="${AGENT_ENDPOINT:-}"
 TOKEN="${AGENT_TOKEN:-}"
+AUTO_DISCOVERY_KEY="${AGENT_AUTO_DISCOVERY_KEY:-}"
 INTERVAL_SECONDS="5"
 MAX_RETRIES="1"
 RECONNECT_INTERVAL_SECONDS="3"
@@ -25,7 +26,9 @@ Live backend smoke test for kelicloud-agent-rs.
 
 Usage:
   scripts/smoke-live.sh --endpoint URL --token TOKEN [options]
+  scripts/smoke-live.sh --endpoint URL --auto-discovery KEY [options]
   AGENT_ENDPOINT=URL AGENT_TOKEN=TOKEN scripts/smoke-live.sh [options]
+  AGENT_ENDPOINT=URL AGENT_AUTO_DISCOVERY_KEY=KEY scripts/smoke-live.sh [options]
 
 Modes:
   --mode once      Upload basic info, connect report websocket, send one report, then exit.
@@ -34,6 +37,7 @@ Modes:
 Options:
   --endpoint URL                 Backend endpoint. Also read from AGENT_ENDPOINT.
   --token TOKEN                  Agent token. Also read from AGENT_TOKEN.
+  --auto-discovery KEY           Auto-discovery key. Also read from AGENT_AUTO_DISCOVERY_KEY.
   --duration SECONDS             Live-mode duration, default 75.
   --bin PATH                     Use an existing agent binary.
   --no-build                     Do not build target/release/kelicloud-agent-rs automatically.
@@ -51,6 +55,7 @@ Options:
 
 Examples:
   scripts/smoke-live.sh --endpoint https://panel.example.com --token TOKEN
+  scripts/smoke-live.sh --endpoint https://panel.example.com --auto-discovery KEY
   scripts/smoke-live.sh --mode live --duration 120 --endpoint https://panel.example.com --token TOKEN
 EOF
 }
@@ -99,6 +104,11 @@ parse_args() {
             --token)
                 need_value "$1" "${2:-}"
                 TOKEN="$2"
+                shift 2
+                ;;
+            --auto-discovery)
+                need_value "$1" "${2:-}"
+                AUTO_DISCOVERY_KEY="$2"
                 shift 2
                 ;;
             --duration)
@@ -187,7 +197,7 @@ validate_config() {
     esac
 
     [[ -n "$ENDPOINT" ]] || die "--endpoint or AGENT_ENDPOINT is required"
-    [[ -n "$TOKEN" ]] || die "--token or AGENT_TOKEN is required"
+    [[ -n "$TOKEN" || -n "$AUTO_DISCOVERY_KEY" ]] || die "--token/AGENT_TOKEN or --auto-discovery/AGENT_AUTO_DISCOVERY_KEY is required"
     [[ "$DURATION_SECONDS" =~ ^[0-9]+$ ]] || die "--duration must be whole seconds"
     [[ "$DURATION_SECONDS" -gt 0 ]] || die "--duration must be greater than zero"
 }
@@ -218,12 +228,17 @@ build_agent_command() {
     AGENT_COMMAND=(
         "$BIN_PATH"
         --endpoint "$ENDPOINT"
-        --token "$TOKEN"
         --interval "$INTERVAL_SECONDS"
         --max-retries "$MAX_RETRIES"
         --reconnect-interval "$RECONNECT_INTERVAL_SECONDS"
         --info-report-interval "$INFO_REPORT_INTERVAL_MINUTES"
     )
+    if [[ -n "$TOKEN" ]]; then
+        AGENT_COMMAND+=(--token "$TOKEN")
+    fi
+    if [[ -n "$AUTO_DISCOVERY_KEY" ]]; then
+        AGENT_COMMAND+=(--auto-discovery "$AUTO_DISCOVERY_KEY")
+    fi
 
     if [[ "$MODE" == "once" ]]; then
         AGENT_COMMAND+=(--once)
@@ -301,7 +316,11 @@ main() {
 
     log "Smoke mode: ${MODE}"
     log "Endpoint: ${ENDPOINT}"
-    log "Token: $(redact_token "$TOKEN")"
+    if [[ -n "$AUTO_DISCOVERY_KEY" ]]; then
+        log "Token source: auto-discovery ($(redact_token "$AUTO_DISCOVERY_KEY"))"
+    else
+        log "Token source: static token ($(redact_token "$TOKEN"))"
+    fi
     log "Binary: ${BIN_PATH}"
     log "Log file: ${log_file}"
     if [[ "$MODE" == "live" ]]; then

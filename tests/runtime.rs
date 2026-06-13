@@ -6,9 +6,10 @@ use kelicloud_agent_rs::report::{
     Report, ReportGenerator,
 };
 use kelicloud_agent_rs::runtime::{
-    run_once, run_once_with_ping, run_report_cycles, run_report_cycles_with_delay,
-    run_report_cycles_with_ping_delay, startup_summary, ChainControlMessageHandler,
-    ControlMessageHandler, LoopDelay,
+    run_once, run_once_with_ping, run_once_with_ping_and_token_recovery, run_report_cycles,
+    run_report_cycles_with_delay, run_report_cycles_with_ping_delay,
+    run_report_cycles_with_ping_delay_and_token_recovery, startup_summary,
+    ChainControlMessageHandler, ControlMessageHandler, LoopDelay, TokenRecovery,
 };
 use kelicloud_agent_rs::transport::{
     HeaderPair, HttpTransport, ReportSocket, TransportError, WebSocketTransport,
@@ -206,6 +207,162 @@ fn run_once_with_ping_executes_ping_message_and_sends_result() {
     assert_eq!(sent_ping_results.borrow()[0].ping_type, "tcp");
     assert_eq!(sent_ping_results.borrow()[0].value, 29);
     assert!(handler.messages.is_empty());
+}
+
+#[test]
+fn run_once_recovers_auto_discovery_token_after_basic_info_invalid_token() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut config = test_config();
+    config.token = "stale-token".to_string();
+    config.auto_discovery_key = "discovery-key".to_string();
+    let mut http = FakeHttp::new(events.clone()).with_upload_invalid_token_once("stale-token");
+    let mut websocket = FakeWebSocketTransport::new(events.clone(), None);
+    let mut recovery = FakeTokenRecovery::new(events.clone(), "fresh-token");
+    let mut handler = RecordingHandler::default();
+
+    run_once_with_ping_and_token_recovery(
+        &mut config,
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(12.0)),
+        &FixedPingExecutor::new(29),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        &mut recovery,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=stale-token",
+            "upload_invalid_token",
+            "recover:stale-token",
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=fresh-token",
+            "connect:wss://panel.example.com/api/clients/report?token=fresh-token",
+            "send_report"
+        ]
+    );
+    assert_eq!(config.token, "fresh-token");
+}
+
+#[test]
+fn run_once_recovers_auto_discovery_token_after_report_connect_invalid_token() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut config = test_config();
+    config.token = "stale-token".to_string();
+    config.auto_discovery_key = "discovery-key".to_string();
+    let mut http = FakeHttp::new(events.clone());
+    let mut websocket = FakeWebSocketTransport::new(events.clone(), None)
+        .with_connect_invalid_token_once("stale-token");
+    let mut recovery = FakeTokenRecovery::new(events.clone(), "fresh-token");
+    let mut handler = RecordingHandler::default();
+
+    run_once_with_ping_and_token_recovery(
+        &mut config,
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(12.0)),
+        &FixedPingExecutor::new(29),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        &mut recovery,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=stale-token",
+            "connect:wss://panel.example.com/api/clients/report?token=stale-token",
+            "connect_invalid_token",
+            "recover:stale-token",
+            "connect:wss://panel.example.com/api/clients/report?token=fresh-token",
+            "send_report"
+        ]
+    );
+    assert_eq!(config.token, "fresh-token");
+}
+
+#[test]
+fn run_report_cycles_recovers_auto_discovery_token_after_basic_info_invalid_token() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut config = test_config();
+    config.token = "stale-token".to_string();
+    config.auto_discovery_key = "discovery-key".to_string();
+    let mut http = FakeHttp::new(events.clone()).with_upload_invalid_token_once("stale-token");
+    let mut websocket = FakeWebSocketTransport::new(events.clone(), None);
+    let mut recovery = FakeTokenRecovery::new(events.clone(), "fresh-token");
+    let mut handler = RecordingHandler::default();
+    let mut delay = RecordingDelay::new(events.clone());
+
+    run_report_cycles_with_ping_delay_and_token_recovery(
+        &mut config,
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(12.0)),
+        &FixedPingExecutor::new(29),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        &mut delay,
+        &mut recovery,
+        1,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=stale-token",
+            "upload_invalid_token",
+            "recover:stale-token",
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=fresh-token",
+            "connect:wss://panel.example.com/api/clients/report?token=fresh-token",
+            "send_report"
+        ]
+    );
+    assert_eq!(config.token, "fresh-token");
+}
+
+#[test]
+fn run_report_cycles_recovers_auto_discovery_token_after_report_connect_invalid_token() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut config = test_config();
+    config.token = "stale-token".to_string();
+    config.auto_discovery_key = "discovery-key".to_string();
+    let mut http = FakeHttp::new(events.clone());
+    let mut websocket = FakeWebSocketTransport::new(events.clone(), None)
+        .with_connect_invalid_token_once("stale-token");
+    let mut recovery = FakeTokenRecovery::new(events.clone(), "fresh-token");
+    let mut handler = RecordingHandler::default();
+    let mut delay = RecordingDelay::new(events.clone());
+
+    run_report_cycles_with_ping_delay_and_token_recovery(
+        &mut config,
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(12.0)),
+        &FixedPingExecutor::new(29),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        &mut delay,
+        &mut recovery,
+        1,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=stale-token",
+            "connect:wss://panel.example.com/api/clients/report?token=stale-token",
+            "connect_invalid_token",
+            "recover:stale-token",
+            "connect:wss://panel.example.com/api/clients/report?token=fresh-token",
+            "send_report"
+        ]
+    );
+    assert_eq!(config.token, "fresh-token");
 }
 
 #[test]
@@ -662,6 +819,7 @@ struct FakeHttp {
     events: Rc<RefCell<Vec<String>>>,
     upload_failures_remaining: Rc<RefCell<usize>>,
     upload_failures_after_successes: Rc<RefCell<Option<(usize, usize)>>>,
+    upload_invalid_token: Rc<RefCell<Option<String>>>,
     uploaded_kernel_versions: Rc<RefCell<Vec<String>>>,
 }
 
@@ -671,6 +829,7 @@ impl FakeHttp {
             events,
             upload_failures_remaining: Rc::new(RefCell::new(0)),
             upload_failures_after_successes: Rc::new(RefCell::new(None)),
+            upload_invalid_token: Rc::new(RefCell::new(None)),
             uploaded_kernel_versions: Rc::new(RefCell::new(Vec::new())),
         }
     }
@@ -682,6 +841,11 @@ impl FakeHttp {
 
     fn with_upload_failures_after_successes(self, successes: usize, failures: usize) -> Self {
         *self.upload_failures_after_successes.borrow_mut() = Some((successes, failures));
+        self
+    }
+
+    fn with_upload_invalid_token_once(self, token: &str) -> Self {
+        *self.upload_invalid_token.borrow_mut() = Some(token.to_string());
         self
     }
 
@@ -705,6 +869,15 @@ impl HttpTransport for FakeHttp {
         self.uploaded_kernel_versions
             .borrow_mut()
             .push(basic_info.kernel_version.clone());
+        let mut invalid_token = self.upload_invalid_token.borrow_mut();
+        if let Some(token) = invalid_token.take() {
+            self.events
+                .borrow_mut()
+                .push("upload_invalid_token".to_string());
+            return Err(invalid_token_error("uploadBasicInfo", &token));
+        }
+        drop(invalid_token);
+
         let mut failures = self.upload_failures_remaining.borrow_mut();
         if *failures > 0 {
             *failures -= 1;
@@ -737,6 +910,7 @@ struct FakeWebSocketTransport {
     sent_reports: Rc<RefCell<Vec<Report>>>,
     sent_ping_results: Rc<RefCell<Vec<PingResult>>>,
     send_failures_remaining: Rc<RefCell<usize>>,
+    connect_invalid_token: Rc<RefCell<Option<String>>>,
 }
 
 impl FakeWebSocketTransport {
@@ -747,6 +921,7 @@ impl FakeWebSocketTransport {
             sent_reports: Rc::new(RefCell::new(Vec::new())),
             sent_ping_results: Rc::new(RefCell::new(Vec::new())),
             send_failures_remaining: Rc::new(RefCell::new(0)),
+            connect_invalid_token: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -768,6 +943,11 @@ impl FakeWebSocketTransport {
         self
     }
 
+    fn with_connect_invalid_token_once(self, token: &str) -> Self {
+        *self.connect_invalid_token.borrow_mut() = Some(token.to_string());
+        self
+    }
+
     fn with_sent_ping_results(mut self, sent_ping_results: Rc<RefCell<Vec<PingResult>>>) -> Self {
         self.sent_ping_results = sent_ping_results;
         self
@@ -783,6 +963,15 @@ impl WebSocketTransport for FakeWebSocketTransport {
         _headers: &[HeaderPair],
     ) -> Result<Self::Socket, TransportError> {
         self.events.borrow_mut().push(format!("connect:{url}"));
+        let mut invalid_token = self.connect_invalid_token.borrow_mut();
+        if let Some(token) = invalid_token.take() {
+            self.events
+                .borrow_mut()
+                .push("connect_invalid_token".to_string());
+            return Err(invalid_token_error("report websocket", &token));
+        }
+        drop(invalid_token);
+
         Ok(FakeSocket {
             events: self.events.clone(),
             inbound: std::mem::take(&mut self.inbound),
@@ -836,9 +1025,47 @@ impl ReportSocket for FakeSocket {
     }
 }
 
+struct FakeTokenRecovery {
+    events: Rc<RefCell<Vec<String>>>,
+    next_token: String,
+}
+
+impl FakeTokenRecovery {
+    fn new(events: Rc<RefCell<Vec<String>>>, next_token: &str) -> Self {
+        Self {
+            events,
+            next_token: next_token.to_string(),
+        }
+    }
+}
+
+impl TokenRecovery for FakeTokenRecovery {
+    fn recover_from_transport_error(
+        &mut self,
+        config: &mut AgentConfig,
+        error: &TransportError,
+    ) -> bool {
+        let TransportError::InvalidClientToken { token, .. } = error else {
+            return false;
+        };
+        self.events.borrow_mut().push(format!("recover:{token}"));
+        config.token = self.next_token.clone();
+        true
+    }
+}
+
 #[derive(Default)]
 struct RecordingHandler {
     messages: Vec<BackendMessage>,
+}
+
+fn invalid_token_error(operation: &str, token: &str) -> TransportError {
+    TransportError::InvalidClientToken {
+        operation: operation.to_string(),
+        token: token.to_string(),
+        status_code: 401,
+        detail: "invalid token".to_string(),
+    }
 }
 
 impl ControlMessageHandler for RecordingHandler {

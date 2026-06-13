@@ -4,7 +4,8 @@ use kelicloud_agent_rs::cn_connectivity::{
 use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::ping::LinuxPingExecutor;
 use kelicloud_agent_rs::runtime::{
-    run_once_with_ping, run_report_cycles_with_ping_delay, startup_summary,
+    run_once_with_ping, run_once_with_ping_and_token_recovery, run_report_cycles_with_ping_delay,
+    run_report_cycles_with_ping_delay_and_token_recovery, startup_summary,
     ChainControlMessageHandler, ThreadLoopDelay,
 };
 use kelicloud_agent_rs::system::{SystemReportGenerator, SystemSnapshotCollector};
@@ -37,8 +38,9 @@ fn main() {
 
     println!("{}", startup_summary(&config));
 
-    let basic_info_provider = || {
-        let mut collector = SystemSnapshotCollector::from_config(&config);
+    let basic_info_config = config.clone();
+    let basic_info_provider = move || {
+        let mut collector = SystemSnapshotCollector::from_config(&basic_info_config);
         collector.collect().to_basic_info(env!("CARGO_PKG_VERSION"))
     };
     let collector = SystemSnapshotCollector::from_config(&config);
@@ -74,8 +76,42 @@ fn main() {
     let mut handler = ChainControlMessageHandler::new(control_handler, terminal_handler);
     let ping_executor = LinuxPingExecutor::default();
 
-    let result = if config.once {
-        run_once_with_ping(
+    let mut auto_discovery_recovery =
+        match kelicloud_agent_rs::auto_discovery::token_recovery_from_config(&config) {
+            Ok(recovery) => recovery,
+            Err(error) => {
+                eprintln!("auto-discovery recovery error: {error}");
+                std::process::exit(2);
+            }
+        };
+
+    let result = match auto_discovery_recovery.as_mut() {
+        Some(recovery) if config.once => run_once_with_ping_and_token_recovery(
+            &mut config,
+            &basic_info_provider,
+            &report_generator,
+            &ping_executor,
+            &mut http,
+            &mut websocket,
+            &mut handler,
+            recovery,
+        ),
+        Some(recovery) => {
+            let mut delay = ThreadLoopDelay;
+            run_report_cycles_with_ping_delay_and_token_recovery(
+                &mut config,
+                &basic_info_provider,
+                &report_generator,
+                &ping_executor,
+                &mut http,
+                &mut websocket,
+                &mut handler,
+                &mut delay,
+                recovery,
+                usize::MAX,
+            )
+        }
+        None if config.once => run_once_with_ping(
             &config,
             &basic_info_provider,
             &report_generator,
@@ -83,20 +119,21 @@ fn main() {
             &mut http,
             &mut websocket,
             &mut handler,
-        )
-    } else {
-        let mut delay = ThreadLoopDelay;
-        run_report_cycles_with_ping_delay(
-            &config,
-            &basic_info_provider,
-            &report_generator,
-            &ping_executor,
-            &mut http,
-            &mut websocket,
-            &mut handler,
-            &mut delay,
-            usize::MAX,
-        )
+        ),
+        None => {
+            let mut delay = ThreadLoopDelay;
+            run_report_cycles_with_ping_delay(
+                &config,
+                &basic_info_provider,
+                &report_generator,
+                &ping_executor,
+                &mut http,
+                &mut websocket,
+                &mut handler,
+                &mut delay,
+                usize::MAX,
+            )
+        }
     };
 
     if let Err(error) = result {

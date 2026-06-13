@@ -6,6 +6,9 @@ fn smoke_script_documents_live_backend_checks() {
 
     assert!(script.contains("AGENT_ENDPOINT"));
     assert!(script.contains("AGENT_TOKEN"));
+    assert!(script.contains("AGENT_AUTO_DISCOVERY_KEY"));
+    assert!(script.contains("--auto-discovery"));
+    assert!(script.contains("Token source: auto-discovery"));
     assert!(script.contains("--mode once"));
     assert!(script.contains("--mode live"));
     assert!(script.contains("--duration"));

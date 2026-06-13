@@ -10,6 +10,7 @@ needs `KELICLOUD_SMOKE_TOKEN` and either the `endpoint` workflow input or
 - Local Linux: `scripts/smoke-live.sh --mode live --duration 120`.
 - GitHub Actions: manually run the `Smoke` workflow.
 - Required secret: `KELICLOUD_SMOKE_TOKEN`.
+- Alternative required secret: `KELICLOUD_SMOKE_AUTO_DISCOVERY_KEY`.
 - Optional secrets: `KELICLOUD_SMOKE_ENDPOINT`,
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_ID`,
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_SECRET`.
@@ -46,13 +47,18 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
 - Basic-info upload and report WebSocket connection classify Go-agent-style
   HTTP 401 invalid-token responses as typed invalid-token transport errors,
   preserving the operation name, token, status code, and response body for
-  future auto-discovery recovery logic.
+  auto-discovery recovery logic.
 - Startup auto-discovery supports `--auto-discovery` /
   `AGENT_AUTO_DISCOVERY_KEY`, loads `auto-discovery.json` from the executable
   directory when present, otherwise registers at
   `/api/clients/register?name=<hostname>` with `{"key":"..."}`,
   `Authorization: Bearer <auto-discovery-key>`, Cloudflare Access headers when
   configured, and saves the returned `{uuid, token}` for normal report traffic.
+- When auto-discovery is enabled, stale-token errors during basic-info upload or
+  report WebSocket connection clear `auto-discovery.json`, re-register, update
+  the in-memory token, rebuild the failed URL, and retry once with the fresh
+  token. If the failed token differs from the current in-memory token, recovery
+  treats it as already rotated, matching the Go agent guard.
 - Cloudflare Access headers are supported for basic info, report WebSocket,
   terminal WebSocket, and task result upload.
 
@@ -109,12 +115,12 @@ dynamic smoke produces logs:
    it treats the stale-token error as recovered.
 
    The Rust prototype now supports the startup registration/cache path above and
-   classifies the same invalid-token response shapes as typed transport errors.
-   It does not yet clear cached discovery state, register, rotate the token, or
-   retry the failed operation after a stale-token response. This is not a
-   blocker for static-token smoke or first-start auto-discovery smoke, but it is
-   still a deployment compatibility gap if production relies on stale-token
-   recovery.
+   stale-token recovery for basic-info upload and report WebSocket connection.
+   Live smoke should still verify recovery with a real backend. One remaining
+   compatibility risk is that task result uploaders and terminal connectors are
+   created with the token available at startup; if a token rotates later during
+   the report loop, task result upload and terminal sessions may still use the
+   pre-rotation token until those components are made token-aware.
 
 3. Auto-update
 

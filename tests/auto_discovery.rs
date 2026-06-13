@@ -1,9 +1,10 @@
 use kelicloud_agent_rs::auto_discovery::{
     build_auto_discovery_register_url, resolve_auto_discovery_with, AutoDiscoveryCache,
     AutoDiscoveryError, AutoDiscoveryRegisterRequest, AutoDiscoveryRegistrar,
-    ReqwestAutoDiscoveryRegistrar,
+    AutoDiscoveryTokenRecovery, ReqwestAutoDiscoveryRegistrar,
 };
 use kelicloud_agent_rs::config::AgentConfig;
+use kelicloud_agent_rs::transport::TransportError;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -132,6 +133,66 @@ fn reqwest_registrar_posts_go_agent_compatible_register_request() {
     assert!(saved.contains(r#""token":"server-token""#));
 }
 
+#[test]
+fn token_recovery_clears_stale_cache_and_registers_new_token() {
+    let cache_path = temp_cache_path("stale");
+    fs::write(
+        &cache_path,
+        r#"{"uuid":"stale-client","token":"stale-token"}"#,
+    )
+    .unwrap();
+    let mut config = auto_config();
+    config.token = "stale-token".to_string();
+    let registrar = RecordingRegistrar::new(AutoDiscoveryCache {
+        uuid: "fresh-client".to_string(),
+        token: "fresh-token".to_string(),
+    });
+    let mut recovery =
+        AutoDiscoveryTokenRecovery::new(cache_path.clone(), "Auto node".to_string(), registrar);
+
+    let recovered = recovery.recover_from_transport_error(
+        &mut config,
+        &invalid_token_error("uploadBasicInfo", "stale-token"),
+    );
+
+    let saved = fs::read_to_string(&cache_path).unwrap();
+    fs::remove_file(&cache_path).unwrap();
+    assert!(recovered);
+    assert_eq!(config.token, "fresh-token");
+    assert!(saved.contains(r#""uuid":"fresh-client""#));
+    assert!(saved.contains(r#""token":"fresh-token""#));
+}
+
+#[test]
+fn token_recovery_skips_registration_when_token_already_rotated() {
+    let cache_path = temp_cache_path("already-rotated");
+    fs::write(
+        &cache_path,
+        r#"{"uuid":"fresh-client","token":"fresh-token"}"#,
+    )
+    .unwrap();
+    let mut config = auto_config();
+    config.token = "fresh-token".to_string();
+    let registrar = RecordingRegistrar::new(AutoDiscoveryCache {
+        uuid: "new-client".to_string(),
+        token: "new-token".to_string(),
+    });
+    let mut recovery =
+        AutoDiscoveryTokenRecovery::new(cache_path.clone(), "Auto node".to_string(), registrar);
+
+    let recovered = recovery.recover_from_transport_error(
+        &mut config,
+        &invalid_token_error("report websocket", "stale-token"),
+    );
+
+    let saved = fs::read_to_string(&cache_path).unwrap();
+    fs::remove_file(&cache_path).unwrap();
+    assert!(recovered);
+    assert_eq!(config.token, "fresh-token");
+    assert!(saved.contains(r#""token":"fresh-token""#));
+    assert!(!saved.contains("new-token"));
+}
+
 struct RecordingRegistrar {
     requests: Vec<AutoDiscoveryRegisterRequest>,
     response: AutoDiscoveryCache,
@@ -191,4 +252,13 @@ fn temp_cache_path(label: &str) -> PathBuf {
         std::process::id(),
         TEMP_COUNTER.fetch_add(1, Ordering::SeqCst)
     ))
+}
+
+fn invalid_token_error(operation: &str, token: &str) -> TransportError {
+    TransportError::InvalidClientToken {
+        operation: operation.to_string(),
+        token: token.to_string(),
+        status_code: 401,
+        detail: "invalid token".to_string(),
+    }
 }

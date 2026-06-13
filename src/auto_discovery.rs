@@ -1,4 +1,6 @@
 use crate::config::AgentConfig;
+use crate::runtime::TokenRecovery;
+use crate::transport::TransportError;
 use crate::transport::{access_headers, HeaderPair};
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -66,6 +68,69 @@ pub trait AutoDiscoveryRegistrar {
     ) -> Result<AutoDiscoveryCache, AutoDiscoveryError>;
 }
 
+pub struct AutoDiscoveryTokenRecovery<R> {
+    cache_path: PathBuf,
+    hostname: String,
+    registrar: R,
+}
+
+impl<R> AutoDiscoveryTokenRecovery<R>
+where
+    R: AutoDiscoveryRegistrar,
+{
+    pub fn new(cache_path: PathBuf, hostname: String, registrar: R) -> Self {
+        Self {
+            cache_path,
+            hostname,
+            registrar,
+        }
+    }
+
+    pub fn recover_from_transport_error(
+        &mut self,
+        config: &mut AgentConfig,
+        error: &TransportError,
+    ) -> bool {
+        if config.auto_discovery_key.trim().is_empty() {
+            return false;
+        }
+
+        let TransportError::InvalidClientToken { token, .. } = error else {
+            return false;
+        };
+
+        let failed_token = token.trim();
+        if !failed_token.is_empty() && config.token.trim() != failed_token {
+            return true;
+        }
+
+        if clear_cache(&self.cache_path).is_err() {
+            return false;
+        }
+        config.token.clear();
+        resolve_auto_discovery_with(
+            config,
+            &self.cache_path,
+            &self.hostname,
+            &mut self.registrar,
+        )
+        .is_ok()
+    }
+}
+
+impl<R> TokenRecovery for AutoDiscoveryTokenRecovery<R>
+where
+    R: AutoDiscoveryRegistrar,
+{
+    fn recover_from_transport_error(
+        &mut self,
+        config: &mut AgentConfig,
+        error: &TransportError,
+    ) -> bool {
+        AutoDiscoveryTokenRecovery::recover_from_transport_error(self, config, error)
+    }
+}
+
 pub fn resolve_auto_discovery(config: &mut AgentConfig) -> Result<bool, AutoDiscoveryError> {
     if config.auto_discovery_key.trim().is_empty() {
         return Ok(false);
@@ -75,6 +140,20 @@ pub fn resolve_auto_discovery(config: &mut AgentConfig) -> Result<bool, AutoDisc
     let hostname = system_hostname();
     let mut registrar = ReqwestAutoDiscoveryRegistrar::from_config(config)?;
     resolve_auto_discovery_with(config, &cache_path, &hostname, &mut registrar)
+}
+
+pub fn token_recovery_from_config(
+    config: &AgentConfig,
+) -> Result<Option<AutoDiscoveryTokenRecovery<ReqwestAutoDiscoveryRegistrar>>, AutoDiscoveryError> {
+    if config.auto_discovery_key.trim().is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(AutoDiscoveryTokenRecovery::new(
+        default_auto_discovery_cache_path()?,
+        system_hostname(),
+        ReqwestAutoDiscoveryRegistrar::from_config(config)?,
+    )))
 }
 
 pub fn resolve_auto_discovery_with<R>(
@@ -245,6 +324,17 @@ fn save_cache(path: &Path, cache: &AutoDiscoveryCache) -> Result<(), AutoDiscove
         .map_err(|error| AutoDiscoveryError::CacheWrite(error.to_string()))?;
     fs::write(path, contents)
         .map_err(|error| AutoDiscoveryError::CacheWrite(format!("{}: {error}", path.display())))
+}
+
+fn clear_cache(path: &Path) -> Result<(), AutoDiscoveryError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(AutoDiscoveryError::CacheWrite(format!(
+            "{}: {error}",
+            path.display()
+        ))),
+    }
 }
 
 fn read_hostname_file(path: &str) -> Option<String> {

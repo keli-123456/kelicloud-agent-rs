@@ -55,6 +55,7 @@ jobs:
     env:
       AGENT_ENDPOINT: ${{ inputs.endpoint != '' && inputs.endpoint || secrets.KELICLOUD_SMOKE_ENDPOINT }}
       AGENT_TOKEN: ${{ secrets.KELICLOUD_SMOKE_TOKEN }}
+      AGENT_AUTO_DISCOVERY_KEY: ${{ secrets.KELICLOUD_SMOKE_AUTO_DISCOVERY_KEY }}
       AGENT_CF_ACCESS_CLIENT_ID: ${{ secrets.KELICLOUD_SMOKE_CF_ACCESS_CLIENT_ID }}
       AGENT_CF_ACCESS_CLIENT_SECRET: ${{ secrets.KELICLOUD_SMOKE_CF_ACCESS_CLIENT_SECRET }}
       SMOKE_MODE: ${{ inputs.mode }}
@@ -80,11 +81,16 @@ jobs:
             echo "AGENT_ENDPOINT is required. Set the endpoint input or KELICLOUD_SMOKE_ENDPOINT secret."
             exit 1
           fi
-          if [ -z "${AGENT_TOKEN}" ]; then
-            echo "AGENT_TOKEN is required. Set the KELICLOUD_SMOKE_TOKEN secret."
+          if [ -z "${AGENT_TOKEN}" ] && [ -z "${AGENT_AUTO_DISCOVERY_KEY}" ]; then
+            echo "AGENT_TOKEN or AGENT_AUTO_DISCOVERY_KEY is required. Set KELICLOUD_SMOKE_TOKEN or KELICLOUD_SMOKE_AUTO_DISCOVERY_KEY."
             exit 1
           fi
-          echo "::add-mask::$AGENT_TOKEN"
+          if [ -n "${AGENT_TOKEN}" ]; then
+            echo "::add-mask::$AGENT_TOKEN"
+          fi
+          if [ -n "${AGENT_AUTO_DISCOVERY_KEY}" ]; then
+            echo "::add-mask::$AGENT_AUTO_DISCOVERY_KEY"
+          fi
           if [ -n "${AGENT_CF_ACCESS_CLIENT_SECRET}" ]; then
             echo "::add-mask::$AGENT_CF_ACCESS_CLIENT_SECRET"
           fi
