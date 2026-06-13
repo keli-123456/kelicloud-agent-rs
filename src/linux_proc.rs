@@ -413,47 +413,81 @@ pub fn parse_ip_address_list(contents: &str) -> IpAddresses {
 
 pub fn parse_ip_addr_show_output(contents: &str, filter: &NetworkFilter) -> IpAddresses {
     let mut addresses = IpAddresses::default();
+    let mut current_interface = String::new();
+    let mut current_interface_up = false;
 
-    for line in contents.lines() {
+    for line in contents.lines().map(str::trim) {
         let fields = line.split_whitespace().collect::<Vec<_>>();
-        if fields.len() < 4 {
+        if fields.is_empty() {
             continue;
         }
 
-        let name = fields[1].trim_end_matches(':');
-        if !filter.should_include(name) {
-            continue;
-        }
+        if fields.len() >= 2 && fields[0].trim_end_matches(':').parse::<u32>().is_ok() {
+            let name = fields[1]
+                .trim_end_matches(':')
+                .split('@')
+                .next()
+                .unwrap_or(fields[1].trim_end_matches(':'));
 
-        let family = fields[2];
-        let raw_addr = fields[3]
-            .split_once('/')
-            .map(|(addr, _)| addr)
-            .unwrap_or(fields[3]);
-        let Ok(ip) = raw_addr.parse::<IpAddr>() else {
-            continue;
-        };
-
-        match (family, ip) {
-            ("inet", IpAddr::V4(ipv4)) if addresses.ipv4.is_empty() && !ipv4.is_loopback() => {
-                addresses.ipv4 = ipv4.to_string();
+            if matches!(fields.get(2), Some(&"inet" | &"inet6")) && fields.len() >= 4 {
+                if filter.should_include(name) {
+                    record_ip_addr_show_address(&mut addresses, fields[2], fields[3]);
+                }
+            } else {
+                current_interface = name.to_string();
+                current_interface_up = ip_addr_interface_header_is_up(&fields);
             }
-            ("inet6", IpAddr::V6(ipv6))
-                if addresses.ipv6.is_empty()
-                    && !ipv6.is_loopback()
-                    && !ipv6.is_unicast_link_local() =>
-            {
-                addresses.ipv6 = ipv6.to_string();
+
+            if !addresses.ipv4.is_empty() && !addresses.ipv6.is_empty() {
+                break;
             }
-            _ => {}
+            continue;
         }
 
-        if !addresses.ipv4.is_empty() && !addresses.ipv6.is_empty() {
-            break;
+        if !matches!(fields[0], "inet" | "inet6") || fields.len() < 2 {
+            continue;
+        }
+        if current_interface_up && filter.should_include(&current_interface) {
+            record_ip_addr_show_address(&mut addresses, fields[0], fields[1]);
+            if !addresses.ipv4.is_empty() && !addresses.ipv6.is_empty() {
+                break;
+            }
         }
     }
 
     addresses
+}
+
+fn ip_addr_interface_header_is_up(fields: &[&str]) -> bool {
+    fields
+        .get(2)
+        .and_then(|flags| flags.strip_prefix('<')?.strip_suffix('>'))
+        .map(|flags| flags.split(',').any(|flag| flag == "UP"))
+        .unwrap_or(false)
+}
+
+fn record_ip_addr_show_address(addresses: &mut IpAddresses, family: &str, raw_addr: &str) {
+    let raw_addr = raw_addr
+        .split_once('/')
+        .map(|(addr, _)| addr)
+        .unwrap_or(raw_addr);
+    let Ok(ip) = raw_addr.parse::<IpAddr>() else {
+        return;
+    };
+
+    match (family, ip) {
+        ("inet", IpAddr::V4(ipv4)) if addresses.ipv4.is_empty() && !ipv4.is_loopback() => {
+            addresses.ipv4 = ipv4.to_string();
+        }
+        ("inet6", IpAddr::V6(ipv6))
+            if addresses.ipv6.is_empty()
+                && !ipv6.is_loopback()
+                && !ipv6.is_unicast_link_local() =>
+        {
+            addresses.ipv6 = ipv6.to_string();
+        }
+        _ => {}
+    }
 }
 
 pub fn parse_public_ipv4_response(contents: &str) -> Option<String> {

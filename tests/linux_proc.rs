@@ -278,6 +278,32 @@ fn parse_ip_addr_show_output_filters_interfaces_like_go_agent_nic_ip_mode() {
 }
 
 #[test]
+fn parse_ip_addr_show_output_handles_real_multiline_interface_blocks() {
+    let contents = r#"
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
+    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 fe80::1/64 scope link
+       valid_lft forever preferred_lft forever
+    inet6 2607:f358:1a:e::ab0:39b7/64 scope global dynamic
+       valid_lft 2591999sec preferred_lft 604799sec
+3: ens18: <BROADCAST,MULTICAST> mtu 1500 qdisc mq state DOWN group default qlen 1000
+    inet 203.0.113.9/24 brd 203.0.113.255 scope global ens18
+"#;
+
+    let include_eth0 = parse_ip_addr_show_output(contents, &NetworkFilter::from_csv("eth0", ""));
+    assert_eq!(include_eth0.ipv4, "10.0.0.5");
+    assert_eq!(include_eth0.ipv6, "2607:f358:1a:e::ab0:39b7");
+
+    let exclude_eth0 = parse_ip_addr_show_output(contents, &NetworkFilter::from_csv("", "eth0"));
+    assert!(exclude_eth0.ipv4.is_empty());
+    assert!(exclude_eth0.ipv6.is_empty());
+}
+
+#[test]
 fn parse_public_ipv4_response_extracts_ips_from_go_agent_api_shapes() {
     assert_eq!(
         parse_public_ipv4_response("ip=203.0.113.10\nloc=US\n").as_deref(),
