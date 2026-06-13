@@ -7,15 +7,16 @@ use kelicloud_agent_rs::linux_proc::{
     go_compatible_ram, go_compatible_ram_include_cache, go_compatible_ram_raw_used,
     go_compatible_swap, kernel_version_from_uname_output, linux_supported,
     memory_selection_from_meminfo_with_modes, memory_values_from_meminfo_with_modes,
-    network_speed_from_samples, normalize_dns_server, parse_amd_rocm_smi_json, parse_cpuinfo_name,
-    parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lscpu_model_name,
-    parse_lspci_gpu_name, parse_meminfo, parse_net_dev, parse_net_dev_interfaces,
-    parse_net_dev_with_filter, parse_net_static_total_between, parse_nvidia_smi_xml,
-    parse_os_release_pretty_name, parse_proc_stat_cpu_sample, parse_public_ipv4_response,
-    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
-    proc_metrics_from_parts, proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
-    resolve_host_with_dns_server, sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts,
-    DiskMount, MemoryValues, NetworkFilter, NetworkTotals,
+    network_speed_from_samples, nic_ip_addresses_from_ip_addr_show_output, normalize_dns_server,
+    parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output, parse_ip_address_list,
+    parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name, parse_meminfo, parse_net_dev,
+    parse_net_dev_interfaces, parse_net_dev_with_filter, parse_net_static_total_between,
+    parse_nvidia_smi_xml, parse_os_release_pretty_name, parse_proc_stat_cpu_sample,
+    parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
+    parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
+    reset_date_ymd, reset_timestamp_for_day, resolve_host_with_dns_server,
+    sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts, DiskMount, MemoryValues,
+    NetworkFilter, NetworkTotals,
 };
 use std::fs;
 use std::net::UdpSocket;
@@ -349,6 +350,21 @@ fn parse_ip_addr_show_output_handles_real_multiline_interface_blocks() {
     let exclude_eth0 = parse_ip_addr_show_output(contents, &NetworkFilter::from_csv("", "eth0"));
     assert!(exclude_eth0.ipv4.is_empty());
     assert!(exclude_eth0.ipv6.is_empty());
+}
+
+#[test]
+fn nic_ip_addresses_from_ip_addr_show_output_returns_none_when_filtered_nics_have_no_ips() {
+    let contents = r#"
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 1000
+    inet 10.0.0.5/24 brd 10.0.0.255 scope global eth0
+3: ens18: <BROADCAST,MULTICAST> mtu 1500 qdisc mq state DOWN group default qlen 1000
+    inet 203.0.113.9/24 brd 203.0.113.255 scope global ens18
+"#;
+
+    let parsed =
+        nic_ip_addresses_from_ip_addr_show_output(contents, &NetworkFilter::from_csv("ens18", ""));
+
+    assert_eq!(parsed, None);
 }
 
 #[test]

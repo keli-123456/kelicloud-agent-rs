@@ -542,6 +542,18 @@ pub fn parse_ip_addr_show_output(contents: &str, filter: &NetworkFilter) -> IpAd
     addresses
 }
 
+pub fn nic_ip_addresses_from_ip_addr_show_output(
+    contents: &str,
+    filter: &NetworkFilter,
+) -> Option<IpAddresses> {
+    let addresses = parse_ip_addr_show_output(contents, filter);
+    if addresses.ipv4.is_empty() && addresses.ipv6.is_empty() {
+        None
+    } else {
+        Some(addresses)
+    }
+}
+
 fn ip_addr_interface_header_is_up(fields: &[&str]) -> bool {
     fields
         .get(2)
@@ -1619,7 +1631,22 @@ fn collect_fnos_os_name() -> Option<String> {
 }
 
 pub fn collect_ip_addresses() -> Option<IpAddresses> {
-    collect_ip_addresses_with_filter(&NetworkFilter::default())
+    if !linux_supported() {
+        return None;
+    }
+
+    if let Some(addresses) = collect_ip_addresses_with_filter(&NetworkFilter::default()) {
+        return Some(addresses);
+    }
+
+    let output = Command::new("hostname").arg("-I").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(parse_ip_address_list(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 pub fn collect_ip_addresses_with_filter(filter: &NetworkFilter) -> Option<IpAddresses> {
@@ -1632,22 +1659,14 @@ pub fn collect_ip_addresses_with_filter(filter: &NetworkFilter) -> Option<IpAddr
         .output()
     {
         if output.status.success() {
-            let addresses =
-                parse_ip_addr_show_output(&String::from_utf8_lossy(&output.stdout), filter);
-            if !addresses.ipv4.is_empty() || !addresses.ipv6.is_empty() {
-                return Some(addresses);
-            }
+            return nic_ip_addresses_from_ip_addr_show_output(
+                &String::from_utf8_lossy(&output.stdout),
+                filter,
+            );
         }
     }
 
-    let output = Command::new("hostname").arg("-I").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    Some(parse_ip_address_list(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
+    None
 }
 
 pub fn collect_public_ip_addresses() -> IpAddresses {
