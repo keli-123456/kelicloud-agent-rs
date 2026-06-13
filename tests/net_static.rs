@@ -80,6 +80,30 @@ fn sampler_loads_existing_file_and_prunes_expired_records_on_flush() {
     assert_eq!(parsed.total_down, 40);
 }
 
+#[test]
+fn parse_net_static_total_between_rejects_negative_counters_like_go_agent() {
+    let contents = r#"
+{
+  "interfaces": {
+    "eth0": [
+      {"timestamp": 100, "tx": -10, "rx": 20}
+    ]
+  }
+}
+"#;
+
+    let parsed = parse_net_static_total_between(contents, 0, 200, &NetworkFilter::default());
+
+    assert_eq!(parsed, None);
+}
+
+#[test]
+fn parse_net_static_total_between_accepts_missing_interfaces_like_go_agent() {
+    let parsed = parse_net_static_total_between("{}", 0, 200, &NetworkFilter::default());
+
+    assert_eq!(parsed, Some(NetworkTotals::default()));
+}
+
 fn temp_net_static_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "kelicloud-agent-rs-net-static-{name}-{}-{}.json",

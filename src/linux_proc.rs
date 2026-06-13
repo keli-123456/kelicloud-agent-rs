@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Datelike, Local, TimeZone};
+use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NetworkTotals {
@@ -1187,37 +1188,40 @@ pub fn parse_net_static_total_between(
     end: u64,
     filter: &NetworkFilter,
 ) -> Option<NetworkTotals> {
-    let value = serde_json::from_str::<serde_json::Value>(contents).ok()?;
-    let interfaces = value.get("interfaces")?.as_object()?;
+    let file = serde_json::from_str::<NetStaticTotalsFile>(contents).ok()?;
     let mut totals = NetworkTotals::default();
 
-    for (name, entries) in interfaces {
-        if !filter.should_include(name) {
+    for (name, entries) in file.interfaces {
+        if !filter.should_include(&name) {
             continue;
         }
-        let Some(entries) = entries.as_array() else {
-            continue;
-        };
         for entry in entries {
-            let timestamp = entry
-                .get("timestamp")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
+            let timestamp = entry.timestamp;
             if (start != 0 && timestamp < start) || (end != 0 && timestamp > end) {
                 continue;
             }
-            totals.total_up += entry
-                .get("tx")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0);
-            totals.total_down += entry
-                .get("rx")
-                .and_then(serde_json::Value::as_i64)
-                .unwrap_or(0);
+            totals.total_up += i64::try_from(entry.tx).unwrap_or(i64::MAX);
+            totals.total_down += i64::try_from(entry.rx).unwrap_or(i64::MAX);
         }
     }
 
     Some(totals)
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct NetStaticTotalsFile {
+    #[serde(default)]
+    interfaces: HashMap<String, Vec<NetStaticTotalsEntry>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NetStaticTotalsEntry {
+    #[serde(default)]
+    timestamp: u64,
+    #[serde(default)]
+    tx: u64,
+    #[serde(default)]
+    rx: u64,
 }
 
 pub fn reset_date_ymd(reset_day: u32, year: i32, month: u32, day: u32) -> (i32, u32, u32) {
