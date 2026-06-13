@@ -142,6 +142,45 @@ Inter-|   Receive                                                |  Transmit
 }
 
 #[test]
+fn proc_metrics_sample_deduplicates_udp_rows_ignoring_status_like_go_agent() {
+    let root = temp_proc_root("udp-dedup");
+    fs::create_dir_all(root.join("net")).unwrap();
+    fs::write(root.join("loadavg"), "0.12 0.34 0.56 1/3 99\n").unwrap();
+    fs::write(root.join("uptime"), "123.45 67.89\n").unwrap();
+    fs::write(
+        root.join("net").join("dev"),
+        r#"
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+ eth0: 10 0 0 0 0 0 0 0 20 0 0 0 0 0 0 0
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("net").join("tcp"),
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("net").join("udp"),
+        r#"
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 100
+   1: 00000000:0035 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 101
+"#,
+    )
+    .unwrap();
+
+    let sample =
+        collect_proc_metrics_sample_with_filter_and_proc_root(&root, &NetworkFilter::default());
+    fs::remove_dir_all(&root).unwrap();
+
+    assert_eq!(sample.metrics.tcp_connections, 0);
+    assert_eq!(sample.metrics.udp_connections, 1);
+    assert_eq!(sample.errors.connections, None);
+}
+
+#[test]
 fn network_speed_from_samples_matches_go_agent_one_second_delta() {
     let sample = network_speed_from_samples(
         NetworkTotals {

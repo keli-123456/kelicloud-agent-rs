@@ -1272,19 +1272,29 @@ pub fn reset_date_ymd(reset_day: u32, year: i32, month: u32, day: u32) -> (i32, 
 }
 
 pub fn count_socket_entries(contents: &str) -> i32 {
+    count_socket_entries_for_protocol(contents, ProcNetSocketProtocol::Tcp)
+}
+
+#[derive(Clone, Copy)]
+enum ProcNetSocketProtocol {
+    Tcp,
+    Udp,
+}
+
+fn count_socket_entries_for_protocol(contents: &str, protocol: ProcNetSocketProtocol) -> i32 {
     let mut keys = HashSet::new();
     for line in contents.lines().map(str::trim) {
         if line.is_empty() || line.starts_with("sl ") {
             continue;
         }
-        if let Some(key) = proc_net_socket_row_key(line) {
+        if let Some(key) = proc_net_socket_row_key(line, protocol) {
             keys.insert(key);
         }
     }
     keys.len() as i32
 }
 
-fn proc_net_socket_row_key(line: &str) -> Option<String> {
+fn proc_net_socket_row_key(line: &str, protocol: ProcNetSocketProtocol) -> Option<String> {
     let fields = line.split_whitespace().collect::<Vec<_>>();
     if fields.len() < 10 || !fields.first().is_some_and(|field| field.ends_with(':')) {
         return None;
@@ -1292,7 +1302,11 @@ fn proc_net_socket_row_key(line: &str) -> Option<String> {
     if !proc_net_socket_addr_is_valid(fields[1]) || !proc_net_socket_addr_is_valid(fields[2]) {
         return None;
     }
-    Some(format!("{}|{}|{}", fields[1], fields[2], fields[3]))
+    let status = match protocol {
+        ProcNetSocketProtocol::Tcp => fields[3],
+        ProcNetSocketProtocol::Udp => "NONE",
+    };
+    Some(format!("{}|{}|{status}", fields[1], fields[2]))
 }
 
 fn proc_net_socket_addr_is_valid(value: &str) -> bool {
@@ -2348,10 +2362,20 @@ fn allwinner_soc_model(value: &str) -> Option<String> {
 }
 
 fn count_tcp_udp_sockets_in_proc_root(proc_root: &Path) -> Result<(i32, i32), String> {
-    let tcp =
-        count_proc_sockets_in_root(proc_root, &["net/tcp", "net/tcp6"], "TCP", "/proc/net/tcp")?;
-    let udp =
-        count_proc_sockets_in_root(proc_root, &["net/udp", "net/udp6"], "UDP", "/proc/net/udp")?;
+    let tcp = count_proc_sockets_in_root(
+        proc_root,
+        &["net/tcp", "net/tcp6"],
+        ProcNetSocketProtocol::Tcp,
+        "TCP",
+        "/proc/net/tcp",
+    )?;
+    let udp = count_proc_sockets_in_root(
+        proc_root,
+        &["net/udp", "net/udp6"],
+        ProcNetSocketProtocol::Udp,
+        "UDP",
+        "/proc/net/udp",
+    )?;
 
     Ok((tcp, udp))
 }
@@ -2359,6 +2383,7 @@ fn count_tcp_udp_sockets_in_proc_root(proc_root: &Path) -> Result<(i32, i32), St
 fn count_proc_sockets_in_root(
     proc_root: &Path,
     relative_paths: &[&str],
+    protocol: ProcNetSocketProtocol,
     label: &str,
     display_path: &str,
 ) -> Result<i32, String> {
@@ -2369,7 +2394,7 @@ fn count_proc_sockets_in_root(
         let path = proc_root.join(relative_path);
         if let Ok(contents) = fs::read_to_string(path) {
             read_any = true;
-            total += count_socket_entries(&contents);
+            total += count_socket_entries_for_protocol(&contents, protocol);
         }
     }
 
