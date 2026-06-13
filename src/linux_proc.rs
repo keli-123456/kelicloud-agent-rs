@@ -548,6 +548,27 @@ pub fn detect_container_from_cgroup(contents: &str) -> Option<String> {
     None
 }
 
+pub fn detect_container_from_markers(
+    has_dockerenv: bool,
+    has_containerenv: bool,
+    has_agent_container_marker: bool,
+    cgroup_contents: Option<&str>,
+) -> Option<String> {
+    if has_dockerenv {
+        return Some("docker".to_string());
+    }
+
+    if has_containerenv {
+        return cgroup_contents
+            .and_then(detect_container_from_cgroup)
+            .or_else(|| Some("container".to_string()));
+    }
+
+    cgroup_contents
+        .and_then(detect_container_from_cgroup)
+        .or_else(|| has_agent_container_marker.then(|| "container".to_string()))
+}
+
 pub fn virtualization_from_cpuid_parts(has_hypervisor: bool, vendor: &str) -> String {
     if !has_hypervisor {
         return "none".to_string();
@@ -1436,16 +1457,18 @@ pub fn detect_virtualization() -> String {
         }
     }
 
-    if fs::metadata("/.dockerenv").is_ok() {
-        return "docker".to_string();
+    let cgroup_contents = fs::read_to_string("/proc/self/cgroup").ok();
+    if let Some(container) = detect_container_from_markers(
+        fs::metadata("/.dockerenv").is_ok(),
+        fs::metadata("/run/.containerenv").is_ok(),
+        fs::metadata("/.kelicloud-agent-container").is_ok()
+            || fs::metadata("/.komari-agent-container").is_ok(),
+        cgroup_contents.as_deref(),
+    ) {
+        return container;
     }
-    if fs::metadata("/run/.containerenv").is_ok() {
-        return "container".to_string();
-    }
-    fs::read_to_string("/proc/self/cgroup")
-        .ok()
-        .and_then(|contents| detect_container_from_cgroup(&contents))
-        .unwrap_or_else(detect_by_cpuid)
+
+    detect_by_cpuid()
 }
 
 pub fn collect_gpu_name() -> String {

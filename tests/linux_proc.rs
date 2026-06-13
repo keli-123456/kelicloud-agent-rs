@@ -2,15 +2,16 @@ use chrono::{Local, TimeZone};
 use kelicloud_agent_rs::linux_proc::{
     android_os_name_from_build_prop, collect_proc_metrics_sample_with_filter_and_proc_root,
     count_process_entries, count_process_entries_in_dir, count_socket_entries,
-    cpu_name_from_sources, detect_container_from_cgroup, fnos_os_name_from_markers,
-    go_compatible_disk, go_compatible_ram, go_compatible_ram_include_cache, go_compatible_swap,
-    kernel_version_from_uname_output, linux_supported, network_speed_from_samples,
-    parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output, parse_ip_address_list,
-    parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name, parse_meminfo, parse_net_dev,
-    parse_net_dev_interfaces, parse_net_dev_with_filter, parse_net_static_total_between,
-    parse_nvidia_smi_xml, parse_os_release_pretty_name, parse_public_ipv4_response,
-    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
-    proc_metrics_from_parts, proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
+    cpu_name_from_sources, detect_container_from_cgroup, detect_container_from_markers,
+    fnos_os_name_from_markers, go_compatible_disk, go_compatible_ram,
+    go_compatible_ram_include_cache, go_compatible_swap, kernel_version_from_uname_output,
+    linux_supported, network_speed_from_samples, parse_amd_rocm_smi_json, parse_cpuinfo_name,
+    parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lscpu_model_name,
+    parse_lspci_gpu_name, parse_meminfo, parse_net_dev, parse_net_dev_interfaces,
+    parse_net_dev_with_filter, parse_net_static_total_between, parse_nvidia_smi_xml,
+    parse_os_release_pretty_name, parse_public_ipv4_response, parse_public_ipv6_response,
+    parse_soc_gpu_model, parse_synology_os_name, parse_uptime, proc_metrics_from_parts,
+    proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
     sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts, DiskMount, NetworkFilter,
     NetworkTotals,
 };
@@ -354,6 +355,29 @@ fn detect_container_from_cgroup_matches_common_runtime_markers() {
     assert_eq!(
         detect_container_from_cgroup(kube).as_deref(),
         Some("kubernetes")
+    );
+}
+
+#[test]
+fn detect_container_from_markers_prefers_runtime_for_containerenv_like_go_agent() {
+    let podman = "0::/user.slice/libpod-0123456789abcdef0123456789abcdef.scope\n";
+
+    assert_eq!(
+        detect_container_from_markers(false, true, false, Some(podman)).as_deref(),
+        Some("podman")
+    );
+    assert_eq!(
+        detect_container_from_markers(false, true, false, Some("0::/user.slice/session-2.scope\n"))
+            .as_deref(),
+        Some("container")
+    );
+    assert_eq!(
+        detect_container_from_markers(true, true, false, Some(podman)).as_deref(),
+        Some("docker")
+    );
+    assert_eq!(
+        detect_container_from_markers(false, false, true, None).as_deref(),
+        Some("container")
     );
 }
 

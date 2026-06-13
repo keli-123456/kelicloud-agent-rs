@@ -120,13 +120,22 @@ impl AgentConfig {
                 "--endpoint" => {
                     endpoint = Some(next_value(&mut iter, "--endpoint")?);
                 }
+                "-e" => {
+                    endpoint = Some(next_value(&mut iter, "-e")?);
+                }
                 "--token" => {
                     token = Some(next_value(&mut iter, "--token")?);
+                }
+                "-t" => {
+                    token = Some(next_value(&mut iter, "-t")?);
                 }
                 "--insecure" => {
                     insecure = true;
                 }
                 "--ignore-unsafe-cert" => {
+                    insecure = true;
+                }
+                "-u" => {
                     insecure = true;
                 }
                 "--disable-web-ssh" => {
@@ -139,15 +148,24 @@ impl AgentConfig {
                     interval_seconds =
                         parse_f64("--interval", &next_value(&mut iter, "--interval")?)?;
                 }
+                "-i" => {
+                    interval_seconds = parse_f64("-i", &next_value(&mut iter, "-i")?)?;
+                }
                 "--max-retries" => {
                     max_retries =
                         parse_u32("--max-retries", &next_value(&mut iter, "--max-retries")?)?;
+                }
+                "-r" => {
+                    max_retries = parse_u32("-r", &next_value(&mut iter, "-r")?)?;
                 }
                 "--reconnect-interval" => {
                     reconnect_interval_seconds = parse_u64(
                         "--reconnect-interval",
                         &next_value(&mut iter, "--reconnect-interval")?,
                     )?;
+                }
+                "-c" => {
+                    reconnect_interval_seconds = parse_u64("-c", &next_value(&mut iter, "-c")?)?;
                 }
                 "--info-report-interval" => {
                     info_report_interval_minutes = parse_u64(
@@ -198,20 +216,35 @@ impl AgentConfig {
                 _ if arg.starts_with("--endpoint=") => {
                     endpoint = clean_required(&arg["--endpoint=".len()..], "--endpoint")?;
                 }
+                _ if arg.starts_with("-e=") => {
+                    endpoint = clean_required(&arg["-e=".len()..], "-e")?;
+                }
                 _ if arg.starts_with("--token=") => {
                     token = clean_required(&arg["--token=".len()..], "--token")?;
+                }
+                _ if arg.starts_with("-t=") => {
+                    token = clean_required(&arg["-t=".len()..], "-t")?;
                 }
                 _ if arg.starts_with("--interval=") => {
                     interval_seconds = parse_f64("--interval", &arg["--interval=".len()..])?;
                 }
+                _ if arg.starts_with("-i=") => {
+                    interval_seconds = parse_f64("-i", &arg["-i=".len()..])?;
+                }
                 _ if arg.starts_with("--max-retries=") => {
                     max_retries = parse_u32("--max-retries", &arg["--max-retries=".len()..])?;
+                }
+                _ if arg.starts_with("-r=") => {
+                    max_retries = parse_u32("-r", &arg["-r=".len()..])?;
                 }
                 _ if arg.starts_with("--reconnect-interval=") => {
                     reconnect_interval_seconds = parse_u64(
                         "--reconnect-interval",
                         &arg["--reconnect-interval=".len()..],
                     )?;
+                }
+                _ if arg.starts_with("-c=") => {
+                    reconnect_interval_seconds = parse_u64("-c", &arg["-c=".len()..])?;
                 }
                 _ if arg.starts_with("--info-report-interval=") => {
                     info_report_interval_minutes = parse_u64(

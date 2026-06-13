@@ -121,6 +121,32 @@ fn config_command_line_overrides_connection_options() {
 }
 
 #[test]
+fn config_accepts_go_agent_short_connection_flags() {
+    let args = [
+        "kelicloud-agent-rs",
+        "-e",
+        "https://cli.example.com",
+        "-t",
+        "cli-token",
+        "-i",
+        "3.5",
+        "-u",
+        "-r",
+        "9",
+        "-c",
+        "14",
+    ];
+    let config = AgentConfig::from_args_and_env(args, |_| None).unwrap();
+
+    assert_eq!(config.endpoint, "https://cli.example.com");
+    assert_eq!(config.token, "cli-token");
+    assert_eq!(config.interval_seconds, 3.5);
+    assert!(config.insecure);
+    assert_eq!(config.max_retries, 9);
+    assert_eq!(config.reconnect_interval_seconds, 14);
+}
+
+#[test]
 fn config_supports_go_agent_metric_options() {
     let args = [
         "kelicloud-agent-rs",
