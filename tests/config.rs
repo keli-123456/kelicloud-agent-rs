@@ -187,6 +187,33 @@ fn config_supports_go_agent_metric_options() {
 }
 
 #[test]
+fn config_accepts_go_agent_custom_dns_option() {
+    let from_cli = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--custom-dns",
+            "2606:4700:4700::1111",
+        ],
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(from_cli.custom_dns, "2606:4700:4700::1111");
+
+    let from_env = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_CUSTOM_DNS" => Some("1.1.1.1".to_string()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(from_env.custom_dns, "1.1.1.1");
+}
+
+#[test]
 fn config_accepts_go_agent_gpu_flag_alias() {
     let config = AgentConfig::from_args_and_env(
         [

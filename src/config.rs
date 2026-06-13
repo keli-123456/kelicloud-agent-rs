@@ -19,6 +19,7 @@ pub struct AgentConfig {
     pub include_mountpoints: String,
     pub custom_ipv4: String,
     pub custom_ipv6: String,
+    pub custom_dns: String,
     pub get_ip_addr_from_nic: bool,
     pub memory_include_cache: bool,
     pub memory_report_raw_used: bool,
@@ -89,6 +90,7 @@ impl AgentConfig {
             clean_optional(env_lookup("AGENT_INCLUDE_MOUNTPOINTS")).unwrap_or_default();
         let mut custom_ipv4 = clean_optional(env_lookup("AGENT_CUSTOM_IPV4")).unwrap_or_default();
         let mut custom_ipv6 = clean_optional(env_lookup("AGENT_CUSTOM_IPV6")).unwrap_or_default();
+        let mut custom_dns = clean_optional(env_lookup("AGENT_CUSTOM_DNS")).unwrap_or_default();
         let mut get_ip_addr_from_nic = env_lookup("AGENT_GET_IP_ADDR_FROM_NIC")
             .as_deref()
             .map(parse_bool)
@@ -194,6 +196,9 @@ impl AgentConfig {
                 "--custom-ipv6" => {
                     custom_ipv6 = next_value(&mut iter, "--custom-ipv6")?;
                 }
+                "--custom-dns" => {
+                    custom_dns = next_value(&mut iter, "--custom-dns")?;
+                }
                 "--get-ip-addr-from-nic" => {
                     get_ip_addr_from_nic = true;
                 }
@@ -296,6 +301,10 @@ impl AgentConfig {
                     custom_ipv6 =
                         clean_required(&arg["--custom-ipv6=".len()..], "--custom-ipv6")?.unwrap();
                 }
+                _ if arg.starts_with("--custom-dns=") => {
+                    custom_dns =
+                        clean_required(&arg["--custom-dns=".len()..], "--custom-dns")?.unwrap();
+                }
                 _ if arg.starts_with("--month-rotate=") => {
                     month_rotate = parse_u32("--month-rotate", &arg["--month-rotate=".len()..])?;
                 }
@@ -323,6 +332,7 @@ impl AgentConfig {
             include_mountpoints,
             custom_ipv4,
             custom_ipv6,
+            custom_dns,
             get_ip_addr_from_nic,
             memory_include_cache,
             memory_report_raw_used,

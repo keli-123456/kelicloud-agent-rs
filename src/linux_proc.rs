@@ -819,22 +819,26 @@ pub fn parse_meminfo(contents: &str) -> ProcMemInfo {
 }
 
 pub fn go_compatible_ram(info: &ProcMemInfo) -> MemoryValues {
-    let mut ram = go_compatible_ram_raw_used(info);
-    ram.used = ram.used.saturating_add(info.shmem).max(0);
-    ram
-}
-
-pub fn go_compatible_ram_raw_used(info: &ProcMemInfo) -> MemoryValues {
-    let free_like = info.mem_free + info.cached + info.s_reclaimable + info.buffers;
-    let used = if info.mem_total >= free_like {
-        info.mem_total - free_like
-    } else {
-        info.mem_total.saturating_sub(info.mem_free)
-    };
+    let used = go_compatible_ram_base_used(info)
+        .saturating_add(info.shmem)
+        .max(0);
 
     MemoryValues {
         total: info.mem_total,
-        used: used.max(0),
+        used,
+    }
+}
+
+pub fn go_compatible_ram_raw_used(info: &ProcMemInfo) -> MemoryValues {
+    go_compatible_ram(info)
+}
+
+fn go_compatible_ram_base_used(info: &ProcMemInfo) -> i64 {
+    let free_like = info.mem_free + info.cached + info.s_reclaimable + info.buffers;
+    if info.mem_total >= free_like {
+        info.mem_total - free_like
+    } else {
+        info.mem_total.saturating_sub(info.mem_free)
     }
 }
 

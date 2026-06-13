@@ -18,6 +18,7 @@ fn config_with_cf(id: &str, secret: &str) -> AgentConfig {
         include_mountpoints: String::new(),
         custom_ipv4: String::new(),
         custom_ipv6: String::new(),
+        custom_dns: String::new(),
         get_ip_addr_from_nic: false,
         memory_include_cache: false,
         memory_report_raw_used: false,

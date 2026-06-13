@@ -546,7 +546,7 @@ Shmem:             10 kB
 }
 
 #[test]
-fn memory_raw_used_mode_matches_go_agent_memory_exclude_bcf_flag() {
+fn memory_raw_used_mode_matches_go_agent_htop_like_branch() {
     let meminfo = parse_meminfo(
         r#"
 MemTotal:        1000 kB
@@ -561,7 +561,7 @@ Shmem:             10 kB
     let ram = go_compatible_ram_raw_used(&meminfo);
 
     assert_eq!(ram.total, 1000 * 1024);
-    assert_eq!(ram.used, 625 * 1024);
+    assert_eq!(ram.used, 635 * 1024);
 }
 
 #[test]
