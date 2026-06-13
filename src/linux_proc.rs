@@ -362,10 +362,7 @@ pub fn parse_os_release_pretty_name(contents: &str) -> Option<String> {
         let Some(value) = line.strip_prefix("PRETTY_NAME=") else {
             continue;
         };
-        let pretty_name = value.trim().trim_matches('"').trim();
-        if !pretty_name.is_empty() {
-            return Some(pretty_name.to_string());
-        }
+        return Some(value.trim_matches('"').to_string());
     }
     None
 }

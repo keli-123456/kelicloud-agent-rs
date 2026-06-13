@@ -373,6 +373,14 @@ fn parse_os_release_pretty_name_matches_go_agent_os_name() {
         parse_os_release_pretty_name("PRETTY_NAME=Alpine Linux v3.20\n").as_deref(),
         Some("Alpine Linux v3.20")
     );
+    assert_eq!(
+        parse_os_release_pretty_name("PRETTY_NAME=\n").as_deref(),
+        Some("")
+    );
+    assert_eq!(
+        parse_os_release_pretty_name("PRETTY_NAME= \"Odd Linux\"\n").as_deref(),
+        Some(" \"Odd Linux")
+    );
 }
 
 #[test]
