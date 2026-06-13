@@ -290,7 +290,7 @@ pub fn proxmox_os_name_from_parts(
 ) -> Option<String> {
     let output = pveversion_output.trim();
     if output.is_empty() {
-        return None;
+        return Some("Proxmox VE".to_string());
     }
 
     let mut version = String::new();
@@ -371,7 +371,9 @@ pub fn fnos_os_name_from_markers(
 }
 
 pub fn android_os_name_from_build_prop(contents: &str) -> Option<String> {
-    let version = parse_property_value(contents, "ro.build.version.release")?;
+    let Some(version) = parse_property_value(contents, "ro.build.version.release") else {
+        return Some("Android".to_string());
+    };
     let model = parse_property_value(contents, "ro.product.model").unwrap_or_default();
     let brand = parse_property_value(contents, "ro.product.brand").unwrap_or_default();
     Some(android_os_name_from_parts(&version, &model, &brand))

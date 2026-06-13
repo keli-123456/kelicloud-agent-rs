@@ -211,6 +211,10 @@ fn special_linux_os_names_match_go_agent_priority_helpers() {
         Some("Proxmox VE 8.2.7 (bookworm)")
     );
     assert_eq!(
+        proxmox_os_name_from_parts("", "VERSION_CODENAME=bookworm\n").as_deref(),
+        Some("Proxmox VE")
+    );
+    assert_eq!(
         parse_synology_os_name(
             r#"
 unique="synology_apollolake_918+"
@@ -238,6 +242,10 @@ ro.product.brand=Google
         )
         .as_deref(),
         Some("Android 14 (Google Pixel 8)")
+    );
+    assert_eq!(
+        android_os_name_from_build_prop("ro.product.model=Pixel 8\n").as_deref(),
+        Some("Android")
     );
 }
 
