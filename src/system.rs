@@ -365,7 +365,7 @@ impl SystemSnapshotCollector {
             .as_ref()
             .map(|sample| proc_metric_errors_to_message(&sample.errors))
             .unwrap_or_default();
-        let linux_memory = crate::linux_proc::collect_memory_values_with_modes(
+        let linux_memory = crate::linux_proc::collect_memory_selection_with_modes(
             self.metrics.memory_include_cache,
             self.metrics.memory_report_raw_used,
         );
@@ -479,16 +479,16 @@ impl SystemSnapshotCollector {
         let network_down = network_speed_sample.speed.total_down;
 
         let mem_total = linux_memory
-            .map(|(ram, _)| ram.total)
+            .and_then(|selection| selection.ram.map(|ram| ram.total))
             .unwrap_or_else(|| self.system.total_memory() as i64);
         let mem_used = linux_memory
-            .map(|(ram, _)| ram.used)
+            .and_then(|selection| selection.ram.map(|ram| ram.used))
             .unwrap_or_else(|| self.system.used_memory() as i64);
         let swap_total = linux_memory
-            .map(|(_, swap)| swap.total)
+            .map(|selection| selection.swap.total)
             .unwrap_or_else(|| self.system.total_swap() as i64);
         let swap_used = linux_memory
-            .map(|(_, swap)| swap.used)
+            .map(|selection| selection.swap.used)
             .unwrap_or_else(|| self.system.used_swap() as i64);
         let nic_addresses = if self.metrics.get_ip_addr_from_nic {
             crate::linux_proc::collect_ip_addresses_with_filter(&network_filter)

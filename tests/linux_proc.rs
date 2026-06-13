@@ -6,16 +6,16 @@ use kelicloud_agent_rs::linux_proc::{
     detect_container_from_markers, fnos_os_name_from_markers, go_compatible_disk,
     go_compatible_ram, go_compatible_ram_include_cache, go_compatible_ram_raw_used,
     go_compatible_swap, kernel_version_from_uname_output, linux_supported,
-    memory_values_from_meminfo_with_modes, network_speed_from_samples, normalize_dns_server,
-    parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output, parse_ip_address_list,
-    parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name, parse_meminfo, parse_net_dev,
-    parse_net_dev_interfaces, parse_net_dev_with_filter, parse_net_static_total_between,
-    parse_nvidia_smi_xml, parse_os_release_pretty_name, parse_proc_stat_cpu_sample,
-    parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
-    parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
-    reset_date_ymd, reset_timestamp_for_day, resolve_host_with_dns_server,
-    sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts, DiskMount, NetworkFilter,
-    NetworkTotals,
+    memory_selection_from_meminfo_with_modes, memory_values_from_meminfo_with_modes,
+    network_speed_from_samples, normalize_dns_server, parse_amd_rocm_smi_json, parse_cpuinfo_name,
+    parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lscpu_model_name,
+    parse_lspci_gpu_name, parse_meminfo, parse_net_dev, parse_net_dev_interfaces,
+    parse_net_dev_with_filter, parse_net_static_total_between, parse_nvidia_smi_xml,
+    parse_os_release_pretty_name, parse_proc_stat_cpu_sample, parse_public_ipv4_response,
+    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
+    proc_metrics_from_parts, proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
+    resolve_host_with_dns_server, sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts,
+    DiskMount, MemoryValues, NetworkFilter, NetworkTotals,
 };
 use std::fs;
 use std::net::UdpSocket;
@@ -754,6 +754,57 @@ SwapFree:         100 kB
     assert_eq!(
         memory_values_from_meminfo_with_modes(&meminfo, false, false),
         None
+    );
+}
+
+#[test]
+fn memory_selection_keeps_swap_from_meminfo_when_ram_needs_fallback_like_go_agent() {
+    let meminfo = parse_meminfo(
+        r#"
+MemFree:          100 kB
+Buffers:           25 kB
+Cached:           200 kB
+Shmem:             10 kB
+SwapTotal:        500 kB
+SwapFree:         100 kB
+SwapCached:        25 kB
+"#,
+    );
+
+    let selection = memory_selection_from_meminfo_with_modes(&meminfo, false, false);
+
+    assert_eq!(selection.ram, None);
+    assert_eq!(
+        selection.swap,
+        MemoryValues {
+            total: 500 * 1024,
+            used: 375 * 1024,
+        }
+    );
+}
+
+#[test]
+fn memory_raw_used_mode_reports_zero_ram_when_memtotal_missing_like_go_agent() {
+    let meminfo = parse_meminfo(
+        r#"
+MemFree:          100 kB
+Buffers:           25 kB
+Cached:           200 kB
+Shmem:             10 kB
+SwapTotal:        500 kB
+SwapFree:         100 kB
+"#,
+    );
+
+    let selection = memory_selection_from_meminfo_with_modes(&meminfo, false, true);
+
+    assert_eq!(selection.ram, Some(MemoryValues::default()));
+    assert_eq!(
+        selection.swap,
+        MemoryValues {
+            total: 500 * 1024,
+            used: 400 * 1024,
+        }
     );
 }
 

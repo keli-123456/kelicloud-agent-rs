@@ -36,6 +36,12 @@ pub struct MemoryValues {
     pub used: i64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MemorySelection {
+    pub ram: Option<MemoryValues>,
+    pub swap: MemoryValues,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiskValues {
     pub total: i64,
@@ -957,6 +963,10 @@ pub fn go_compatible_ram(info: &ProcMemInfo) -> MemoryValues {
 }
 
 pub fn go_compatible_ram_raw_used(info: &ProcMemInfo) -> MemoryValues {
+    if info.mem_total <= 0 {
+        return MemoryValues::default();
+    }
+
     go_compatible_ram(info)
 }
 
@@ -995,18 +1005,29 @@ pub fn memory_values_from_meminfo_with_modes(
     include_cache: bool,
     report_raw_used: bool,
 ) -> Option<(MemoryValues, MemoryValues)> {
-    if info.mem_total <= 0 {
-        return None;
-    }
+    let selection = memory_selection_from_meminfo_with_modes(info, include_cache, report_raw_used);
+    selection.ram.map(|ram| (ram, selection.swap))
+}
 
-    let ram = if include_cache {
-        go_compatible_ram_include_cache(info)
-    } else if report_raw_used {
-        go_compatible_ram_raw_used(info)
+pub fn memory_selection_from_meminfo_with_modes(
+    info: &ProcMemInfo,
+    include_cache: bool,
+    report_raw_used: bool,
+) -> MemorySelection {
+    let ram = if report_raw_used {
+        Some(go_compatible_ram_raw_used(info))
+    } else if info.mem_total <= 0 {
+        None
+    } else if include_cache {
+        Some(go_compatible_ram_include_cache(info))
     } else {
-        go_compatible_ram(info)
+        Some(go_compatible_ram(info))
     };
-    Some((ram, go_compatible_swap(info)))
+
+    MemorySelection {
+        ram,
+        swap: go_compatible_swap(info),
+    }
 }
 
 pub fn go_compatible_disk(mounts: &[DiskMount]) -> DiskValues {
@@ -1410,6 +1431,14 @@ pub fn collect_memory_values_with_modes(
     include_cache: bool,
     report_raw_used: bool,
 ) -> Option<(MemoryValues, MemoryValues)> {
+    collect_memory_selection_with_modes(include_cache, report_raw_used)
+        .and_then(|selection| selection.ram.map(|ram| (ram, selection.swap)))
+}
+
+pub fn collect_memory_selection_with_modes(
+    include_cache: bool,
+    report_raw_used: bool,
+) -> Option<MemorySelection> {
     if !linux_supported() {
         return None;
     }
@@ -1417,7 +1446,11 @@ pub fn collect_memory_values_with_modes(
     let meminfo = fs::read_to_string("/proc/meminfo")
         .ok()
         .map(|contents| parse_meminfo(&contents))?;
-    memory_values_from_meminfo_with_modes(&meminfo, include_cache, report_raw_used)
+    Some(memory_selection_from_meminfo_with_modes(
+        &meminfo,
+        include_cache,
+        report_raw_used,
+    ))
 }
 
 pub fn collect_cpuinfo_name() -> Option<String> {
