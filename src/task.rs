@@ -7,7 +7,7 @@ use chrono::Utc;
 use serde::Serialize;
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Error, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -101,7 +101,7 @@ impl Drop for PreparedTaskCommand {
 fn prepare_task_command(command: &str) -> Result<PreparedTaskCommand, std::io::Error> {
     if has_script_shebang(command) {
         let script_path = write_task_script(command)?;
-        let mut task_command = Command::new(&script_path);
+        let mut task_command = command_for_shebang_script(command, &script_path)?;
         task_command.stdout(Stdio::piped()).stderr(Stdio::piped());
         return Ok(PreparedTaskCommand {
             command: task_command,
@@ -128,6 +128,36 @@ fn prepare_task_command(command: &str) -> Result<PreparedTaskCommand, std::io::E
 
 fn has_script_shebang(command: &str) -> bool {
     command.trim().starts_with("#!")
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ShebangInterpreter {
+    program: String,
+    args: Vec<String>,
+}
+
+fn command_for_shebang_script(
+    command: &str,
+    script_path: &Path,
+) -> Result<Command, std::io::Error> {
+    let interpreter = parse_shebang_interpreter(command).ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            "script shebang is missing an interpreter",
+        )
+    })?;
+    let mut task_command = Command::new(interpreter.program);
+    task_command.args(interpreter.args).arg(script_path);
+    Ok(task_command)
+}
+
+fn parse_shebang_interpreter(command: &str) -> Option<ShebangInterpreter> {
+    let line = command.trim_start().lines().next()?.trim();
+    let rest = line.strip_prefix("#!")?.trim();
+    let mut parts = rest.split_whitespace();
+    let program = parts.next()?.to_string();
+    let args = parts.map(str::to_string).collect();
+    Some(ShebangInterpreter { program, args })
 }
 
 fn write_task_script(command: &str) -> Result<PathBuf, std::io::Error> {
@@ -178,6 +208,27 @@ fn combined_output(stdout: &[u8], stderr: &[u8]) -> String {
         result.push_str(&String::from_utf8_lossy(stderr));
     }
     result.replace("\r\n", "\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_shebang_interpreter, ShebangInterpreter};
+
+    #[test]
+    fn shebang_interpreter_splits_program_and_arguments() {
+        assert_eq!(
+            parse_shebang_interpreter("#!/usr/bin/env bash\nprintf ok"),
+            Some(ShebangInterpreter {
+                program: "/usr/bin/env".to_string(),
+                args: vec!["bash".to_string()],
+            })
+        );
+    }
+
+    #[test]
+    fn shebang_interpreter_rejects_empty_shebang() {
+        assert_eq!(parse_shebang_interpreter("#!\nprintf ok"), None);
+    }
 }
 
 #[derive(Debug)]
