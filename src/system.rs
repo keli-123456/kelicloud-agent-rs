@@ -505,6 +505,12 @@ impl SystemSnapshotCollector {
                         )
                     })
                     .collect::<Vec<_>>();
+                sampler.set_nics(
+                    counters
+                        .iter()
+                        .map(|counter| counter.name.clone())
+                        .collect::<Vec<_>>(),
+                );
                 sampler.sample(now_unix, &counters);
             }
             let _ = sampler.flush_if_due(now_unix);

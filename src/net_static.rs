@@ -89,6 +89,24 @@ impl NetStaticSampler {
         sampler
     }
 
+    pub fn set_nics(&mut self, nics: Vec<String>) {
+        self.config.nics = nics
+            .into_iter()
+            .map(|nic| nic.trim().to_string())
+            .filter(|nic| !nic.is_empty())
+            .collect();
+
+        if self.config.nics.is_empty() {
+            return;
+        }
+
+        let allowed = self.config.nics.clone();
+        self.last_counters
+            .retain(|name, _| allowed.iter().any(|nic| nic == name));
+        self.cache
+            .retain(|name, _| allowed.iter().any(|nic| nic == name));
+    }
+
     pub fn sample(&mut self, timestamp: u64, counters: &[InterfaceCounter]) {
         if let Some(last_sample_at) = self.last_sample_at {
             if (timestamp.saturating_sub(last_sample_at) as f64)
