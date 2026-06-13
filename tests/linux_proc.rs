@@ -159,6 +159,11 @@ Vendor ID:                GenuineIntel
 fn cpu_name_from_sources_matches_go_agent_priority_and_default() {
     let lscpu = "Model name:  Neoverse-N1\n";
     let cpuinfo = "Processor\t: ARMv8 Processor rev 1\n";
+    let cpuinfo_vendor_family = r#"
+processor   : 0
+vendor_id   : GenuineIntel
+cpu family  : 6
+"#;
 
     assert_eq!(
         cpu_name_from_sources(Some(lscpu), Some("sysinfo brand"), Some(cpuinfo)),
@@ -171,6 +176,10 @@ fn cpu_name_from_sources_matches_go_agent_priority_and_default() {
     assert_eq!(
         cpu_name_from_sources(None, Some("  "), Some(cpuinfo)),
         "ARMv8 Processor rev 1"
+    );
+    assert_eq!(
+        cpu_name_from_sources(None, Some("  "), Some(cpuinfo_vendor_family)),
+        "GenuineIntel 6"
     );
     assert_eq!(cpu_name_from_sources(None, None, None), "Unknown");
 }
