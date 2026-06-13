@@ -1277,12 +1277,27 @@ pub fn count_socket_entries(contents: &str) -> i32 {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .filter(|line| !line.starts_with("sl "))
-        .filter(|line| {
-            line.split_whitespace()
-                .next()
-                .is_some_and(|field| field.ends_with(':'))
-        })
+        .filter(|line| proc_net_socket_row_is_valid(line))
         .count() as i32
+}
+
+fn proc_net_socket_row_is_valid(line: &str) -> bool {
+    let fields = line.split_whitespace().collect::<Vec<_>>();
+    fields.len() >= 10
+        && fields.first().is_some_and(|field| field.ends_with(':'))
+        && proc_net_socket_addr_is_valid(fields[1])
+        && proc_net_socket_addr_is_valid(fields[2])
+}
+
+fn proc_net_socket_addr_is_valid(value: &str) -> bool {
+    let Some((addr, port)) = value.split_once(':') else {
+        return false;
+    };
+    !addr.is_empty()
+        && !port.is_empty()
+        && addr.len() % 2 == 0
+        && addr.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && u16::from_str_radix(port, 16).is_ok()
 }
 
 pub fn collect_proc_metrics() -> Option<ProcMetrics> {
