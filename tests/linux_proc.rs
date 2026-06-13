@@ -1234,6 +1234,22 @@ Inter-|   Receive                                                |  Transmit
 }
 
 #[test]
+fn parse_net_dev_uses_last_colon_for_interface_aliases_like_go_agent() {
+    let contents = r#"
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+eth0:1: 100 1 0 0 0 0 0 0 200 2 0 0 0 0 0 0
+"#;
+
+    let interfaces = parse_net_dev_interfaces(contents, &NetworkFilter::from_csv("eth0:1", ""));
+
+    assert_eq!(interfaces.len(), 1);
+    assert_eq!(interfaces[0].name, "eth0:1");
+    assert_eq!(interfaces[0].total_down, 100);
+    assert_eq!(interfaces[0].total_up, 200);
+}
+
+#[test]
 fn network_filter_treats_whitespace_include_list_like_go_agent_whitelist() {
     let contents = r#"
 Inter-|   Receive                                                |  Transmit

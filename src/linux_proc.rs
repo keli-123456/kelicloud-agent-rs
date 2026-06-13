@@ -1186,7 +1186,7 @@ fn parse_net_dev_interfaces_result(
 ) -> Result<Vec<NetworkInterfaceTotals>, String> {
     let mut interfaces = Vec::new();
     for line in contents.lines() {
-        let Some((name, counters)) = line.split_once(':') else {
+        let Some((name, counters)) = line.rsplit_once(':') else {
             continue;
         };
         let name = name.trim();
