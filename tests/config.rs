@@ -1,4 +1,5 @@
 use kelicloud_agent_rs::config::{AgentConfig, ConfigError};
+use std::fs;
 
 fn env_lookup(key: &str) -> Option<String> {
     match key {
@@ -302,6 +303,87 @@ fn config_reads_go_agent_metric_options_from_environment() {
     assert!(config.memory_report_raw_used);
     assert!(config.enable_gpu);
     assert_eq!(config.month_rotate, 15);
+    assert_eq!(config.host_proc, "/host/proc");
+}
+
+#[test]
+fn config_file_overrides_args_and_env_like_go_agent_json_config() {
+    let path = std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-config-{}.json",
+        std::process::id()
+    ));
+    fs::write(
+        &path,
+        r#"{
+            "endpoint": "https://file.example.com",
+            "token": "file-token",
+            "ignore_unsafe_cert": true,
+            "disable_web_ssh": true,
+            "interval": 4.5,
+            "max_retries": 11,
+            "reconnect_interval": 17,
+            "info_report_interval": 23,
+            "cf_access_client_id": "file-cf-id",
+            "cf_access_client_secret": "file-cf-secret",
+            "include_nics": "eth0",
+            "exclude_nics": "docker0",
+            "include_mountpoints": "/;/data",
+            "custom_ipv4": "203.0.113.10",
+            "custom_ipv6": "2607:f358:1a:e::ab0:39b7",
+            "custom_dns": "1.1.1.1",
+            "get_ip_addr_from_nic": true,
+            "memory_include_cache": true,
+            "memory_report_raw_used": true,
+            "enable_gpu": true,
+            "month_rotate": 9,
+            "host_proc": "/host/proc"
+        }"#,
+    )
+    .unwrap();
+
+    let config = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--interval",
+            "2",
+            "--config",
+            path.to_str().unwrap(),
+        ],
+        |key| match key {
+            "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+            "AGENT_TOKEN" => Some("env-token".to_string()),
+            "AGENT_MAX_RETRIES" => Some("3".to_string()),
+            _ => None,
+        },
+    )
+    .unwrap();
+    fs::remove_file(path).unwrap();
+
+    assert_eq!(config.endpoint, "https://file.example.com");
+    assert_eq!(config.token, "file-token");
+    assert!(config.insecure);
+    assert!(config.disable_web_ssh);
+    assert_eq!(config.interval_seconds, 4.5);
+    assert_eq!(config.max_retries, 11);
+    assert_eq!(config.reconnect_interval_seconds, 17);
+    assert_eq!(config.info_report_interval_minutes, 23);
+    assert_eq!(config.cf_access_client_id, "file-cf-id");
+    assert_eq!(config.cf_access_client_secret, "file-cf-secret");
+    assert_eq!(config.include_nics, "eth0");
+    assert_eq!(config.exclude_nics, "docker0");
+    assert_eq!(config.include_mountpoints, "/;/data");
+    assert_eq!(config.custom_ipv4, "203.0.113.10");
+    assert_eq!(config.custom_ipv6, "2607:f358:1a:e::ab0:39b7");
+    assert_eq!(config.custom_dns, "1.1.1.1");
+    assert!(config.get_ip_addr_from_nic);
+    assert!(config.memory_include_cache);
+    assert!(config.memory_report_raw_used);
+    assert!(config.enable_gpu);
+    assert_eq!(config.month_rotate, 9);
     assert_eq!(config.host_proc, "/host/proc");
 }
 

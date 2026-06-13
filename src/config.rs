@@ -1,6 +1,8 @@
+use serde::Deserialize;
 use std::env;
 use std::error::Error;
 use std::fmt;
+use std::fs;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentConfig {
@@ -35,6 +37,8 @@ pub enum ConfigError {
     MissingToken,
     MissingValue(&'static str),
     InvalidValue(&'static str, String),
+    ConfigFileRead(String),
+    ConfigFileParse(String),
     UnknownArgument(String),
 }
 
@@ -45,6 +49,8 @@ impl fmt::Display for ConfigError {
             Self::MissingToken => write!(f, "token is required"),
             Self::MissingValue(flag) => write!(f, "{flag} requires a value"),
             Self::InvalidValue(flag, value) => write!(f, "{flag} has invalid value: {value}"),
+            Self::ConfigFileRead(message) => write!(f, "failed to read config file: {message}"),
+            Self::ConfigFileParse(message) => write!(f, "failed to parse config file: {message}"),
             Self::UnknownArgument(arg) => write!(f, "unknown argument: {arg}"),
         }
     }
@@ -109,6 +115,7 @@ impl AgentConfig {
             .unwrap_or(false);
         let mut month_rotate = parse_env_u32(&env_lookup, "AGENT_MONTH_ROTATE", 0)?;
         let mut host_proc = clean_optional(env_lookup("HOST_PROC")).unwrap_or_default();
+        let mut config_file = clean_optional(env_lookup("AGENT_CONFIG_FILE")).unwrap_or_default();
         let mut once = env_lookup("AGENT_ONCE")
             .as_deref()
             .map(parse_bool)
@@ -219,6 +226,9 @@ impl AgentConfig {
                 "--host-proc" => {
                     host_proc = next_value(&mut iter, "--host-proc")?;
                 }
+                "--config" => {
+                    config_file = next_value(&mut iter, "--config")?;
+                }
                 _ if arg.starts_with("--endpoint=") => {
                     endpoint = clean_required(&arg["--endpoint=".len()..], "--endpoint")?;
                 }
@@ -313,7 +323,81 @@ impl AgentConfig {
                     host_proc =
                         clean_required(&arg["--host-proc=".len()..], "--host-proc")?.unwrap();
                 }
+                _ if arg.starts_with("--config=") => {
+                    config_file = clean_required(&arg["--config=".len()..], "--config")?.unwrap();
+                }
                 _ => return Err(ConfigError::UnknownArgument(arg.to_string())),
+            }
+        }
+
+        if !config_file.is_empty() {
+            let file_config = read_file_config(&config_file)?;
+            if let Some(value) = file_config.endpoint {
+                endpoint = clean_config_required_string(value);
+            }
+            if let Some(value) = file_config.token {
+                token = clean_config_required_string(value);
+            }
+            if let Some(value) = file_config.ignore_unsafe_cert {
+                insecure = value;
+            }
+            if let Some(value) = file_config.disable_web_ssh {
+                disable_web_ssh = value;
+            }
+            if let Some(value) = file_config.interval {
+                interval_seconds = validate_positive_f64("interval", value)?;
+            }
+            if let Some(value) = file_config.max_retries {
+                max_retries = value;
+            }
+            if let Some(value) = file_config.reconnect_interval {
+                reconnect_interval_seconds = validate_positive_u64("reconnect_interval", value)?;
+            }
+            if let Some(value) = file_config.info_report_interval {
+                info_report_interval_minutes =
+                    validate_positive_u64("info_report_interval", value)?;
+            }
+            if let Some(value) = file_config.cf_access_client_id {
+                cf_access_client_id = clean_config_string(value);
+            }
+            if let Some(value) = file_config.cf_access_client_secret {
+                cf_access_client_secret = clean_config_string(value);
+            }
+            if let Some(value) = file_config.include_nics {
+                include_nics = clean_config_string(value);
+            }
+            if let Some(value) = file_config.exclude_nics {
+                exclude_nics = clean_config_string(value);
+            }
+            if let Some(value) = file_config.include_mountpoints {
+                include_mountpoints = clean_config_string(value);
+            }
+            if let Some(value) = file_config.custom_ipv4 {
+                custom_ipv4 = clean_config_string(value);
+            }
+            if let Some(value) = file_config.custom_ipv6 {
+                custom_ipv6 = clean_config_string(value);
+            }
+            if let Some(value) = file_config.custom_dns {
+                custom_dns = clean_config_string(value);
+            }
+            if let Some(value) = file_config.get_ip_addr_from_nic {
+                get_ip_addr_from_nic = value;
+            }
+            if let Some(value) = file_config.memory_include_cache {
+                memory_include_cache = value;
+            }
+            if let Some(value) = file_config.memory_report_raw_used {
+                memory_report_raw_used = value;
+            }
+            if let Some(value) = file_config.enable_gpu {
+                enable_gpu = value;
+            }
+            if let Some(value) = file_config.month_rotate {
+                month_rotate = value;
+            }
+            if let Some(value) = file_config.host_proc {
+                host_proc = clean_config_string(value);
             }
         }
 
@@ -345,6 +429,39 @@ impl AgentConfig {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct FileConfig {
+    endpoint: Option<String>,
+    token: Option<String>,
+    ignore_unsafe_cert: Option<bool>,
+    disable_web_ssh: Option<bool>,
+    interval: Option<f64>,
+    max_retries: Option<u32>,
+    reconnect_interval: Option<u64>,
+    info_report_interval: Option<u64>,
+    cf_access_client_id: Option<String>,
+    cf_access_client_secret: Option<String>,
+    include_nics: Option<String>,
+    exclude_nics: Option<String>,
+    include_mountpoints: Option<String>,
+    custom_ipv4: Option<String>,
+    custom_ipv6: Option<String>,
+    custom_dns: Option<String>,
+    get_ip_addr_from_nic: Option<bool>,
+    memory_include_cache: Option<bool>,
+    memory_report_raw_used: Option<bool>,
+    enable_gpu: Option<bool>,
+    month_rotate: Option<u32>,
+    host_proc: Option<String>,
+}
+
+fn read_file_config(path: &str) -> Result<FileConfig, ConfigError> {
+    let contents = fs::read_to_string(path)
+        .map_err(|error| ConfigError::ConfigFileRead(format!("{path}: {error}")))?;
+    serde_json::from_str(&contents)
+        .map_err(|error| ConfigError::ConfigFileParse(format!("{path}: {error}")))
+}
+
 fn next_value<I, S>(iter: &mut I, flag: &'static str) -> Result<String, ConfigError>
 where
     I: Iterator<Item = S>,
@@ -372,6 +489,19 @@ fn clean_optional(value: Option<String>) -> Option<String> {
             Some(value.to_string())
         }
     })
+}
+
+fn clean_config_required_string(value: String) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn clean_config_string(value: String) -> String {
+    value.trim().to_string()
 }
 
 fn parse_bool(value: &str) -> bool {
@@ -416,8 +546,12 @@ fn parse_f64(flag: &'static str, value: &str) -> Result<f64, ConfigError> {
         .trim()
         .parse::<f64>()
         .map_err(|_| ConfigError::InvalidValue(flag, value.to_string()))?;
-    if parsed <= 0.0 {
-        return Err(ConfigError::InvalidValue(flag, value.to_string()));
+    validate_positive_f64(flag, parsed)
+}
+
+fn validate_positive_f64(flag: &'static str, parsed: f64) -> Result<f64, ConfigError> {
+    if !parsed.is_finite() || parsed <= 0.0 {
+        return Err(ConfigError::InvalidValue(flag, parsed.to_string()));
     }
     Ok(parsed)
 }
@@ -434,8 +568,12 @@ fn parse_u64(flag: &'static str, value: &str) -> Result<u64, ConfigError> {
         .trim()
         .parse::<u64>()
         .map_err(|_| ConfigError::InvalidValue(flag, value.to_string()))?;
+    validate_positive_u64(flag, parsed)
+}
+
+fn validate_positive_u64(flag: &'static str, parsed: u64) -> Result<u64, ConfigError> {
     if parsed == 0 {
-        return Err(ConfigError::InvalidValue(flag, value.to_string()));
+        return Err(ConfigError::InvalidValue(flag, parsed.to_string()));
     }
     Ok(parsed)
 }
