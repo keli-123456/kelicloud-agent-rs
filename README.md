@@ -98,6 +98,36 @@ Installer render helpers are side-effect free and useful for review or CI:
 ./install.sh render-env --endpoint https://panel.example.com --token TOKEN
 ```
 
+## Live Smoke Test
+
+Use the Linux-only smoke script when you want to test against a real kelicloud
+backend and token without committing secrets:
+
+```bash
+AGENT_ENDPOINT=https://panel.example.com \
+AGENT_TOKEN=TOKEN \
+scripts/smoke-live.sh
+```
+
+The default `once` mode builds the release binary, uploads basic info, connects
+the report WebSocket, sends one report, and requires `agent loop: completed` in
+the captured log. Token values are redacted in script output.
+
+For control-plane checks, keep the agent alive and trigger actions from the
+kelicloud panel while the script runs:
+
+```bash
+scripts/smoke-live.sh \
+  --mode live \
+  --duration 120 \
+  --endpoint https://panel.example.com \
+  --token TOKEN
+```
+
+During live mode, verify that ping tasks, script exec tasks, and terminal
+sessions reach the agent. The script treats the configured duration being
+reached as success because the normal agent loop is expected to keep running.
+
 ## Release Builds
 
 GitHub Actions publishes Linux binaries when a version tag is pushed:
@@ -126,6 +156,6 @@ GitHub Actions runs the same checks on Linux for pushes to `main` and pull reque
 
 ## Next Milestones
 
-1. Run an end-to-end smoke test against a real kelicloud backend.
+1. Run the live smoke test against a real kelicloud backend and record the first compatibility gaps.
 2. Add signed checksum files for release assets.
 3. Expand installer support after systemd deployment is stable.
