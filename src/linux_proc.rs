@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 #[cfg(target_os = "linux")]
 use std::ffi::CString;
@@ -1351,8 +1351,9 @@ fn count_socket_entries_for_protocol(contents: &str, protocol: ProcNetSocketProt
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with("sl "))
-        .filter(|line| proc_net_socket_row_key(line, protocol).is_some())
-        .count() as i32
+        .filter_map(|line| proc_net_socket_row_key(line, protocol))
+        .collect::<HashSet<_>>()
+        .len() as i32
 }
 
 fn proc_net_socket_row_key(line: &str, protocol: ProcNetSocketProtocol) -> Option<String> {
@@ -1363,10 +1364,27 @@ fn proc_net_socket_row_key(line: &str, protocol: ProcNetSocketProtocol) -> Optio
     let local_addr = proc_net_socket_addr_key(fields[1])?;
     let remote_addr = proc_net_socket_addr_key(fields[2])?;
     let status = match protocol {
-        ProcNetSocketProtocol::Tcp => fields[3].to_ascii_uppercase(),
+        ProcNetSocketProtocol::Tcp => go_tcp_status_name(fields[3]).to_string(),
         ProcNetSocketProtocol::Udp => "NONE".to_string(),
     };
     Some(format!("{local_addr}|{remote_addr}|{status}"))
+}
+
+fn go_tcp_status_name(status: &str) -> &'static str {
+    match status {
+        "01" => "ESTABLISHED",
+        "02" => "SYN_SENT",
+        "03" => "SYN_RECV",
+        "04" => "FIN_WAIT1",
+        "05" => "FIN_WAIT2",
+        "06" => "TIME_WAIT",
+        "07" => "CLOSE",
+        "08" => "CLOSE_WAIT",
+        "09" => "LAST_ACK",
+        "0A" => "LISTEN",
+        "0B" => "CLOSING",
+        _ => "",
+    }
 }
 
 fn proc_net_socket_addr_key(value: &str) -> Option<String> {

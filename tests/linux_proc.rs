@@ -200,7 +200,7 @@ Inter-|   Receive                                                |  Transmit
 }
 
 #[test]
-fn proc_metrics_sample_counts_udp_rows_like_go_agent() {
+fn proc_metrics_sample_deduplicates_udp_rows_like_go_agent() {
     let root = temp_proc_root("udp-row-count");
     fs::create_dir_all(root.join("net")).unwrap();
     fs::write(root.join("loadavg"), "0.12 0.34 0.56 1/3 99\n").unwrap();
@@ -225,6 +225,7 @@ Inter-|   Receive                                                |  Transmit
   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 100
    1: 00000000:0035 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 101
+   2: 00000000:0036 00000000:0000 07 00000000:00000000 00:00000000 00000000     0        0 102
 "#,
     )
     .unwrap();
@@ -1707,7 +1708,7 @@ fn count_socket_entries_skips_malformed_proc_net_rows_like_go_agent() {
 }
 
 #[test]
-fn count_socket_entries_counts_duplicate_proc_net_rows_like_go_agent() {
+fn count_socket_entries_deduplicates_duplicate_proc_net_rows_like_go_agent() {
     let contents = r#"
   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 0100007F:0035 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 100
@@ -1715,7 +1716,7 @@ fn count_socket_entries_counts_duplicate_proc_net_rows_like_go_agent() {
    2: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 102
 "#;
 
-    assert_eq!(count_socket_entries(contents), 3);
+    assert_eq!(count_socket_entries(contents), 2);
 }
 
 #[test]
