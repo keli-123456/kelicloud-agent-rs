@@ -911,14 +911,8 @@ pub fn parse_amd_rocm_smi_json(contents: &str) -> Vec<GpuMetric> {
         .filter_map(|key| cards.get(&key)?.as_object())
         .map(|card| GpuMetric {
             name: json_string(card, "Card series"),
-            memory_total: json_string(card, "VRAM Total Memory (B)")
-                .trim()
-                .parse::<i64>()
-                .unwrap_or(0),
-            memory_used: json_string(card, "VRAM Total Used Memory (B)")
-                .trim()
-                .parse::<i64>()
-                .unwrap_or(0),
+            memory_total: parse_unsigned_i64_value(&json_string(card, "VRAM Total Memory (B)")),
+            memory_used: parse_unsigned_i64_value(&json_string(card, "VRAM Total Used Memory (B)")),
             utilization: parse_percent_value(&json_string(card, "GPU use (%)")),
             temperature: parse_temperature_value(&json_string(
                 card,
@@ -2617,12 +2611,18 @@ fn xml_child_tag_text(contents: &str, parent: &str, tag: &str) -> Option<String>
 }
 
 fn parse_mib_value(value: &str) -> i64 {
+    parse_unsigned_i64_value(value).saturating_mul(1024 * 1024)
+}
+
+fn parse_unsigned_i64_value(value: &str) -> i64 {
     value
         .trim()
         .trim_end_matches("MiB")
+        .trim_end_matches('C')
         .trim()
-        .parse::<i64>()
-        .map(|mib| mib.saturating_mul(1024 * 1024))
+        .parse::<u64>()
+        .ok()
+        .and_then(|value| i64::try_from(value).ok())
         .unwrap_or(0)
 }
 
@@ -2636,12 +2636,7 @@ fn parse_percent_value(value: &str) -> f64 {
 }
 
 fn parse_temperature_value(value: &str) -> i64 {
-    value
-        .trim()
-        .trim_end_matches('C')
-        .trim()
-        .parse::<i64>()
-        .unwrap_or(0)
+    parse_unsigned_i64_value(value)
 }
 
 fn json_string(card: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
