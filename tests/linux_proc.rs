@@ -398,6 +398,14 @@ fn special_linux_os_names_match_go_agent_priority_helpers() {
         Some("Proxmox VE")
     );
     assert_eq!(
+        proxmox_os_name_from_parts(
+            "pve-manager/8.2.7/3e0176e6c0a0\n",
+            "VERSION_CODENAME= bookworm\n"
+        )
+        .as_deref(),
+        Some("Proxmox VE 8.2.7 ( bookworm)")
+    );
+    assert_eq!(
         parse_synology_os_name(
             r#"
 unique="synology_apollolake_918+"

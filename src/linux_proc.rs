@@ -2298,8 +2298,7 @@ fn parse_os_release_value(contents: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
     contents.lines().find_map(|line| {
         line.strip_prefix(&prefix)
-            .map(|value| value.trim().trim_matches('"').to_string())
-            .filter(|value| !value.is_empty())
+            .map(|value| value.trim_matches('"').to_string())
     })
 }
 
