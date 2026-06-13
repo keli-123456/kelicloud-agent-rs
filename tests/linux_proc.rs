@@ -4,14 +4,14 @@ use kelicloud_agent_rs::linux_proc::{
     count_process_entries, count_process_entries_in_dir, count_socket_entries,
     cpu_name_from_sources, detect_container_from_cgroup, detect_container_from_markers,
     fnos_os_name_from_markers, go_compatible_disk, go_compatible_ram,
-    go_compatible_ram_include_cache, go_compatible_swap, kernel_version_from_uname_output,
-    linux_supported, network_speed_from_samples, parse_amd_rocm_smi_json, parse_cpuinfo_name,
-    parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lscpu_model_name,
-    parse_lspci_gpu_name, parse_meminfo, parse_net_dev, parse_net_dev_interfaces,
-    parse_net_dev_with_filter, parse_net_static_total_between, parse_nvidia_smi_xml,
-    parse_os_release_pretty_name, parse_public_ipv4_response, parse_public_ipv6_response,
-    parse_soc_gpu_model, parse_synology_os_name, parse_uptime, proc_metrics_from_parts,
-    proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
+    go_compatible_ram_include_cache, go_compatible_ram_raw_used, go_compatible_swap,
+    kernel_version_from_uname_output, linux_supported, network_speed_from_samples,
+    parse_amd_rocm_smi_json, parse_cpuinfo_name, parse_ip_addr_show_output, parse_ip_address_list,
+    parse_loadavg, parse_lscpu_model_name, parse_lspci_gpu_name, parse_meminfo, parse_net_dev,
+    parse_net_dev_interfaces, parse_net_dev_with_filter, parse_net_static_total_between,
+    parse_nvidia_smi_xml, parse_os_release_pretty_name, parse_public_ipv4_response,
+    parse_public_ipv6_response, parse_soc_gpu_model, parse_synology_os_name, parse_uptime,
+    proc_metrics_from_parts, proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
     sysfs_drm_gpu_name_from_driver, virtualization_from_cpuid_parts, DiskMount, NetworkFilter,
     NetworkTotals,
 };
@@ -543,6 +543,25 @@ Shmem:             10 kB
 
     assert_eq!(ram.total, 1000 * 1024);
     assert_eq!(ram.used, 900 * 1024);
+}
+
+#[test]
+fn memory_raw_used_mode_matches_go_agent_memory_exclude_bcf_flag() {
+    let meminfo = parse_meminfo(
+        r#"
+MemTotal:        1000 kB
+MemFree:          100 kB
+Buffers:           25 kB
+Cached:           200 kB
+SReclaimable:      50 kB
+Shmem:             10 kB
+"#,
+    );
+
+    let ram = go_compatible_ram_raw_used(&meminfo);
+
+    assert_eq!(ram.total, 1000 * 1024);
+    assert_eq!(ram.used, 625 * 1024);
 }
 
 #[test]

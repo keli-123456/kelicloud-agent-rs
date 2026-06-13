@@ -819,8 +819,14 @@ pub fn parse_meminfo(contents: &str) -> ProcMemInfo {
 }
 
 pub fn go_compatible_ram(info: &ProcMemInfo) -> MemoryValues {
+    let mut ram = go_compatible_ram_raw_used(info);
+    ram.used = ram.used.saturating_add(info.shmem).max(0);
+    ram
+}
+
+pub fn go_compatible_ram_raw_used(info: &ProcMemInfo) -> MemoryValues {
     let free_like = info.mem_free + info.cached + info.s_reclaimable + info.buffers;
-    let base_used = if info.mem_total >= free_like {
+    let used = if info.mem_total >= free_like {
         info.mem_total - free_like
     } else {
         info.mem_total.saturating_sub(info.mem_free)
@@ -828,7 +834,7 @@ pub fn go_compatible_ram(info: &ProcMemInfo) -> MemoryValues {
 
     MemoryValues {
         total: info.mem_total,
-        used: base_used.saturating_add(info.shmem).max(0),
+        used: used.max(0),
     }
 }
 
@@ -1232,6 +1238,13 @@ pub fn collect_memory_values() -> Option<(MemoryValues, MemoryValues)> {
 pub fn collect_memory_values_with_mode(
     include_cache: bool,
 ) -> Option<(MemoryValues, MemoryValues)> {
+    collect_memory_values_with_modes(include_cache, false)
+}
+
+pub fn collect_memory_values_with_modes(
+    include_cache: bool,
+    report_raw_used: bool,
+) -> Option<(MemoryValues, MemoryValues)> {
     if !linux_supported() {
         return None;
     }
@@ -1241,6 +1254,8 @@ pub fn collect_memory_values_with_mode(
         .map(|contents| parse_meminfo(&contents))?;
     let ram = if include_cache {
         go_compatible_ram_include_cache(&meminfo)
+    } else if report_raw_used {
+        go_compatible_ram_raw_used(&meminfo)
     } else {
         go_compatible_ram(&meminfo)
     };

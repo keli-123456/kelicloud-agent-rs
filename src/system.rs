@@ -349,8 +349,10 @@ impl SystemSnapshotCollector {
             .as_ref()
             .map(|sample| proc_metric_errors_to_message(&sample.errors))
             .unwrap_or_default();
-        let linux_memory =
-            crate::linux_proc::collect_memory_values_with_mode(self.metrics.memory_include_cache);
+        let linux_memory = crate::linux_proc::collect_memory_values_with_modes(
+            self.metrics.memory_include_cache,
+            self.metrics.memory_report_raw_used,
+        );
 
         let cpus = self.system.cpus();
         let cpu_name = crate::linux_proc::collect_cpu_name(cpus.first().map(|cpu| cpu.brand()));
