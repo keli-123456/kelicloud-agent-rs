@@ -1,0 +1,90 @@
+name: Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: "kelicloud backend endpoint. Falls back to KELICLOUD_SMOKE_ENDPOINT secret when empty."
+        required: false
+        type: string
+      mode:
+        description: "Smoke mode to run."
+        required: true
+        default: live
+        type: choice
+        options:
+          - once
+          - live
+      duration:
+        description: "Live-mode duration in seconds."
+        required: true
+        default: "120"
+        type: string
+      expect_success_log:
+        description: "Optional log text that must appear in the smoke log."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live:
+    name: Live Backend Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AGENT_ENDPOINT: ${{ inputs.endpoint != '' && inputs.endpoint || secrets.KELICLOUD_SMOKE_ENDPOINT }}
+      AGENT_TOKEN: ${{ secrets.KELICLOUD_SMOKE_TOKEN }}
+      SMOKE_MODE: ${{ inputs.mode }}
+      SMOKE_DURATION: ${{ inputs.duration }}
+      SMOKE_EXPECT_SUCCESS_LOG: ${{ inputs.expect_success_log }}
+      TMPDIR: smoke-logs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Validate smoke configuration
+        run: |
+          mkdir -p "${TMPDIR}"
+          if [ -z "${AGENT_ENDPOINT}" ]; then
+            echo "AGENT_ENDPOINT is required. Set the endpoint input or KELICLOUD_SMOKE_ENDPOINT secret."
+            exit 1
+          fi
+          if [ -z "${AGENT_TOKEN}" ]; then
+            echo "AGENT_TOKEN is required. Set the KELICLOUD_SMOKE_TOKEN secret."
+            exit 1
+          fi
+          echo "::add-mask::$AGENT_TOKEN"
+
+      - name: Run live smoke
+        run: |
+          args=(
+            --mode "${SMOKE_MODE}"
+            --duration "${SMOKE_DURATION}"
+          )
+          if [ -n "${SMOKE_EXPECT_SUCCESS_LOG}" ]; then
+            args+=(--expect-success-log "${SMOKE_EXPECT_SUCCESS_LOG}")
+          fi
+          scripts/smoke-live.sh "${args[@]}"
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kelicloud-agent-rs-smoke-logs
+          path: smoke-logs/*.log
+          if-no-files-found: ignore

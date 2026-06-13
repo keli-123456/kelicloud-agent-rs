@@ -128,6 +128,15 @@ During live mode, verify that ping tasks, script exec tasks, and terminal
 sessions reach the agent. The script treats the configured duration being
 reached as success because the normal agent loop is expected to keep running.
 
+You can also run the same smoke test from GitHub Actions when you do not have a
+Linux shell on your workstation:
+
+1. Add repository secret `KELICLOUD_SMOKE_TOKEN`.
+2. Optionally add repository secret `KELICLOUD_SMOKE_ENDPOINT`.
+3. Open the `Smoke` workflow, choose `Run workflow`, and select `once` or `live`.
+4. If `KELICLOUD_SMOKE_ENDPOINT` is not set, fill the `endpoint` workflow input.
+5. Download the `kelicloud-agent-rs-smoke-logs` artifact after the run.
+
 ## Release Builds
 
 GitHub Actions publishes Linux binaries when a version tag is pushed:
