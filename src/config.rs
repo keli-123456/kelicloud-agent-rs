@@ -326,7 +326,7 @@ impl AgentConfig {
                 _ if arg.starts_with("--config=") => {
                     config_file = clean_required(&arg["--config=".len()..], "--config")?.unwrap();
                 }
-                _ => return Err(ConfigError::UnknownArgument(arg.to_string())),
+                _ => {}
             }
         }
 

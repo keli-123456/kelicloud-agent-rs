@@ -148,6 +148,30 @@ fn config_accepts_go_agent_short_connection_flags() {
 }
 
 #[test]
+fn config_ignores_unknown_go_agent_flags_like_cobra() {
+    let config = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--disable-auto-update",
+            "--auto-discovery",
+            "discovery-key",
+            "--show-warning",
+            "--future-go-flag=value",
+            "positional-arg",
+        ],
+        |_| None,
+    )
+    .unwrap();
+
+    assert_eq!(config.endpoint, "https://cli.example.com");
+    assert_eq!(config.token, "cli-token");
+}
+
+#[test]
 fn config_supports_go_agent_metric_options() {
     let args = [
         "kelicloud-agent-rs",
