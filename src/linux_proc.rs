@@ -2242,10 +2242,13 @@ fn should_include_interface(name: &str) -> bool {
 }
 
 fn parse_csv_list(value: &str) -> Vec<String> {
+    if value.is_empty() {
+        return Vec::new();
+    }
+
     value
         .split(',')
         .map(str::trim)
-        .filter(|item| !item.is_empty())
         .map(ToOwned::to_owned)
         .collect()
 }

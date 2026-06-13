@@ -778,6 +778,20 @@ Inter-|   Receive                                                |  Transmit
 }
 
 #[test]
+fn network_filter_treats_whitespace_include_list_like_go_agent_whitelist() {
+    let contents = r#"
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+  eth0: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0
+"#;
+
+    let totals = parse_net_dev_with_filter(contents, &NetworkFilter::from_csv(" ", ""));
+
+    assert_eq!(totals.total_down, 0);
+    assert_eq!(totals.total_up, 0);
+}
+
+#[test]
 fn parse_net_dev_interfaces_returns_filtered_per_nic_counters() {
     let contents = r#"
 Inter-|   Receive                                                |  Transmit
