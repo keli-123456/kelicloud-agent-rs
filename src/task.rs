@@ -11,6 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,11 +48,11 @@ impl TaskResult {
     }
 }
 
-pub trait TaskExecutor {
+pub trait TaskExecutor: Send + Sync + 'static {
     fn execute(&self, command: &str) -> TaskExecution;
 }
 
-pub trait TaskResultUploader {
+pub trait TaskResultUploader: Send + Sync + 'static {
     fn upload_task_result(&self, result: &TaskResult) -> Result<(), TransportError>;
 }
 
@@ -181,16 +182,16 @@ fn combined_output(stdout: &[u8], stderr: &[u8]) -> String {
 
 #[derive(Debug)]
 pub struct TaskControlMessageHandler<E, U> {
-    executor: E,
-    uploader: U,
+    executor: Arc<E>,
+    uploader: Arc<U>,
     remote_control_disabled: bool,
 }
 
 impl<E, U> TaskControlMessageHandler<E, U> {
     pub fn new(executor: E, uploader: U, remote_control_disabled: bool) -> Self {
         Self {
-            executor,
-            uploader,
+            executor: Arc::new(executor),
+            uploader: Arc::new(uploader),
             remote_control_disabled,
         }
     }
@@ -209,14 +210,19 @@ where
             return;
         }
 
-        let result = if command.trim().is_empty() {
-            TaskResult::fixed(task_id, "No command provided", 0)
-        } else if self.remote_control_disabled {
-            TaskResult::fixed(task_id, "Remote control is disabled.", -1)
-        } else {
-            TaskResult::now(task_id, self.executor.execute(&command))
-        };
-        let _ = self.uploader.upload_task_result(&result);
+        let executor = Arc::clone(&self.executor);
+        let uploader = Arc::clone(&self.uploader);
+        let remote_control_disabled = self.remote_control_disabled;
+        thread::spawn(move || {
+            let result = if command.trim().is_empty() {
+                TaskResult::fixed(task_id, "No command provided", 0)
+            } else if remote_control_disabled {
+                TaskResult::fixed(task_id, "Remote control is disabled.", -1)
+            } else {
+                TaskResult::now(task_id, executor.execute(&command))
+            };
+            let _ = uploader.upload_task_result(&result);
+        });
     }
 }
 

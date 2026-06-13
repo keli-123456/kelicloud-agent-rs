@@ -6,17 +6,15 @@ use kelicloud_agent_rs::task::{
     TaskExecution, TaskExecutor, TaskResult, TaskResultUploader,
 };
 use kelicloud_agent_rs::transport::TransportError;
-use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[test]
 fn task_handler_runs_exec_message_and_uploads_result() {
-    let uploaded = Rc::new(RefCell::new(Vec::new()));
+    let uploaded = Arc::new(Mutex::new(Vec::new()));
     let mut handler = TaskControlMessageHandler::new(
         FixedTaskExecutor::new("root", 0),
         RecordingTaskUploader::new(uploaded.clone()),
@@ -28,22 +26,55 @@ fn task_handler_runs_exec_message_and_uploads_result() {
         command: "whoami".to_string(),
     });
 
+    assert!(
+        wait_for_uploaded_count(&uploaded, 1, Duration::from_secs(1)),
+        "task result was not uploaded"
+    );
+    let uploaded = uploaded.lock().unwrap();
     assert_eq!(
-        uploaded.borrow().as_slice(),
+        uploaded.as_slice(),
         [TaskResult {
             task_id: "task-1".to_string(),
             result: "root".to_string(),
             exit_code: 0,
-            finished_at: uploaded.borrow()[0].finished_at.clone(),
+            finished_at: uploaded[0].finished_at.clone(),
         }]
     );
-    assert!(!uploaded.borrow()[0].finished_at.is_empty());
+    assert!(!uploaded[0].finished_at.is_empty());
+}
+
+#[test]
+fn task_handler_returns_before_exec_finishes() {
+    let uploaded = Arc::new(Mutex::new(Vec::new()));
+    let mut handler = TaskControlMessageHandler::new(
+        SlowTaskExecutor::new(Duration::from_millis(150)),
+        RecordingTaskUploader::new(uploaded.clone()),
+        false,
+    );
+
+    let started_at = Instant::now();
+    handler.handle(BackendMessage::Exec {
+        task_id: "task-slow".to_string(),
+        command: "sleep".to_string(),
+    });
+
+    assert!(
+        started_at.elapsed() < Duration::from_millis(75),
+        "handler blocked for {:?}",
+        started_at.elapsed()
+    );
+    assert!(
+        wait_for_uploaded_count(&uploaded, 1, Duration::from_secs(1)),
+        "task result was not uploaded after background execution"
+    );
+    assert_eq!(uploaded.lock().unwrap()[0].task_id, "task-slow");
+    assert_eq!(uploaded.lock().unwrap()[0].result, "slow-done");
 }
 
 #[test]
 fn task_handler_uploads_disabled_result_without_running_command() {
-    let uploaded = Rc::new(RefCell::new(Vec::new()));
-    let executed = Rc::new(RefCell::new(Vec::new()));
+    let uploaded = Arc::new(Mutex::new(Vec::new()));
+    let executed = Arc::new(Mutex::new(Vec::new()));
     let mut handler = TaskControlMessageHandler::new(
         RecordingTaskExecutor::new(executed.clone()),
         RecordingTaskUploader::new(uploaded.clone()),
@@ -55,15 +86,20 @@ fn task_handler_uploads_disabled_result_without_running_command() {
         command: "whoami".to_string(),
     });
 
-    assert!(executed.borrow().is_empty());
-    assert_eq!(uploaded.borrow()[0].task_id, "task-disabled");
-    assert_eq!(uploaded.borrow()[0].result, "Remote control is disabled.");
-    assert_eq!(uploaded.borrow()[0].exit_code, -1);
+    assert!(
+        wait_for_uploaded_count(&uploaded, 1, Duration::from_secs(1)),
+        "disabled task result was not uploaded"
+    );
+    assert!(executed.lock().unwrap().is_empty());
+    let uploaded = uploaded.lock().unwrap();
+    assert_eq!(uploaded[0].task_id, "task-disabled");
+    assert_eq!(uploaded[0].result, "Remote control is disabled.");
+    assert_eq!(uploaded[0].exit_code, -1);
 }
 
 #[test]
 fn task_handler_uploads_no_command_result_before_disabled_check() {
-    let uploaded = Rc::new(RefCell::new(Vec::new()));
+    let uploaded = Arc::new(Mutex::new(Vec::new()));
     let mut handler = TaskControlMessageHandler::new(
         FixedTaskExecutor::new("unused", 0),
         RecordingTaskUploader::new(uploaded.clone()),
@@ -75,14 +111,19 @@ fn task_handler_uploads_no_command_result_before_disabled_check() {
         command: "  ".to_string(),
     });
 
-    assert_eq!(uploaded.borrow()[0].task_id, "task-empty");
-    assert_eq!(uploaded.borrow()[0].result, "No command provided");
-    assert_eq!(uploaded.borrow()[0].exit_code, 0);
+    assert!(
+        wait_for_uploaded_count(&uploaded, 1, Duration::from_secs(1)),
+        "empty task result was not uploaded"
+    );
+    let uploaded = uploaded.lock().unwrap();
+    assert_eq!(uploaded[0].task_id, "task-empty");
+    assert_eq!(uploaded[0].result, "No command provided");
+    assert_eq!(uploaded[0].exit_code, 0);
 }
 
 #[test]
 fn task_handler_ignores_exec_message_without_task_id() {
-    let uploaded = Rc::new(RefCell::new(Vec::new()));
+    let uploaded = Arc::new(Mutex::new(Vec::new()));
     let mut handler = TaskControlMessageHandler::new(
         FixedTaskExecutor::new("unused", 0),
         RecordingTaskUploader::new(uploaded.clone()),
@@ -94,7 +135,7 @@ fn task_handler_ignores_exec_message_without_task_id() {
         command: "whoami".to_string(),
     });
 
-    assert!(uploaded.borrow().is_empty());
+    assert!(uploaded.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -191,18 +232,18 @@ impl TaskExecutor for FixedTaskExecutor {
 }
 
 struct RecordingTaskExecutor {
-    commands: Rc<RefCell<Vec<String>>>,
+    commands: Arc<Mutex<Vec<String>>>,
 }
 
 impl RecordingTaskExecutor {
-    fn new(commands: Rc<RefCell<Vec<String>>>) -> Self {
+    fn new(commands: Arc<Mutex<Vec<String>>>) -> Self {
         Self { commands }
     }
 }
 
 impl TaskExecutor for RecordingTaskExecutor {
     fn execute(&self, command: &str) -> TaskExecution {
-        self.commands.borrow_mut().push(command.to_string());
+        self.commands.lock().unwrap().push(command.to_string());
         TaskExecution {
             result: "executed".to_string(),
             exit_code: 0,
@@ -211,19 +252,39 @@ impl TaskExecutor for RecordingTaskExecutor {
 }
 
 struct RecordingTaskUploader {
-    uploaded: Rc<RefCell<Vec<TaskResult>>>,
+    uploaded: Arc<Mutex<Vec<TaskResult>>>,
 }
 
 impl RecordingTaskUploader {
-    fn new(uploaded: Rc<RefCell<Vec<TaskResult>>>) -> Self {
+    fn new(uploaded: Arc<Mutex<Vec<TaskResult>>>) -> Self {
         Self { uploaded }
     }
 }
 
 impl TaskResultUploader for RecordingTaskUploader {
     fn upload_task_result(&self, result: &TaskResult) -> Result<(), TransportError> {
-        self.uploaded.borrow_mut().push(result.clone());
+        self.uploaded.lock().unwrap().push(result.clone());
         Ok(())
+    }
+}
+
+struct SlowTaskExecutor {
+    delay: Duration,
+}
+
+impl SlowTaskExecutor {
+    fn new(delay: Duration) -> Self {
+        Self { delay }
+    }
+}
+
+impl TaskExecutor for SlowTaskExecutor {
+    fn execute(&self, _command: &str) -> TaskExecution {
+        thread::sleep(self.delay);
+        TaskExecution {
+            result: "slow-done".to_string(),
+            exit_code: 0,
+        }
     }
 }
 
@@ -253,6 +314,21 @@ fn test_config(endpoint: String) -> AgentConfig {
         host_proc: String::new(),
         once: false,
     }
+}
+
+fn wait_for_uploaded_count(
+    uploaded: &Arc<Mutex<Vec<TaskResult>>>,
+    count: usize,
+    timeout: Duration,
+) -> bool {
+    let started_at = Instant::now();
+    while started_at.elapsed() < timeout {
+        if uploaded.lock().unwrap().len() >= count {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    false
 }
 
 fn read_http_request(stream: &mut std::net::TcpStream) -> String {
