@@ -18,6 +18,7 @@ CUSTOM_DNS=""
 CF_ACCESS_CLIENT_ID="${AGENT_CF_ACCESS_CLIENT_ID:-}"
 CF_ACCESS_CLIENT_SECRET="${AGENT_CF_ACCESS_CLIENT_SECRET:-}"
 EXPECT_SUCCESS_LOG=""
+REQUIRE_SUMMARY_PASS="false"
 EXTRA_ARGS=()
 
 usage() {
@@ -51,6 +52,7 @@ Options:
   --insecure                     Pass --insecure to the agent.
   --disable-web-ssh              Pass --disable-web-ssh to the agent.
   --expect-success-log TEXT      Require TEXT to appear in captured logs.
+  --require-summary-pass         Fail if the generated summary has missing or failed evidence.
   --help                         Show this help.
 
 Examples:
@@ -173,6 +175,10 @@ parse_args() {
                 need_value "$1" "${2:-}"
                 EXPECT_SUCCESS_LOG="$2"
                 shift 2
+                ;;
+            --require-summary-pass)
+                REQUIRE_SUMMARY_PASS="true"
+                shift
                 ;;
             --help|-h)
                 usage
@@ -310,8 +316,15 @@ print_summary() {
     fi
 
     log "Smoke compatibility summary:"
-    if ! (cd "$root" && cargo run --locked --quiet --bin smoke-summary -- "$log_file") | tee "$summary_file"; then
+    local summary_args=()
+    if [[ "$REQUIRE_SUMMARY_PASS" == "true" ]]; then
+        summary_args+=(--require-pass)
+    fi
+    if ! (cd "$root" && cargo run --locked --quiet --bin smoke-summary -- "${summary_args[@]}" "$log_file") | tee "$summary_file"; then
         log "warning: failed to generate smoke compatibility summary"
+        if [[ "$REQUIRE_SUMMARY_PASS" == "true" ]]; then
+            return 1
+        fi
     else
         log "Smoke compatibility summary file: ${summary_file}"
     fi

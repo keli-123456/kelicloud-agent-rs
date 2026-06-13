@@ -60,6 +60,19 @@ impl SmokeSummary {
             .map(|evidence| evidence.status)
     }
 
+    pub fn is_pass(&self) -> bool {
+        self.evidence
+            .iter()
+            .all(|evidence| evidence.status == SmokeEvidenceStatus::Pass)
+    }
+
+    pub fn failed_or_missing_evidence(&self) -> Vec<&SmokeEvidence> {
+        self.evidence
+            .iter()
+            .filter(|evidence| evidence.status != SmokeEvidenceStatus::Pass)
+            .collect()
+    }
+
     pub fn to_markdown(&self) -> String {
         let mut output = String::new();
         output.push_str("# kelicloud-agent-rs Smoke Summary\n\n");

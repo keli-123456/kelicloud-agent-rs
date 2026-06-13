@@ -36,6 +36,14 @@ on:
         options:
           - "false"
           - "true"
+      require_summary_pass:
+        description: "Fail the workflow when the generated smoke summary has missing or failed evidence."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: read
@@ -63,6 +71,7 @@ jobs:
       SMOKE_EXPECT_SUCCESS_LOG: ${{ inputs.expect_success_log }}
       SMOKE_CUSTOM_DNS: ${{ inputs.custom_dns }}
       SMOKE_INSECURE: ${{ inputs.insecure }}
+      SMOKE_REQUIRE_SUMMARY_PASS: ${{ inputs.require_summary_pass }}
       TMPDIR: smoke-logs
 
     steps:
@@ -109,6 +118,9 @@ jobs:
           fi
           if [ "${SMOKE_INSECURE}" = "true" ]; then
             args+=(--insecure)
+          fi
+          if [ "${SMOKE_REQUIRE_SUMMARY_PASS}" = "true" ]; then
+            args+=(--require-summary-pass)
           fi
           scripts/smoke-live.sh "${args[@]}"
 

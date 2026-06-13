@@ -16,11 +16,13 @@ fn smoke_workflow_runs_live_script_on_manual_dispatch() {
     assert!(workflow.contains("::add-mask::$AGENT_CF_ACCESS_CLIENT_SECRET"));
     assert!(workflow.contains("custom_dns:"));
     assert!(workflow.contains("insecure:"));
+    assert!(workflow.contains("require_summary_pass:"));
     assert!(workflow.contains("scripts/smoke-live.sh"));
     assert!(workflow.contains("--mode \"${SMOKE_MODE}\""));
     assert!(workflow.contains("--duration \"${SMOKE_DURATION}\""));
     assert!(workflow.contains("--custom-dns \"${SMOKE_CUSTOM_DNS}\""));
     assert!(workflow.contains("--insecure"));
+    assert!(workflow.contains("--require-summary-pass"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(workflow.contains("smoke-logs/*"));
 }

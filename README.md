@@ -157,6 +157,19 @@ You can also summarize an existing log directly:
 cargo run --locked --bin smoke-summary -- /tmp/kelicloud-agent-rs-smoke.example.log
 ```
 
+When you intentionally trigger all control-plane actions during `live` mode, add
+`--require-summary-pass` so the smoke run fails if the summary is missing ping,
+exec, terminal, or CN connectivity evidence:
+
+```bash
+scripts/smoke-live.sh \
+  --mode live \
+  --duration 120 \
+  --require-summary-pass \
+  --endpoint https://panel.example.com \
+  --token TOKEN
+```
+
 You can also run the same smoke test from GitHub Actions when you do not have a
 Linux shell on your workstation:
 
@@ -169,6 +182,7 @@ Linux shell on your workstation:
 4. Open the `Smoke` workflow, choose `Run workflow`, and select `once` or `live`.
 5. If `KELICLOUD_SMOKE_ENDPOINT` is not set, fill the `endpoint` workflow input.
 6. Fill optional `custom_dns` or set `insecure` when the target environment needs them.
+   Enable `require_summary_pass` only when you will trigger all listed control-plane actions.
 7. Download the `kelicloud-agent-rs-smoke-logs` artifact after the run.
    It includes both raw `*.log` files and generated `*.summary.md` files.
 

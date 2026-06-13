@@ -15,7 +15,7 @@ needs `KELICLOUD_SMOKE_TOKEN` and either the `endpoint` workflow input or
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_ID`,
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_SECRET`.
 - Optional inputs: `endpoint`, `mode`, `duration`, `expect_success_log`,
-  `custom_dns`, `insecure`.
+  `custom_dns`, `insecure`, `require_summary_pass`.
 - Smoke log summarizer: `cargo run --locked --bin smoke-summary -- <log-file>`.
 
 ## Static Parity Evidence
@@ -70,7 +70,9 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
   upload, report WebSocket connection, report sends, ping result upload, task
   result upload, terminal session start, and CN connectivity config receipt.
   `scripts/smoke-live.sh` turns those logs into a Markdown `*.summary.md`
-  compatibility summary.
+  compatibility summary. Use `--require-summary-pass` only for runs where the
+  panel actions are intentionally triggered; it fails the smoke when evidence is
+  missing or failed.
 
 ## First Dynamic Smoke Checks
 
@@ -93,6 +95,8 @@ Run these during the first `live` smoke:
     with the configured CF Access secrets.
 11. Review the generated `*.summary.md`; any "missing" control-plane evidence
     should become the first compatibility gap to reproduce against the Go agent.
+    For a full manual control-plane pass, run with `--require-summary-pass` so
+    missing evidence fails the smoke immediately.
 
 ## First Compatibility Watchlist
 

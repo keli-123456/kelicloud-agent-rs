@@ -62,6 +62,8 @@ agent loop: completed
         summary.evidence_status(CONTROL_CN_CONNECTIVITY),
         Some(SmokeEvidenceStatus::Pass)
     );
+    assert!(summary.is_pass());
+    assert!(summary.failed_or_missing_evidence().is_empty());
 
     let markdown = summary.to_markdown();
     assert!(markdown.contains("# kelicloud-agent-rs Smoke Summary"));
@@ -93,6 +95,11 @@ agent loop: completed
         summary.evidence_status(CONTROL_PING_RESULT),
         Some(SmokeEvidenceStatus::Missing)
     );
+    assert!(!summary.is_pass());
+    assert_eq!(
+        summary.failed_or_missing_evidence()[0].label,
+        "Ping result upload"
+    );
 
     let markdown = summary.to_markdown();
     assert!(markdown.contains("| Ping result upload | missing | not observed |"));
@@ -115,6 +122,7 @@ runtime error: request failed: websocket closed
         summary.evidence_status(CORE_NO_ERRORS),
         Some(SmokeEvidenceStatus::Fail)
     );
+    assert!(!summary.is_pass());
     let markdown = summary.to_markdown();
     assert!(markdown.contains(
         "| No fatal agent errors | fail | runtime error: request failed: websocket closed |"
