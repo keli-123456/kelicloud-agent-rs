@@ -1299,25 +1299,26 @@ fn proc_net_socket_row_key(line: &str, protocol: ProcNetSocketProtocol) -> Optio
     if fields.len() < 10 || !fields.first().is_some_and(|field| field.ends_with(':')) {
         return None;
     }
-    if !proc_net_socket_addr_is_valid(fields[1]) || !proc_net_socket_addr_is_valid(fields[2]) {
-        return None;
-    }
+    let local_addr = proc_net_socket_addr_key(fields[1])?;
+    let remote_addr = proc_net_socket_addr_key(fields[2])?;
     let status = match protocol {
-        ProcNetSocketProtocol::Tcp => fields[3],
-        ProcNetSocketProtocol::Udp => "NONE",
+        ProcNetSocketProtocol::Tcp => fields[3].to_ascii_uppercase(),
+        ProcNetSocketProtocol::Udp => "NONE".to_string(),
     };
-    Some(format!("{}|{}|{status}", fields[1], fields[2]))
+    Some(format!("{local_addr}|{remote_addr}|{status}"))
 }
 
-fn proc_net_socket_addr_is_valid(value: &str) -> bool {
-    let Some((addr, port)) = value.split_once(':') else {
-        return false;
-    };
-    !addr.is_empty()
-        && !port.is_empty()
-        && addr.len() % 2 == 0
-        && addr.bytes().all(|byte| byte.is_ascii_hexdigit())
-        && u16::from_str_radix(port, 16).is_ok()
+fn proc_net_socket_addr_key(value: &str) -> Option<String> {
+    let (addr, port) = value.split_once(':')?;
+    if addr.is_empty()
+        || port.is_empty()
+        || addr.len() % 2 != 0
+        || !addr.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    let port = u16::from_str_radix(port, 16).ok()?;
+    Some(format!("{}:{port}", addr.to_ascii_uppercase()))
 }
 
 pub fn collect_proc_metrics() -> Option<ProcMetrics> {

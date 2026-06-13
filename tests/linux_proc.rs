@@ -1339,6 +1339,17 @@ fn count_socket_entries_deduplicates_matching_proc_net_rows_like_go_agent() {
 }
 
 #[test]
+fn count_socket_entries_deduplicates_hex_case_like_go_agent() {
+    let contents = r#"
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:0035 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 100
+   1: 0100007f:0035 00000000:0000 0a 00000000:00000000 00:00000000 00000000     0        0 101
+"#;
+
+    assert_eq!(count_socket_entries(contents), 1);
+}
+
+#[test]
 fn linux_supported_matches_compile_target() {
     assert_eq!(linux_supported(), cfg!(target_os = "linux"));
 }
