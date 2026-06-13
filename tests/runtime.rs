@@ -461,6 +461,45 @@ fn run_report_cycles_drains_available_control_messages_after_report() {
 }
 
 #[test]
+fn run_report_cycles_handles_buffered_control_message_before_report() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let sent_ping_results = Rc::new(RefCell::new(Vec::new()));
+    let inbound =
+        br#"{"message":"ping","ping_task_id":7,"ping_type":"tcp","ping_target":"1.1.1.1:443"}"#
+            .to_vec();
+    let mut http = FakeHttp::new(events.clone());
+    let mut websocket = FakeWebSocketTransport::new(events.clone(), Some(inbound))
+        .with_sent_ping_results(sent_ping_results.clone());
+    let mut handler = RecordingHandler::default();
+    let mut delay = RecordingDelay::new(events.clone());
+
+    run_report_cycles_with_ping_delay(
+        &test_config(),
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(11.0)),
+        &FixedPingExecutor::new(25),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        &mut delay,
+        1,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
+            "send_ping_result",
+            "send_report"
+        ]
+    );
+    assert_eq!(sent_ping_results.borrow()[0].task_id, 7);
+    assert!(handler.messages.is_empty());
+}
+
+#[test]
 fn run_report_cycles_executes_ping_message_and_sends_result() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let sent_ping_results = Rc::new(RefCell::new(Vec::new()));
@@ -491,8 +530,8 @@ fn run_report_cycles_executes_ping_message_and_sends_result() {
         [
             "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
             "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
-            "send_report",
-            "send_ping_result"
+            "send_ping_result",
+            "send_report"
         ]
     );
     assert_eq!(sent_ping_results.borrow()[0].task_id, 7);

@@ -38,6 +38,9 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
 - Terminal control messages open `/api/clients/terminal?token=...&id=...`,
   create a Linux PTY, support input and resize messages, and send terminal
   output back over WebSocket.
+- The report loop drains buffered backend control messages at the start of each
+  cycle and again after a successful report send, so queued exec, ping, and
+  terminal requests do not have to wait behind the next report payload.
 - Cloudflare Access headers are supported for basic info, report WebSocket,
   terminal WebSocket, and task result upload.
 
@@ -69,10 +72,12 @@ dynamic smoke produces logs:
 1. WebSocket read loop responsiveness
 
    The Go agent reads backend control messages in a dedicated goroutine while
-   reports are sent by ticker. The Rust agent drains available control messages
-   after each successful report send. With normal low intervals this should be
-   acceptable, but exec, ping, or terminal requests may be delayed until the next
-   report cycle and may not be processed while report sends are failing.
+   reports are sent by ticker. The Rust agent now drains buffered control
+   messages both before and after report sends, which removes the most visible
+   "queued behind report" delay for messages already waiting on the socket. It
+   is still not a dedicated read goroutine, so live smoke should verify that
+   exec, ping, and terminal requests feel responsive with the production report
+   interval and during reconnect or send-failure periods.
 
 2. IDN endpoint handling
 

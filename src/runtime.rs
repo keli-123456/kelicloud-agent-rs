@@ -316,22 +316,16 @@ where
 
         let mut disconnect = false;
         if let Some(active_socket) = socket.as_mut() {
-            let report = report_generator.generate();
-            if active_socket.send_report(&report).is_err() {
+            if drain_backend_messages_for_cycle(active_socket, handler, ping_executor)? {
                 disconnect = true;
             } else {
-                loop {
-                    match active_socket.read_message() {
-                        Ok(Some(bytes)) => {
-                            process_backend_message(active_socket, handler, ping_executor, &bytes)?
-                        }
-                        Ok(None) => break,
-                        Err(_) => {
-                            disconnect = true;
-                            break;
-                        }
-                    }
+                let report = report_generator.generate();
+                if active_socket.send_report(&report).is_err() {
+                    disconnect = true;
+                } else if drain_backend_messages_for_cycle(active_socket, handler, ping_executor)? {
+                    disconnect = true;
                 }
+
                 if !disconnect && (cycle + 1) % heartbeat_every == 0 {
                     if active_socket.send_ping().is_err() {
                         disconnect = true;
@@ -350,6 +344,25 @@ where
     }
 
     Ok(())
+}
+
+fn drain_backend_messages_for_cycle<S, C, P>(
+    socket: &mut S,
+    handler: &mut C,
+    ping_executor: &P,
+) -> Result<bool, RuntimeError>
+where
+    S: ReportSocket,
+    C: ControlMessageHandler,
+    P: PingExecutor,
+{
+    loop {
+        match socket.read_message() {
+            Ok(Some(bytes)) => process_backend_message(socket, handler, ping_executor, &bytes)?,
+            Ok(None) => return Ok(false),
+            Err(_) => return Ok(true),
+        }
+    }
 }
 
 pub fn upload_basic_info_with_legacy_retry<H>(
