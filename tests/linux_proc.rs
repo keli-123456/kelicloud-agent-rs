@@ -6,7 +6,7 @@ use kelicloud_agent_rs::linux_proc::{
     cpu_usage_percent_from_proc_stat_samples, detect_container_from_cgroup,
     detect_container_from_markers, fnos_os_name_from_markers, go_compatible_disk,
     go_compatible_ram, go_compatible_ram_include_cache, go_compatible_ram_raw_used,
-    go_compatible_swap, kernel_version_from_uname_output, linux_supported,
+    go_compatible_swap, kernel_version_from_uname_output, linux_supported, marker_file_exists_at,
     memory_selection_from_meminfo_with_modes, memory_values_from_meminfo_with_modes,
     network_speed_from_samples, nic_ip_addresses_from_ip_addr_show_output, normalize_dns_server,
     nvidia_smi_command_path, parse_amd_rocm_smi_json, parse_cpuinfo_name,
@@ -695,6 +695,22 @@ fn detect_container_from_markers_prefers_runtime_for_containerenv_like_go_agent(
         detect_container_from_markers(false, false, true, None).as_deref(),
         Some("container")
     );
+}
+
+#[test]
+fn marker_file_exists_at_matches_go_agent_non_directory_markers() {
+    let root = temp_proc_root("container-marker");
+    let marker_file = root.join(".dockerenv");
+    let marker_dir = root.join(".containerenv");
+
+    fs::write(&marker_file, "").unwrap();
+    fs::create_dir_all(&marker_dir).unwrap();
+
+    assert!(marker_file_exists_at(&marker_file));
+    assert!(!marker_file_exists_at(&marker_dir));
+    assert!(!marker_file_exists_at(root.join("missing")));
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

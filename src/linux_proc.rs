@@ -714,6 +714,12 @@ pub fn detect_container_from_markers(
         .or_else(|| has_agent_container_marker.then(|| "container".to_string()))
 }
 
+pub fn marker_file_exists_at<P: AsRef<Path>>(path: P) -> bool {
+    fs::metadata(path)
+        .map(|metadata| !metadata.is_dir())
+        .unwrap_or(false)
+}
+
 pub fn virtualization_from_cpuid_parts(has_hypervisor: bool, vendor: &str) -> String {
     if !has_hypervisor {
         return "none".to_string();
@@ -2081,10 +2087,10 @@ pub fn detect_virtualization() -> String {
 
     let cgroup_contents = fs::read_to_string("/proc/self/cgroup").ok();
     if let Some(container) = detect_container_from_markers(
-        fs::metadata("/.dockerenv").is_ok(),
-        fs::metadata("/run/.containerenv").is_ok(),
-        fs::metadata("/.kelicloud-agent-container").is_ok()
-            || fs::metadata("/.komari-agent-container").is_ok(),
+        marker_file_exists_at("/.dockerenv"),
+        marker_file_exists_at("/run/.containerenv"),
+        marker_file_exists_at("/.kelicloud-agent-container")
+            || marker_file_exists_at("/.komari-agent-container"),
         cgroup_contents.as_deref(),
     ) {
         return container;
