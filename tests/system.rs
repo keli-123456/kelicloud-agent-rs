@@ -3,8 +3,9 @@ use kelicloud_agent_rs::linux_proc::{GpuMetric, IpAddresses, ProcMetricErrors};
 use kelicloud_agent_rs::report::{GpuReport, ReportGenerator};
 use kelicloud_agent_rs::system::{
     append_report_error, go_compatible_cpu_usage, gpu_report_from_detailed_result,
-    gpu_report_from_metrics, proc_metric_errors_to_message, select_basic_info_ip_addresses,
-    SystemMetricsOptions, SystemReportGenerator, SystemSnapshot, SystemSnapshotCollector,
+    gpu_report_from_detailed_results, gpu_report_from_metrics, proc_metric_errors_to_message,
+    select_basic_info_ip_addresses, SystemMetricsOptions, SystemReportGenerator, SystemSnapshot,
+    SystemSnapshotCollector,
 };
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -376,6 +377,30 @@ fn gpu_report_from_detailed_result_falls_back_to_models_and_message_on_error() {
         report.unwrap().models.unwrap(),
         vec!["NVIDIA GeForce RTX 3090".to_string()]
     );
+}
+
+#[test]
+fn gpu_report_from_detailed_results_uses_go_agent_model_fallback_on_error() {
+    let (report, message) = gpu_report_from_detailed_results(
+        Err("nvidia-smi detailed query failed".to_string()),
+        Ok(vec![
+            "NVIDIA A100-SXM4-40GB".to_string(),
+            "NVIDIA L4".to_string(),
+        ]),
+    );
+
+    assert_eq!(
+        message,
+        "failed to get detailed GPU info: nvidia-smi detailed query failed\n"
+    );
+    let report = report.unwrap();
+    assert_eq!(
+        report.models.unwrap(),
+        vec!["NVIDIA A100-SXM4-40GB".to_string(), "NVIDIA L4".to_string()]
+    );
+    assert!(report.count.is_none());
+    assert!(report.average_usage.is_none());
+    assert!(report.detailed_info.is_none());
 }
 
 #[test]

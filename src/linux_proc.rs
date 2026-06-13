@@ -1435,6 +1435,55 @@ pub fn collect_detailed_gpu_metrics() -> Vec<GpuMetric> {
     collect_detailed_gpu_metrics_result().unwrap_or_default()
 }
 
+pub fn collect_detailed_gpu_models_result() -> Result<Vec<String>, String> {
+    if !linux_supported() {
+        return Err("detailed GPU monitoring not supported on this platform".to_string());
+    }
+
+    let mut errors = Vec::new();
+
+    if let Ok(output) = Command::new("nvidia-smi").args(["-q", "-x"]).output() {
+        if output.status.success() {
+            let models = parse_nvidia_smi_xml(&String::from_utf8_lossy(&output.stdout))
+                .into_iter()
+                .map(|metric| metric.name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>();
+            if !models.is_empty() {
+                return Ok(models);
+            }
+            errors.push("nvidia-smi returned no GPU models".to_string());
+        } else {
+            errors.push(command_output_error("nvidia-smi", &output));
+        }
+    } else {
+        errors.push("nvidia-smi not found".to_string());
+    }
+
+    if let Ok(output) = Command::new("rocm-smi")
+        .args(["--showallinfo", "--json"])
+        .output()
+    {
+        if output.status.success() {
+            let models = parse_amd_rocm_smi_json(&String::from_utf8_lossy(&output.stdout))
+                .into_iter()
+                .map(|metric| metric.name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>();
+            if !models.is_empty() {
+                return Ok(models);
+            }
+            errors.push("rocm-smi returned no GPU models".to_string());
+        } else {
+            errors.push(command_output_error("rocm-smi", &output));
+        }
+    } else {
+        errors.push("rocm-smi not found".to_string());
+    }
+
+    Err(errors.join("; "))
+}
+
 fn command_output_error(command: &str, output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if stderr.is_empty() {

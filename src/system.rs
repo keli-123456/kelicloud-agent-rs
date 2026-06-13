@@ -167,6 +167,38 @@ pub fn gpu_report_from_detailed_result(
     }
 }
 
+pub fn gpu_report_from_detailed_results(
+    result: Result<Vec<GpuMetric>, String>,
+    fallback_models: Result<Vec<String>, String>,
+) -> (Option<GpuReport>, String) {
+    match result {
+        Ok(metrics) => (gpu_report_from_metrics("", metrics), String::new()),
+        Err(error) => {
+            let mut message = String::new();
+            append_report_error(&mut message, "detailed GPU info", error);
+            let models = fallback_models
+                .unwrap_or_default()
+                .into_iter()
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty())
+                .collect::<Vec<_>>();
+            if models.is_empty() {
+                return (None, message);
+            }
+
+            (
+                Some(GpuReport {
+                    models: Some(models),
+                    count: None,
+                    average_usage: None,
+                    detailed_info: None,
+                }),
+                message,
+            )
+        }
+    }
+}
+
 pub fn proc_metric_errors_to_message(errors: &ProcMetricErrors) -> String {
     let mut message = String::new();
 
@@ -451,10 +483,13 @@ impl SystemSnapshotCollector {
         let virtualization = crate::linux_proc::detect_virtualization();
         let gpu_name = crate::linux_proc::collect_gpu_name();
         let (gpu_report, gpu_message) = if self.metrics.enable_gpu {
-            gpu_report_from_detailed_result(
-                &gpu_name,
-                crate::linux_proc::collect_detailed_gpu_metrics_result(),
-            )
+            let detailed_result = crate::linux_proc::collect_detailed_gpu_metrics_result();
+            let fallback_models = if detailed_result.is_err() {
+                crate::linux_proc::collect_detailed_gpu_models_result()
+            } else {
+                Ok(Vec::new())
+            };
+            gpu_report_from_detailed_results(detailed_result, fallback_models)
         } else {
             (None, String::new())
         };
