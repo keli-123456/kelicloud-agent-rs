@@ -8,8 +8,9 @@ use kelicloud_agent_rs::linux_proc::{
     parse_ip_addr_show_output, parse_ip_address_list, parse_loadavg, parse_lspci_gpu_name,
     parse_meminfo, parse_net_dev, parse_net_dev_interfaces, parse_net_dev_with_filter,
     parse_net_static_total_between, parse_nvidia_smi_xml, parse_os_release_pretty_name,
-    parse_public_ipv4_response, parse_public_ipv6_response, parse_synology_os_name, parse_uptime,
-    proc_metrics_from_parts, proxmox_os_name_from_parts, reset_date_ymd, reset_timestamp_for_day,
+    parse_public_ipv4_response, parse_public_ipv6_response, parse_soc_gpu_model,
+    parse_synology_os_name, parse_uptime, proc_metrics_from_parts, proxmox_os_name_from_parts,
+    reset_date_ymd, reset_timestamp_for_day, sysfs_drm_gpu_name_from_driver,
     virtualization_from_cpuid_parts, DiskMount, NetworkFilter, NetworkTotals,
 };
 use std::fs;
@@ -311,6 +312,34 @@ fn parse_lspci_gpu_name_prefers_real_gpu_and_excludes_virtual_display() {
     assert_eq!(
         parse_lspci_gpu_name(contents).as_deref(),
         Some("NVIDIA Corporation GA102 [GeForce RTX 3090]")
+    );
+}
+
+#[test]
+fn sysfs_drm_gpu_name_matches_go_agent_arm_soc_and_driver_fallbacks() {
+    assert_eq!(
+        parse_soc_gpu_model("msm", b"qcom,adreno-750.1\0qcom,adreno").as_deref(),
+        Some("Qualcomm Adreno 750")
+    );
+    assert_eq!(
+        parse_soc_gpu_model("panfrost", b"rockchip,mali-g610").as_deref(),
+        Some("ARM Mali G610")
+    );
+    assert_eq!(
+        parse_soc_gpu_model("vc4", b"brcm,bcm2711-vc5").as_deref(),
+        Some("Broadcom VideoCore VI (Pi 4)")
+    );
+    assert_eq!(
+        sysfs_drm_gpu_name_from_driver("virtio_gpu", None).as_deref(),
+        None
+    );
+    assert_eq!(
+        sysfs_drm_gpu_name_from_driver("i915", None).as_deref(),
+        Some("Intel Integrated Graphics")
+    );
+    assert_eq!(
+        sysfs_drm_gpu_name_from_driver("unknown_drm", None).as_deref(),
+        Some("Direct Render Manager unknown_drm")
     );
 }
 

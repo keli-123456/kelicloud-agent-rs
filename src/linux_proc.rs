@@ -535,6 +535,95 @@ pub fn parse_lspci_gpu_name(contents: &str) -> Option<String> {
     None
 }
 
+pub fn sysfs_drm_gpu_name_from_driver(
+    driver_name: &str,
+    compatible: Option<&[u8]>,
+) -> Option<String> {
+    let driver_name = driver_name.trim();
+    if driver_name.is_empty() || is_excluded_drm_driver(driver_name) {
+        return None;
+    }
+
+    if let Some(compatible) = compatible {
+        if let Some(model) = parse_soc_gpu_model(driver_name, compatible) {
+            return Some(model);
+        }
+    }
+
+    match driver_name {
+        "vc4" | "vc4-drm" => Some("Broadcom VideoCore IV/VI (Raspberry Pi)".to_string()),
+        "v3d" | "v3d-drm" => Some("Broadcom V3D (Raspberry Pi 4/5)".to_string()),
+        "msm" | "msm_drm" => Some("Qualcomm Adreno (Unknown Model)".to_string()),
+        "panfrost" => Some("ARM Mali (Panfrost)".to_string()),
+        "lima" => Some("ARM Mali (Lima)".to_string()),
+        "sun4i-drm" | "sunxi-drm" => Some("Allwinner Display Engine".to_string()),
+        "tegra" => Some("NVIDIA Tegra".to_string()),
+        "ast" => Some("ASPEED Technology, Inc. ASPEED Graphics Family".to_string()),
+        "i915" | "i915-drm" => Some("Intel Integrated Graphics".to_string()),
+        "mgag200" => Some("Matrox G200 Series".to_string()),
+        other => Some(format!("Direct Render Manager {other}")),
+    }
+}
+
+pub fn parse_soc_gpu_model(driver_name: &str, raw_bytes: &[u8]) -> Option<String> {
+    let content = raw_bytes
+        .iter()
+        .map(|byte| if *byte == 0 { b' ' } else { *byte })
+        .collect::<Vec<_>>();
+    let lower = String::from_utf8_lossy(&content).to_ascii_lowercase();
+
+    if driver_name == "msm" || lower.contains("adreno") {
+        if let Some(model) = first_token_after_marker(&lower, "adreno-", true)
+            .or_else(|| first_token_after_marker(&lower, "adreno_", true))
+        {
+            return Some(format!("Qualcomm Adreno {model}"));
+        }
+        return Some("Qualcomm Adreno".to_string());
+    }
+
+    if driver_name == "panfrost" || driver_name == "lima" || lower.contains("mali") {
+        if let Some(model) = first_token_after_marker(&lower, "mali-", false)
+            .or_else(|| first_token_after_marker(&lower, "mali_", false))
+        {
+            return Some(format!("ARM Mali {}", model.to_ascii_uppercase()));
+        }
+        return Some("ARM Mali".to_string());
+    }
+
+    if driver_name == "vc4" || driver_name == "vc4-drm" || driver_name == "v3d" {
+        if lower.contains("bcm2712") {
+            return Some("Broadcom VideoCore VII (Pi 5)".to_string());
+        }
+        if lower.contains("bcm2711") {
+            return Some("Broadcom VideoCore VI (Pi 4)".to_string());
+        }
+        if lower.contains("bcm2837") || lower.contains("bcm2835") {
+            return Some("Broadcom VideoCore IV".to_string());
+        }
+    }
+
+    if lower.contains("allwinner") || lower.contains("sun50i") || lower.contains("sun8i") {
+        if let Some(model) = allwinner_soc_model(&lower) {
+            return Some(format!("Allwinner {model}"));
+        }
+        return Some("Allwinner Display Engine".to_string());
+    }
+
+    if driver_name == "tegra" {
+        if lower.contains("tegra194") {
+            return Some("NVIDIA Tegra Xavier".to_string());
+        }
+        if lower.contains("tegra234") {
+            return Some("NVIDIA Orin".to_string());
+        }
+        if lower.contains("tegra210") {
+            return Some("NVIDIA Tegra X1".to_string());
+        }
+    }
+
+    None
+}
+
 pub fn parse_nvidia_smi_xml(contents: &str) -> Vec<GpuMetric> {
     contents
         .split("<gpu>")
@@ -1224,12 +1313,16 @@ pub fn collect_gpu_name() -> String {
         return "None".to_string();
     }
 
-    Command::new("lspci")
+    if let Some(name) = Command::new("lspci")
         .output()
         .ok()
         .filter(|output| output.status.success())
         .and_then(|output| parse_lspci_gpu_name(&String::from_utf8_lossy(&output.stdout)))
-        .unwrap_or_else(|| "None".to_string())
+    {
+        return name;
+    }
+
+    collect_sysfs_drm_gpu_name().unwrap_or_else(|| "None".to_string())
 }
 
 pub fn collect_detailed_gpu_metrics_result() -> Result<Vec<GpuMetric>, String> {
@@ -1423,6 +1516,88 @@ fn cpuid_vendor_string(ebx: u32, ecx: u32, edx: u32) -> String {
         .trim_matches('\0')
         .trim()
         .to_string()
+}
+
+fn collect_sysfs_drm_gpu_name() -> Option<String> {
+    let entries = fs::read_dir("/sys/class/drm").ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("card") {
+            continue;
+        }
+
+        let path = entry.path();
+        let driver_name = fs::read_link(path.join("device").join("driver"))
+            .ok()
+            .and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            });
+        let Some(driver_name) = driver_name else {
+            continue;
+        };
+
+        let compatible = fs::read(path.join("device").join("of_node").join("compatible")).ok();
+        if let Some(model) = sysfs_drm_gpu_name_from_driver(&driver_name, compatible.as_deref()) {
+            return Some(model);
+        }
+    }
+
+    fs::read_to_string("/sys/firmware/devicetree/base/model")
+        .ok()
+        .filter(|model| model.contains("Raspberry Pi"))
+        .map(|_| "Broadcom VideoCore (Integrated)".to_string())
+}
+
+fn is_excluded_drm_driver(driver_name: &str) -> bool {
+    const EXCLUDED: &[&str] = &[
+        "virtio-pci",
+        "virtio_gpu",
+        "bochs-drm",
+        "qxl",
+        "vmwgfx",
+        "cirrus",
+        "vboxvideo",
+        "hyperv_fb",
+        "simpledrm",
+        "simplefb",
+        "cirrus-qemu",
+    ];
+    EXCLUDED.iter().any(|driver| driver_name == *driver)
+}
+
+fn first_token_after_marker(value: &str, marker: &str, digits_only: bool) -> Option<String> {
+    let start = value.find(marker)? + marker.len();
+    let token = value[start..]
+        .chars()
+        .take_while(|ch| {
+            if digits_only {
+                ch.is_ascii_digit()
+            } else {
+                ch.is_ascii_alphanumeric()
+            }
+        })
+        .collect::<String>();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
+fn allwinner_soc_model(value: &str) -> Option<String> {
+    let start = value.find("sun")?;
+    let suffix = &value[start..];
+    let dash = suffix.find('-')? + 1;
+    let model = suffix[dash..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>();
+    if model.is_empty() {
+        None
+    } else {
+        Some(model.to_ascii_uppercase())
+    }
 }
 
 fn count_tcp_udp_sockets_in_proc_root(proc_root: &Path) -> Result<(i32, i32), String> {
