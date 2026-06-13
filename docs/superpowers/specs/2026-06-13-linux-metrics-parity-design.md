@@ -26,7 +26,7 @@ This milestone does not cover GPU detailed metrics, vnstat month rotation, task 
   `MemTotal - (MemFree + Cached + SReclaimable + Buffers) + Shmem`, clamped to non-negative values.
 - Swap used formula matches Go `Swap`:
   `SwapTotal - SwapFree - SwapCached`, with the same underflow fallback to `SwapTotal - SwapFree`.
-- CPU usage is clamped to at least `0.01` in the report, matching the Go report behavior.
+- CPU usage is clamped to at least `0.001` in the report, matching the Go report behavior.
 - Disk filtering keeps `/`, excludes temporary/container/network pseudo filesystems, excludes `/dev/loop*`, and deduplicates ZFS datasets by pool.
 - Virtualization detection prefers `systemd-detect-virt`, then container markers/cgroup heuristics, then `none`.
 

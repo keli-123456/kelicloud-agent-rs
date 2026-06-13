@@ -195,7 +195,7 @@ fn system_snapshot_maps_to_basic_info() {
 
     assert_eq!(basic_info.cpu_name, "AMD EPYC");
     assert_eq!(basic_info.cpu_cores, 4);
-    assert_eq!(basic_info.arch, "x86_64");
+    assert_eq!(basic_info.arch, "amd64");
     assert_eq!(basic_info.os, "linux");
     assert_eq!(basic_info.kernel_version, "6.8.0");
     assert_eq!(basic_info.ipv4, "10.0.0.5");

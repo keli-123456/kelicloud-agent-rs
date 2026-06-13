@@ -308,7 +308,7 @@ impl SystemSnapshot {
         BasicInfo {
             cpu_name: self.cpu_name.clone(),
             cpu_cores: self.cpu_cores,
-            arch: self.arch.clone(),
+            arch: go_runtime_arch_name(&self.arch).to_string(),
             os: self.os.clone(),
             kernel_version: self.kernel_version.clone(),
             ipv4: self.ipv4.clone(),
