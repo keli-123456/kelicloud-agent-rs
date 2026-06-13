@@ -2721,11 +2721,22 @@ fn extract_lspci_device_name(line: &str) -> Option<String> {
 fn is_excluded_gpu_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.starts_with("1111")
-        || lower.contains("cirrus logic")
+        || is_go_excluded_cirrus_gpu_name(&lower)
         || lower.contains("virtio")
         || lower.contains("vmware")
         || lower.contains("qxl")
         || lower.contains("hyper-v")
+}
+
+fn is_go_excluded_cirrus_gpu_name(lower_name: &str) -> bool {
+    let Some(rest) = lower_name.strip_prefix("cirrus logic ") else {
+        return false;
+    };
+
+    rest.starts_with("gd 5")
+        || rest.starts_with("clgd 5")
+        || rest.starts_with("cl-gd 5")
+        || rest.starts_with("cl gd 5")
 }
 
 fn find_go_ipv4_regex_match(contents: &str) -> Option<&str> {

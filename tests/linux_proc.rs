@@ -691,6 +691,23 @@ fn parse_lspci_gpu_name_prefers_real_gpu_and_excludes_virtual_display() {
 }
 
 #[test]
+fn parse_lspci_gpu_name_keeps_non_gd5_cirrus_devices_like_go_agent() {
+    let contents = "00:02.0 VGA compatible controller: Cirrus Logic Laguna 5465\n";
+
+    assert_eq!(
+        parse_lspci_gpu_name(contents).as_deref(),
+        Some("Cirrus Logic Laguna 5465")
+    );
+}
+
+#[test]
+fn parse_lspci_gpu_name_excludes_clgd5_cirrus_virtual_display_like_go_agent() {
+    let contents = "00:02.0 VGA compatible controller: Cirrus Logic CLGD 5446\n";
+
+    assert_eq!(parse_lspci_gpu_name(contents).as_deref(), None);
+}
+
+#[test]
 fn parse_lspci_gpu_name_uses_go_agent_line_order_for_priority_vendors() {
     let contents = r#"
 00:02.0 VGA compatible controller: Intel Corporation UHD Graphics 770
