@@ -1,0 +1,186 @@
+name: Real Host Canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner_labels:
+        description: 'JSON array for the self-hosted Linux canary runner labels.'
+        required: true
+        default: '["self-hosted","Linux","kelicloud-canary"]'
+        type: string
+      endpoint:
+        description: "kelicloud panel endpoint. Falls back to KELICLOUD_CANARY_ENDPOINT secret when empty."
+        required: false
+        type: string
+      install_version:
+        description: "Rust agent release tag to pin or upgrade, for example v0.1.0. Empty means latest."
+        required: false
+        default: "v0.1.0"
+        type: string
+      duration:
+        description: "Observation window in seconds for panel exec/ping/WebSSH checks."
+        required: true
+        default: "180"
+        type: string
+      service_wait:
+        description: "Seconds to wait for Rust or rollback services to become active."
+        required: true
+        default: "60"
+        type: string
+      github_proxy:
+        description: "Optional GitHub download proxy passed to the installer."
+        required: false
+        type: string
+      insecure:
+        description: "Pass --ignore-unsafe-cert to the Rust installer."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      keep_installed:
+        description: "Leave the Rust agent installed after canary observation."
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      require_rollback:
+        description: "Fail unless KELICLOUD_CANARY_ROLLBACK_COMMAND is set and rollback is verified."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      rollback_service_name:
+        description: "Go-agent service expected after rollback."
+        required: false
+        default: "kelicloud-agent"
+        type: string
+      skip_rollback_service_check:
+        description: "Run rollback command without checking rollback service status."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-host-canary-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Real Linux Host Canary
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 30
+    env:
+      CANARY_ENDPOINT: ${{ inputs.endpoint != '' && inputs.endpoint || secrets.KELICLOUD_CANARY_ENDPOINT }}
+      CANARY_AUTO_DISCOVERY_KEY: ${{ secrets.KELICLOUD_CANARY_AUTO_DISCOVERY_KEY }}
+      CANARY_ROLLBACK_COMMAND: ${{ secrets.KELICLOUD_CANARY_ROLLBACK_COMMAND }}
+      CANARY_INSTALL_VERSION: ${{ inputs.install_version }}
+      CANARY_DURATION: ${{ inputs.duration }}
+      CANARY_SERVICE_WAIT: ${{ inputs.service_wait }}
+      CANARY_GITHUB_PROXY: ${{ inputs.github_proxy }}
+      CANARY_INSECURE: ${{ inputs.insecure }}
+      CANARY_KEEP_INSTALLED: ${{ inputs.keep_installed }}
+      CANARY_REQUIRE_ROLLBACK: ${{ inputs.require_rollback }}
+      CANARY_ROLLBACK_SERVICE_NAME: ${{ inputs.rollback_service_name }}
+      CANARY_SKIP_ROLLBACK_SERVICE_CHECK: ${{ inputs.skip_rollback_service_check }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate canary configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p canary-logs
+          if [ -z "${CANARY_ENDPOINT}" ]; then
+            echo "CANARY_ENDPOINT is required. Set endpoint input or KELICLOUD_CANARY_ENDPOINT secret."
+            exit 1
+          fi
+          if [ -z "${CANARY_AUTO_DISCOVERY_KEY}" ]; then
+            echo "KELICLOUD_CANARY_AUTO_DISCOVERY_KEY secret is required."
+            exit 1
+          fi
+          if [ "${CANARY_REQUIRE_ROLLBACK}" = "true" ] && [ "${CANARY_KEEP_INSTALLED}" = "true" ]; then
+            echo "require_rollback=true cannot be combined with keep_installed=true."
+            exit 1
+          fi
+          if [ "${CANARY_REQUIRE_ROLLBACK}" = "true" ] && [ -z "${CANARY_ROLLBACK_COMMAND}" ]; then
+            echo "KELICLOUD_CANARY_ROLLBACK_COMMAND secret is required when require_rollback=true."
+            exit 1
+          fi
+          echo "::add-mask::${CANARY_AUTO_DISCOVERY_KEY}"
+          if [ -n "${CANARY_ROLLBACK_COMMAND}" ]; then
+            echo "::add-mask::${CANARY_ROLLBACK_COMMAND}"
+          fi
+
+      - name: Run real host canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --endpoint "${CANARY_ENDPOINT}"
+            --auto-discovery "${CANARY_AUTO_DISCOVERY_KEY}"
+            --duration "${CANARY_DURATION}"
+            --service-wait "${CANARY_SERVICE_WAIT}"
+          )
+          if [ -n "${CANARY_INSTALL_VERSION}" ]; then
+            args+=(--install-version "${CANARY_INSTALL_VERSION}")
+          fi
+          if [ -n "${CANARY_GITHUB_PROXY}" ]; then
+            args+=(--github-proxy "${CANARY_GITHUB_PROXY}")
+          fi
+          if [ "${CANARY_INSECURE}" = "true" ]; then
+            args+=(--insecure)
+          fi
+          if [ -n "${CANARY_ROLLBACK_SERVICE_NAME}" ]; then
+            args+=(--rollback-service-name "${CANARY_ROLLBACK_SERVICE_NAME}")
+          fi
+          if [ "${CANARY_SKIP_ROLLBACK_SERVICE_CHECK}" = "true" ]; then
+            args+=(--skip-rollback-service-check)
+          fi
+          if [ "${CANARY_KEEP_INSTALLED}" = "true" ]; then
+            args+=(--keep-installed)
+          elif [ -n "${CANARY_ROLLBACK_COMMAND}" ]; then
+            args+=(--rollback-command "${CANARY_ROLLBACK_COMMAND}")
+          fi
+
+          sudo bash scripts/canary-install.sh "${args[@]}" 2>&1 | tee canary-logs/real-host-canary.log
+
+      - name: Capture service status
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          {
+            echo "## kelicloud-agent-rs status"
+            systemctl status kelicloud-agent-rs.service --no-pager
+            echo
+            echo "## kelicloud-agent-rs journal"
+            journalctl -u kelicloud-agent-rs -n 120 --no-pager
+            echo
+            echo "## rollback service status"
+            if [ -n "${CANARY_ROLLBACK_SERVICE_NAME}" ]; then
+              systemctl status "${CANARY_ROLLBACK_SERVICE_NAME}.service" --no-pager
+              journalctl -u "${CANARY_ROLLBACK_SERVICE_NAME}" -n 120 --no-pager
+            fi
+          } > canary-logs/service-status.log 2>&1
+
+      - name: Upload canary logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kelicloud-agent-rs-real-host-canary
+          path: canary-logs/*
+          if-no-files-found: ignore

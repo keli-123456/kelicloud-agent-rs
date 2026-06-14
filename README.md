@@ -172,6 +172,13 @@ After running the rollback command, the canary waits for
 `kelicloud-agent.service` to become active. If the panel command uses a custom
 Go-agent service name, pass `--rollback-service-name <name>`.
 
+You can also run the same real-host canary from GitHub Actions on a self-hosted
+Linux runner. Label the runner with `kelicloud-canary`, add
+`KELICLOUD_CANARY_AUTO_DISCOVERY_KEY`, optionally add
+`KELICLOUD_CANARY_ENDPOINT` and `KELICLOUD_CANARY_ROLLBACK_COMMAND`, then run
+the `Real Host Canary` workflow manually. The workflow uploads
+`kelicloud-agent-rs-real-host-canary` logs for the release evidence record.
+
 ## Live Smoke Test
 
 For a cross-platform data-plane check against a real backend, use the backend

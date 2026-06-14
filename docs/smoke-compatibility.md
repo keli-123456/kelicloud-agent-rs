@@ -12,12 +12,18 @@ rotation with post-recovery control-plane actions.
 
 - Cross-platform backend data-plane: `cargo run --locked --bin backend-protocol-smoke`.
 - Local Linux: `scripts/smoke-live.sh --mode live --duration 120`.
+- Real Linux host install/rollback: `scripts/canary-install.sh`.
 - Local real backend Linux: `scripts/smoke-local-backend.sh`.
 - GitHub Actions: manually run the `Smoke` workflow.
+- GitHub Actions real host canary: manually run the `Real Host Canary` workflow
+  on a self-hosted Linux runner labelled `kelicloud-canary`.
 - GitHub Actions real backend: the `Local Backend Smoke` workflow runs on pushes
   to `main` and can also be run manually.
 - Required secret: `KELICLOUD_SMOKE_TOKEN`.
 - Alternative required secret: `KELICLOUD_SMOKE_AUTO_DISCOVERY_KEY`.
+- Real-host canary required secret: `KELICLOUD_CANARY_AUTO_DISCOVERY_KEY`.
+- Real-host canary optional secrets: `KELICLOUD_CANARY_ENDPOINT`,
+  `KELICLOUD_CANARY_ROLLBACK_COMMAND`.
 - Optional secrets: `KELICLOUD_SMOKE_ENDPOINT`,
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_ID`,
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_SECRET`.
@@ -135,6 +141,7 @@ Real-host canary evidence template:
 - Rust uninstall result:
 - Go-agent rollback command result:
 - Go-agent rollback service name/status:
+- GitHub Actions artifact, if used: `kelicloud-agent-rs-real-host-canary`
 - Remaining gaps or production rollout notes:
 
 ## Static Parity Evidence

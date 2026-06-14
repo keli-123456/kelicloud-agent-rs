@@ -57,3 +57,34 @@ fn local_backend_smoke_workflow_path() -> PathBuf {
         .join("workflows")
         .join("local-backend-smoke.yml")
 }
+
+#[test]
+fn real_host_canary_workflow_runs_on_self_hosted_runner() {
+    let workflow = std::fs::read_to_string(real_host_canary_workflow_path()).unwrap();
+
+    assert!(workflow.contains("name: Real Host Canary"));
+    assert!(workflow.contains("workflow_dispatch:"));
+    assert!(workflow.contains("runner_labels:"));
+    assert!(workflow.contains("[\"self-hosted\",\"Linux\",\"kelicloud-canary\"]"));
+    assert!(workflow.contains("runs-on: ${{ fromJSON(inputs.runner_labels) }}"));
+    assert!(workflow.contains("KELICLOUD_CANARY_ENDPOINT"));
+    assert!(workflow.contains("KELICLOUD_CANARY_AUTO_DISCOVERY_KEY"));
+    assert!(workflow.contains("KELICLOUD_CANARY_ROLLBACK_COMMAND"));
+    assert!(workflow.contains("require_rollback:"));
+    assert!(workflow.contains("keep_installed:"));
+    assert!(workflow.contains("rollback_service_name:"));
+    assert!(workflow.contains("::add-mask::${CANARY_AUTO_DISCOVERY_KEY}"));
+    assert!(workflow.contains("::add-mask::${CANARY_ROLLBACK_COMMAND}"));
+    assert!(workflow.contains("sudo bash scripts/canary-install.sh"));
+    assert!(workflow.contains("--rollback-command \"${CANARY_ROLLBACK_COMMAND}\""));
+    assert!(workflow.contains("canary-logs/real-host-canary.log"));
+    assert!(workflow.contains("actions/upload-artifact@v4"));
+    assert!(workflow.contains("kelicloud-agent-rs-real-host-canary"));
+}
+
+fn real_host_canary_workflow_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".github")
+        .join("workflows")
+        .join("real-host-canary.yml")
+}
