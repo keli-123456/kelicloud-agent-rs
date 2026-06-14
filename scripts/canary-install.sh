@@ -16,6 +16,8 @@ DURATION_SECONDS="90"
 SERVICE_WAIT_SECONDS="45"
 KEEP_INSTALLED="false"
 ROLLBACK_COMMAND=""
+ROLLBACK_SERVICE_NAME="${KELICLOUD_ROLLBACK_SERVICE_NAME:-kelicloud-agent}"
+SKIP_ROLLBACK_SERVICE_CHECK="false"
 INSTALLER_PATH=""
 
 usage() {
@@ -38,6 +40,8 @@ Options:
   --service-wait SECONDS         Wait time for systemd active checks, default 45
   --keep-installed               Leave kelicloud-agent-rs installed at the end
   --rollback-command COMMAND     Run this panel-generated Go agent command after Rust uninstall
+  --rollback-service-name NAME   Service expected after rollback, default kelicloud-agent
+  --skip-rollback-service-check  Do not check rollback service status
   --help                         Show this help
 
 This script verifies the release asset name pattern kelicloud-agent-rs-linux-*,
@@ -123,6 +127,15 @@ parse_args() {
                 ROLLBACK_COMMAND="$2"
                 shift 2
                 ;;
+            --rollback-service-name)
+                need_value "$1" "${2:-}"
+                ROLLBACK_SERVICE_NAME="$2"
+                shift 2
+                ;;
+            --skip-rollback-service-check)
+                SKIP_ROLLBACK_SERVICE_CHECK="true"
+                shift
+                ;;
             --help|-h)
                 usage
                 exit 0
@@ -143,6 +156,9 @@ validate_config() {
     [[ "$SERVICE_WAIT_SECONDS" -gt 0 ]] || die "--service-wait must be greater than zero"
     if [[ "$KEEP_INSTALLED" == "true" && -n "$ROLLBACK_COMMAND" ]]; then
         die "--keep-installed cannot be combined with --rollback-command"
+    fi
+    if [[ "$SKIP_ROLLBACK_SERVICE_CHECK" != "true" && -n "$ROLLBACK_COMMAND" && -z "$ROLLBACK_SERVICE_NAME" ]]; then
+        die "--rollback-service-name cannot be empty"
     fi
 }
 
@@ -314,6 +330,27 @@ run_rollback_command() {
     stage "run_rollback_command"
     log "Running the supplied panel-generated rollback command."
     bash -lc "$ROLLBACK_COMMAND"
+    verify_rollback_service
+}
+
+verify_rollback_service() {
+    if [[ "$SKIP_ROLLBACK_SERVICE_CHECK" == "true" ]]; then
+        log "Rollback service check skipped."
+        return
+    fi
+
+    stage "verify_rollback_service"
+    local deadline=$((SECONDS + SERVICE_WAIT_SECONDS))
+    until systemctl is-active --quiet "${ROLLBACK_SERVICE_NAME}.service"; do
+        if (( SECONDS >= deadline )); then
+            log "systemctl is-active ${ROLLBACK_SERVICE_NAME}.service: $(systemctl is-active "${ROLLBACK_SERVICE_NAME}.service" 2>/dev/null || true)"
+            log "journalctl -u ${ROLLBACK_SERVICE_NAME} -n 80 --no-pager"
+            journalctl -u "${ROLLBACK_SERVICE_NAME}" -n 80 --no-pager || true
+            die "rollback service did not become active: ${ROLLBACK_SERVICE_NAME}.service"
+        fi
+        sleep 1
+    done
+    log "Rollback service active: ${ROLLBACK_SERVICE_NAME}.service"
 }
 
 cleanup() {

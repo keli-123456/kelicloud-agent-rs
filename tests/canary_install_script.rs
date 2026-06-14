@@ -10,14 +10,20 @@ fn canary_install_script_documents_real_host_stages() {
         "--auto-discovery KEY",
         "--install-version VERSION",
         "--rollback-command COMMAND",
+        "--rollback-service-name NAME",
+        "--skip-rollback-service-check",
         "install_agent",
         "verify_service",
         "restart_agent",
         "pin_or_upgrade_agent",
         "uninstall_agent",
         "run_rollback_command",
+        "verify_rollback_service",
         "systemctl is-active",
         "journalctl -u kelicloud-agent-rs",
+        "journalctl -u ${ROLLBACK_SERVICE_NAME}",
+        "KELICLOUD_ROLLBACK_SERVICE_NAME",
+        "kelicloud-agent",
         "AGENT_ENDPOINT",
         "AGENT_AUTO_DISCOVERY_KEY",
         "kelicloud-agent-rs-linux",
@@ -53,6 +59,7 @@ fn canary_install_script_has_valid_bash_syntax_and_help() {
     let stdout = String::from_utf8_lossy(&help.stdout);
     assert!(stdout.contains("Real Linux host install canary"));
     assert!(stdout.contains("--rollback-command COMMAND"));
+    assert!(stdout.contains("--rollback-service-name NAME"));
 }
 
 fn canary_script_path() -> PathBuf {

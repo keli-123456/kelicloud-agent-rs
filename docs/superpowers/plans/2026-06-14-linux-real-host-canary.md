@@ -71,14 +71,14 @@ Expected: FAIL because `scripts/canary-install.sh` does not exist yet.
 Create `scripts/canary-install.sh` as a Linux-only Bash script that:
 
 - Requires root, Linux, systemd, `curl`, and a real `systemctl`.
-- Accepts `--endpoint`, `--auto-discovery`, optional `--install-version`, optional `--github-proxy`, optional `--duration`, optional `--keep-installed`, optional `--rollback-command`.
+- Accepts `--endpoint`, `--auto-discovery`, optional `--install-version`, optional `--github-proxy`, optional `--duration`, optional `--keep-installed`, optional `--rollback-command`, optional `--rollback-service-name`, and optional `--skip-rollback-service-check`.
 - Downloads and executes the released Rust installer from `https://raw.githubusercontent.com/keli-123456/kelicloud-agent-rs/refs/heads/main/install.sh`.
 - Verifies `/usr/local/bin/kelicloud-agent-rs`, `/etc/kelicloud-agent-rs/config.env`, and `kelicloud-agent-rs.service`.
 - Prints `kelicloud-agent-rs --version`, `systemctl is-active`, and a redacted config preview.
 - Restarts the service and verifies it becomes active again.
 - If `--install-version` is supplied, reruns install with that version to prove explicit pin/upgrade path.
 - If `--keep-installed` is not supplied, uninstalls the Rust agent.
-- If `--rollback-command` is supplied after uninstall, runs that exact command to prove Go-agent rollback.
+- If `--rollback-command` is supplied after uninstall, runs that exact command and waits for `kelicloud-agent.service` or `--rollback-service-name` to become active to prove Go-agent rollback.
 
 - [ ] **Step 4: Run the targeted test and confirm it passes**
 

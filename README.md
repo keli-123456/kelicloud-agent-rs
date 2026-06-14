@@ -168,6 +168,10 @@ sudo bash scripts/canary-install.sh \
   --rollback-command '<panel generated Go agent install command>'
 ```
 
+After running the rollback command, the canary waits for
+`kelicloud-agent.service` to become active. If the panel command uses a custom
+Go-agent service name, pass `--rollback-service-name <name>`.
+
 ## Live Smoke Test
 
 For a cross-platform data-plane check against a real backend, use the backend

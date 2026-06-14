@@ -134,6 +134,7 @@ Real-host canary evidence template:
 - Explicit install-version pin/upgrade result:
 - Rust uninstall result:
 - Go-agent rollback command result:
+- Go-agent rollback service name/status:
 - Remaining gaps or production rollout notes:
 
 ## Static Parity Evidence
