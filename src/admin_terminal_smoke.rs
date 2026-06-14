@@ -96,7 +96,7 @@ pub fn run_admin_terminal_smoke(
 
     let command = normalize_terminal_command(&request.command);
     socket
-        .send(Message::Text(command.into()))
+        .send(Message::Binary(command.into()))
         .map_err(|error| AdminTerminalSmokeError::RequestFailed(error.to_string()))?;
 
     let mut output = String::new();
@@ -137,9 +137,11 @@ pub fn run_admin_terminal_smoke(
     )))
 }
 
-fn normalize_terminal_command(command: &str) -> String {
+fn normalize_terminal_command(command: &str) -> Vec<u8> {
     let trimmed = command.trim_end_matches(['\r', '\n']);
-    format!("{trimmed}\n")
+    let mut bytes = trimmed.as_bytes().to_vec();
+    bytes.push(b'\r');
+    bytes
 }
 
 fn set_read_timeout(

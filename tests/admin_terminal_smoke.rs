@@ -1,6 +1,11 @@
 use kelicloud_agent_rs::admin_terminal_smoke::{
-    admin_terminal_origin, build_admin_terminal_ws_url, session_cookie_header,
+    admin_terminal_origin, build_admin_terminal_ws_url, run_admin_terminal_smoke,
+    session_cookie_header, AdminTerminalSmokeRequest,
 };
+use std::net::TcpListener;
+use std::thread;
+use std::time::Duration;
+use tungstenite::Message;
 
 #[test]
 fn admin_terminal_ws_url_targets_panel_terminal_endpoint() {
@@ -40,4 +45,33 @@ fn admin_terminal_origin_matches_panel_origin() {
         admin_terminal_origin("https://panel.example.com/base/").unwrap(),
         "https://panel.example.com"
     );
+}
+
+#[test]
+fn admin_terminal_smoke_sends_xterm_compatible_binary_input() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut socket = tungstenite::accept(stream).unwrap();
+        let message = socket.read().unwrap();
+        match message {
+            Message::Binary(bytes) => assert_eq!(bytes.as_ref(), b"whoami\r"),
+            other => panic!("expected binary terminal input, got {other:?}"),
+        }
+        socket
+            .send(Message::Binary(b"root\n".to_vec().into()))
+            .unwrap();
+    });
+
+    run_admin_terminal_smoke(&AdminTerminalSmokeRequest {
+        endpoint,
+        session_token: "session-token".to_string(),
+        client_uuid: "node-1".to_string(),
+        command: "whoami".to_string(),
+        expect: "root".to_string(),
+        timeout: Duration::from_secs(2),
+    })
+    .unwrap();
+    server.join().unwrap();
 }
