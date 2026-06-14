@@ -261,6 +261,30 @@ path from kelicloud Web or backend-generated auto-connect snippets.
   `real-host-control-canary.evidence.md`, `real-host-control-canary.log`, and
   `service-status.log` as the `kelicloud-agent-rs-real-host-canary` artifact.
 
+2026-06-14 GitHub control-plane workflow dispatch check:
+
+- Commit: `f3b85780a73e4cba0446f50df49229e535fe3519`
+- Workflow: `Real Host Canary`
+- Run:
+  https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27496579830
+- Runner: temporary ephemeral runner registered on
+  `vm57463.desivps.com` / `2.56.116.39` with the `kelicloud-canary` label.
+- Result: `failed before canary execution`
+- Root cause from job log: `KELICLOUD_CANARY_AUTO_DISCOVERY_KEY` repository
+  secret was not set. The same job environment also showed empty
+  `KELICLOUD_PANEL_COOKIE`, `KELICLOUD_PANEL_USERNAME`, and
+  `KELICLOUD_PANEL_PASSWORD`, so the live panel control-plane canary still
+  lacks authentication material.
+- Host impact: the workflow failed during configuration validation; it did not
+  install or start `kelicloud-agent-rs`.
+- Post-run cleanup: the ephemeral runner exited and was removed; final host
+  state remained `komari-agent.service active/enabled` and
+  `kelicloud-agent-rs.service inactive`.
+- Remaining rollout gap: configure `KELICLOUD_CANARY_AUTO_DISCOVERY_KEY` plus
+  either `KELICLOUD_PANEL_COOKIE` or
+  `KELICLOUD_PANEL_USERNAME`/`KELICLOUD_PANEL_PASSWORD` as GitHub repository
+  secrets, then rerun `Real Host Canary` with `control_plane=true`.
+
 Live panel control-plane helper:
 
 Integrated real-host control canary:
