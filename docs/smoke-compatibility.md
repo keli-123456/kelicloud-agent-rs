@@ -262,18 +262,41 @@ scripts/real-host-control-canary.sh \
   --ping-target 1.1.1.1:443
 ```
 
-Run this wrapper on the real Linux host when an authenticated admin cookie is
-available. It downloads the latest `install.sh`, `canary-install.sh`, and
-`live-panel-control-smoke.sh` from `main`, stops the old `komari-agent.service`,
-installs `kelicloud-agent-rs`, verifies restart plus install-version pinning,
-keeps Rust active, parses the latest `smoke: auto_discovery_registered uuid=...`
-line from `journalctl`, triggers one exec task and one TCP ping task through the
-live panel APIs, then uninstalls Rust and restores the old service before exit.
-The generated `real-host-control-canary.evidence.md` is the preferred evidence
-file for closing the remaining real-host exec/ping rollout gap.
+Run this wrapper on the real Linux host when either an authenticated admin
+cookie or admin login credentials are available. It downloads the latest
+`install.sh`, `canary-install.sh`, and `live-panel-control-smoke.sh` from
+`main`, stops the old `komari-agent.service`, installs `kelicloud-agent-rs`,
+verifies restart plus install-version pinning, keeps Rust active, parses the
+latest `smoke: auto_discovery_registered uuid=...` line from `journalctl`,
+triggers one exec task and one TCP ping task through the live panel APIs, then
+uninstalls Rust and restores the old service before exit. The generated
+`real-host-control-canary.evidence.md` is the preferred evidence file for
+closing the remaining real-host exec/ping rollout gap.
+
+Equivalent login-based wrapper invocation:
+
+```bash
+sudo KELICLOUD_PANEL_USERNAME='<admin-username>' \
+  KELICLOUD_PANEL_PASSWORD='<admin-password>' \
+scripts/real-host-control-canary.sh \
+  --endpoint https://tanzhen2.huhu.icu \
+  --auto-discovery <auto-discovery-key> \
+  --ping-target 1.1.1.1:443
+```
 
 ```bash
 KELICLOUD_PANEL_COOKIE='session_token=...' \
+scripts/live-panel-control-smoke.sh \
+  --endpoint https://tanzhen2.huhu.icu \
+  --client <rust-client-uuid> \
+  --ping-target 1.1.1.1:443
+```
+
+The same helper can log in directly when cookie extraction is inconvenient:
+
+```bash
+KELICLOUD_PANEL_USERNAME='<admin-username>' \
+KELICLOUD_PANEL_PASSWORD='<admin-password>' \
 scripts/live-panel-control-smoke.sh \
   --endpoint https://tanzhen2.huhu.icu \
   --client <rust-client-uuid> \

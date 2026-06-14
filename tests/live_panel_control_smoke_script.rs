@@ -24,6 +24,29 @@ fn live_panel_control_smoke_script_triggers_exec_and_ping() {
 }
 
 #[test]
+fn live_panel_control_smoke_script_can_login_with_admin_credentials() {
+    let script = std::fs::read_to_string(live_panel_control_smoke_script_path()).unwrap();
+
+    for expected in [
+        "KELICLOUD_PANEL_USERNAME",
+        "KELICLOUD_PANEL_PASSWORD",
+        "--username USERNAME",
+        "--password PASSWORD",
+        "login_admin",
+        "/api/login",
+        "data.set-cookie.session_token",
+        "COOKIE_JAR=\"${WORKDIR}/panel-cookies.txt\"",
+    ] {
+        assert!(script.contains(expected), "missing {expected}");
+    }
+
+    assert!(
+        script.contains("[[ -n \"$COOKIE_HEADER\" || -n \"$COOKIE_JAR\" || ( -n \"$PANEL_USERNAME\" && -n \"$PANEL_PASSWORD\" ) ]]"),
+        "credentials should satisfy authentication validation"
+    );
+}
+
+#[test]
 fn live_panel_control_smoke_script_has_valid_bash_syntax_when_bash_is_available() {
     let Some(bash) = find_bash() else {
         eprintln!("bash not available; skipping syntax check");

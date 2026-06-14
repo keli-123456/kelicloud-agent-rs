@@ -12,6 +12,8 @@ ENDPOINT="${KELICLOUD_PANEL_ENDPOINT:-${AGENT_ENDPOINT:-}}"
 AUTO_DISCOVERY_KEY="${KELICLOUD_CANARY_AUTO_DISCOVERY_KEY:-${AGENT_AUTO_DISCOVERY_KEY:-}}"
 COOKIE_HEADER="${KELICLOUD_PANEL_COOKIE:-}"
 COOKIE_JAR="${KELICLOUD_PANEL_COOKIE_JAR:-}"
+PANEL_USERNAME="${KELICLOUD_PANEL_USERNAME:-}"
+PANEL_PASSWORD="${KELICLOUD_PANEL_PASSWORD:-}"
 PING_TARGET="${KELICLOUD_PANEL_PING_TARGET:-1.1.1.1:443}"
 INSTALL_VERSION="${KELICLOUD_CANARY_INSTALL_VERSION:-v0.1.0}"
 SERVICE_WAIT_SECONDS="${KELICLOUD_CANARY_SERVICE_WAIT:-60}"
@@ -39,6 +41,8 @@ Options:
   --auto-discovery KEY        kelicloud auto-discovery key
   --cookie HEADER             raw admin Cookie header, also read from KELICLOUD_PANEL_COOKIE
   --cookie-jar PATH           curl cookie jar, also read from KELICLOUD_PANEL_COOKIE_JAR
+  --username USERNAME         admin username, also read from KELICLOUD_PANEL_USERNAME
+  --password PASSWORD         admin password, also read from KELICLOUD_PANEL_PASSWORD
   --ping-target HOST:PORT     TCP ping target, default 1.1.1.1:443
   --install-version VERSION   release tag to install/pin, default v0.1.0
   --old-service NAME          existing Go agent service to restore, default komari-agent
@@ -105,6 +109,16 @@ parse_args() {
                 COOKIE_JAR="$2"
                 shift 2
                 ;;
+            --username)
+                need_value "$1" "${2:-}"
+                PANEL_USERNAME="$2"
+                shift 2
+                ;;
+            --password)
+                need_value "$1" "${2:-}"
+                PANEL_PASSWORD="$2"
+                shift 2
+                ;;
             --ping-target)
                 need_value "$1" "${2:-}"
                 PING_TARGET="$2"
@@ -151,8 +165,8 @@ validate_config() {
     [[ -n "$ENDPOINT" ]] || die "--endpoint or KELICLOUD_PANEL_ENDPOINT is required"
     [[ -n "$AUTO_DISCOVERY_KEY" ]] || die "--auto-discovery or KELICLOUD_CANARY_AUTO_DISCOVERY_KEY is required"
     [[ -n "$PING_TARGET" ]] || die "--ping-target or KELICLOUD_PANEL_PING_TARGET is required"
-    if [[ "$SKIP_CONTROL" != "true" && -z "$COOKIE_HEADER" && -z "$COOKIE_JAR" ]]; then
-        die "--cookie/KELICLOUD_PANEL_COOKIE or --cookie-jar/KELICLOUD_PANEL_COOKIE_JAR is required"
+    if [[ "$SKIP_CONTROL" != "true" && -z "$COOKIE_HEADER" && -z "$COOKIE_JAR" && ( -z "$PANEL_USERNAME" || -z "$PANEL_PASSWORD" ) ]]; then
+        die "--cookie, --cookie-jar, or --username/--password is required"
     fi
     command -v curl >/dev/null 2>&1 || die "curl is required"
     command -v systemctl >/dev/null 2>&1 || die "systemctl is required"
@@ -224,9 +238,13 @@ run_control_smoke() {
     )
     if [[ -n "$COOKIE_HEADER" ]]; then
         KELICLOUD_PANEL_COOKIE="$COOKIE_HEADER" bash "${WORKDIR}/live-panel-control-smoke.sh" "${args[@]}"
-    else
+    elif [[ -n "$COOKIE_JAR" ]]; then
         args+=(--cookie-jar "$COOKIE_JAR")
         bash "${WORKDIR}/live-panel-control-smoke.sh" "${args[@]}"
+    else
+        KELICLOUD_PANEL_USERNAME="$PANEL_USERNAME" \
+            KELICLOUD_PANEL_PASSWORD="$PANEL_PASSWORD" \
+            bash "${WORKDIR}/live-panel-control-smoke.sh" "${args[@]}"
     fi
 }
 

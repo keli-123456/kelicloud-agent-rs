@@ -5,9 +5,13 @@ ENDPOINT="${KELICLOUD_PANEL_ENDPOINT:-}"
 CLIENT_UUID="${KELICLOUD_PANEL_CLIENT_UUID:-}"
 COOKIE_HEADER="${KELICLOUD_PANEL_COOKIE:-}"
 COOKIE_JAR="${KELICLOUD_PANEL_COOKIE_JAR:-}"
+PANEL_USERNAME="${KELICLOUD_PANEL_USERNAME:-}"
+PANEL_PASSWORD="${KELICLOUD_PANEL_PASSWORD:-}"
 COMMAND_TEXT="${KELICLOUD_PANEL_EXEC_COMMAND:-printf 'kelicloud-agent-rs-live-exec-smoke\n'}"
 PING_TARGET="${KELICLOUD_PANEL_PING_TARGET:-}"
 TIMEOUT_SECONDS="${KELICLOUD_PANEL_CONTROL_TIMEOUT:-90}"
+WORKDIR="${KELICLOUD_PANEL_WORKDIR:-}"
+CLEANUP_WORKDIR="false"
 CHECK_JOURNAL="true"
 JOURNAL_UNIT="kelicloud-agent-rs"
 JOURNAL_SINCE=""
@@ -27,6 +31,8 @@ Options:
   --client UUID              target client UUID, also read from KELICLOUD_PANEL_CLIENT_UUID
   --cookie HEADER            raw Cookie header value, also read from KELICLOUD_PANEL_COOKIE
   --cookie-jar PATH          curl cookie jar path, also read from KELICLOUD_PANEL_COOKIE_JAR
+  --username USERNAME        admin username, also read from KELICLOUD_PANEL_USERNAME
+  --password PASSWORD        admin password, also read from KELICLOUD_PANEL_PASSWORD
   --command COMMAND          script command to execute on the client
   --ping-target HOST:PORT    TCP ping target
   --timeout SECONDS          wait timeout for API and journal evidence, default 90
@@ -81,6 +87,16 @@ parse_args() {
                 COOKIE_JAR="$2"
                 shift 2
                 ;;
+            --username)
+                need_value "$1" "${2:-}"
+                PANEL_USERNAME="$2"
+                shift 2
+                ;;
+            --password)
+                need_value "$1" "${2:-}"
+                PANEL_PASSWORD="$2"
+                shift 2
+                ;;
             --command)
                 need_value "$1" "${2:-}"
                 COMMAND_TEXT="$2"
@@ -116,11 +132,23 @@ parse_args() {
     done
 }
 
+setup_workdir() {
+    if [[ -z "$COOKIE_HEADER" && -z "$COOKIE_JAR" && -n "$PANEL_USERNAME" && -n "$PANEL_PASSWORD" ]]; then
+        if [[ -z "$WORKDIR" ]]; then
+            WORKDIR="$(mktemp -d)"
+            CLEANUP_WORKDIR="true"
+        else
+            mkdir -p "$WORKDIR"
+        fi
+        COOKIE_JAR="${WORKDIR}/panel-cookies.txt"
+    fi
+}
+
 validate_config() {
     [[ -n "$ENDPOINT" ]] || die "--endpoint or KELICLOUD_PANEL_ENDPOINT is required"
     [[ -n "$CLIENT_UUID" ]] || die "--client or KELICLOUD_PANEL_CLIENT_UUID is required"
     [[ -n "$PING_TARGET" ]] || die "--ping-target or KELICLOUD_PANEL_PING_TARGET is required"
-    [[ -n "$COOKIE_HEADER" || -n "$COOKIE_JAR" ]] || die "--cookie/KELICLOUD_PANEL_COOKIE or --cookie-jar/KELICLOUD_PANEL_COOKIE_JAR is required"
+    [[ -n "$COOKIE_HEADER" || -n "$COOKIE_JAR" || ( -n "$PANEL_USERNAME" && -n "$PANEL_PASSWORD" ) ]] || die "--cookie, --cookie-jar, or --username/--password is required"
     [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || die "--timeout must be whole seconds"
     [[ "$TIMEOUT_SECONDS" -gt 0 ]] || die "--timeout must be greater than zero"
     if [[ "$CHECK_JOURNAL" == "true" ]]; then
@@ -129,6 +157,13 @@ validate_config() {
     command -v curl >/dev/null 2>&1 || die "curl is required"
     command -v python3 >/dev/null 2>&1 || die "python3 is required"
 }
+
+cleanup() {
+    if [[ "$CLEANUP_WORKDIR" == "true" && -n "$WORKDIR" && "$WORKDIR" == /tmp/* && -d "$WORKDIR" ]]; then
+        rm -rf "$WORKDIR"
+    fi
+}
+trap cleanup EXIT
 
 json_value() {
     local path="$1"
@@ -196,6 +231,31 @@ curl_api() {
     curl "${args[@]}" "${ENDPOINT%/}${path}"
 }
 
+login_admin() {
+    if [[ -n "$COOKIE_HEADER" ]]; then
+        return
+    fi
+    if [[ -z "$PANEL_USERNAME" || -z "$PANEL_PASSWORD" ]]; then
+        return
+    fi
+
+    local payload response session_token
+    payload="$(python3 - "$PANEL_USERNAME" "$PANEL_PASSWORD" <<'PY'
+import json
+import sys
+
+print(json.dumps({"username": sys.argv[1], "password": sys.argv[2]}))
+PY
+)"
+    response="$(curl -fsS -c "$COOKIE_JAR" \
+        -H "Content-Type: application/json" \
+        --data "$payload" \
+        "${ENDPOINT%/}/api/login")"
+    session_token="$(printf '%s' "$response" | json_value "data.set-cookie.session_token")"
+    [[ -n "$session_token" ]] || die "login response did not include session token"
+    log "admin_login=ok"
+}
+
 wait_for_journal() {
     local needle="$1"
     local deadline=$((SECONDS + TIMEOUT_SECONDS))
@@ -250,7 +310,9 @@ trigger_ping() {
 
 main() {
     parse_args "$@"
+    setup_workdir
     validate_config
+    login_admin
     if [[ -z "$JOURNAL_SINCE" ]]; then
         JOURNAL_SINCE="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
     fi

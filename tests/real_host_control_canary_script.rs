@@ -57,6 +57,29 @@ fn real_host_control_canary_reports_success_as_passed_from_exit_trap() {
 }
 
 #[test]
+fn real_host_control_canary_passes_panel_credentials_through_environment() {
+    let script = std::fs::read_to_string(real_host_control_canary_script_path()).unwrap();
+
+    for expected in [
+        "KELICLOUD_PANEL_USERNAME",
+        "KELICLOUD_PANEL_PASSWORD",
+        "--username USERNAME",
+        "--password PASSWORD",
+        "PANEL_USERNAME",
+        "PANEL_PASSWORD",
+        "KELICLOUD_PANEL_USERNAME=\"$PANEL_USERNAME\"",
+        "KELICLOUD_PANEL_PASSWORD=\"$PANEL_PASSWORD\"",
+    ] {
+        assert!(script.contains(expected), "missing {expected}");
+    }
+
+    assert!(
+        !script.contains("args+=(--password \"$PANEL_PASSWORD\")"),
+        "admin password must not be appended to child process arguments"
+    );
+}
+
+#[test]
 fn real_host_control_canary_has_valid_bash_syntax_when_bash_is_available() {
     let Some(bash) = find_bash() else {
         eprintln!("bash not available; skipping syntax check");
