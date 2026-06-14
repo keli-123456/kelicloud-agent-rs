@@ -66,7 +66,7 @@ set_stage() {
 log_tail_for_error() {
     local output=""
     local file
-    for file in "${BACKEND_LOG}" "${AGENT_LOG}" "${HELPER_LOG}"; do
+    for file in "${AGENT_LOG}" "${HELPER_LOG}" "${BACKEND_LOG}"; do
         if [[ -n "${file}" && -f "${file}" ]]; then
             output+=$'\n\n'
             output+="--- ${file} tail ---"
