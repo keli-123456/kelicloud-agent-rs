@@ -385,7 +385,7 @@ start_agent() {
         --interval 1 \
         --max-retries 3 \
         --reconnect-interval 1 \
-        --info-report-interval 1 >>"${AGENT_LOG}" 2>&1 &
+        --info-report-interval 0 >>"${AGENT_LOG}" 2>&1 &
     AGENT_PID="$!"
 
     wait_for_log "${AGENT_LOG}" "smoke: report_websocket_connected" 45

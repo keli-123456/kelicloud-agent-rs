@@ -183,6 +183,22 @@ fn config_command_line_overrides_connection_options() {
 }
 
 #[test]
+fn config_accepts_zero_info_report_interval_for_every_cycle() {
+    let args = [
+        "kelicloud-agent-rs",
+        "--endpoint",
+        "https://cli.example.com",
+        "--token",
+        "cli-token",
+        "--info-report-interval",
+        "0",
+    ];
+    let config = AgentConfig::from_args_and_env(args, |_| None).unwrap();
+
+    assert_eq!(config.info_report_interval_minutes, 0);
+}
+
+#[test]
 fn config_accepts_go_agent_short_connection_flags() {
     let args = [
         "kelicloud-agent-rs",

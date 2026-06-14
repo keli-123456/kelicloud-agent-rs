@@ -87,7 +87,7 @@ impl AgentConfig {
         let mut reconnect_interval_seconds =
             parse_env_u64(&env_lookup, "AGENT_RECONNECT_INTERVAL", 5)?;
         let mut info_report_interval_minutes =
-            parse_env_u64(&env_lookup, "AGENT_INFO_REPORT_INTERVAL", 5)?;
+            parse_env_u64_allow_zero(&env_lookup, "AGENT_INFO_REPORT_INTERVAL", 5)?;
         let mut cf_access_client_id =
             clean_optional(env_lookup("AGENT_CF_ACCESS_CLIENT_ID")).unwrap_or_default();
         let mut cf_access_client_secret =
@@ -182,7 +182,7 @@ impl AgentConfig {
                     reconnect_interval_seconds = parse_u64("-c", &next_value(&mut iter, "-c")?)?;
                 }
                 "--info-report-interval" => {
-                    info_report_interval_minutes = parse_u64(
+                    info_report_interval_minutes = parse_u64_allow_zero(
                         "--info-report-interval",
                         &next_value(&mut iter, "--info-report-interval")?,
                     )?;
@@ -272,7 +272,7 @@ impl AgentConfig {
                     reconnect_interval_seconds = parse_u64("-c", &arg["-c=".len()..])?;
                 }
                 _ if arg.starts_with("--info-report-interval=") => {
-                    info_report_interval_minutes = parse_u64(
+                    info_report_interval_minutes = parse_u64_allow_zero(
                         "--info-report-interval",
                         &arg["--info-report-interval=".len()..],
                     )?;
@@ -356,7 +356,7 @@ impl AgentConfig {
             "AGENT_RECONNECT_INTERVAL",
             &mut reconnect_interval_seconds,
         );
-        apply_u64_env(
+        apply_u64_env_allow_zero(
             &env_lookup,
             "AGENT_INFO_REPORT_INTERVAL",
             &mut info_report_interval_minutes,
@@ -429,8 +429,7 @@ impl AgentConfig {
                 reconnect_interval_seconds = validate_positive_u64("reconnect_interval", value)?;
             }
             if let Some(value) = file_config.info_report_interval {
-                info_report_interval_minutes =
-                    validate_positive_u64("info_report_interval", value)?;
+                info_report_interval_minutes = value;
             }
             if let Some(value) = file_config.cf_access_client_id {
                 cf_access_client_id = clean_config_string(value);
@@ -622,6 +621,20 @@ where
     }
 }
 
+fn parse_env_u64_allow_zero<F>(
+    env_lookup: &F,
+    key: &'static str,
+    default: u64,
+) -> Result<u64, ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    match clean_optional(env_lookup(key)) {
+        Some(value) => Ok(parse_u64_allow_zero(key, &value).unwrap_or(default)),
+        None => Ok(default),
+    }
+}
+
 fn apply_optional_string_env<F>(env_lookup: &F, key: &str, target: &mut Option<String>)
 where
     F: Fn(&str) -> Option<String>,
@@ -682,6 +695,17 @@ where
     }
 }
 
+fn apply_u64_env_allow_zero<F>(env_lookup: &F, key: &'static str, target: &mut u64)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup(key)) {
+        if let Ok(parsed) = parse_u64_allow_zero(key, &value) {
+            *target = parsed;
+        }
+    }
+}
+
 fn parse_f64(flag: &'static str, value: &str) -> Result<f64, ConfigError> {
     let parsed = value
         .trim()
@@ -710,6 +734,13 @@ fn parse_u64(flag: &'static str, value: &str) -> Result<u64, ConfigError> {
         .parse::<u64>()
         .map_err(|_| ConfigError::InvalidValue(flag, value.to_string()))?;
     validate_positive_u64(flag, parsed)
+}
+
+fn parse_u64_allow_zero(flag: &'static str, value: &str) -> Result<u64, ConfigError> {
+    value
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| ConfigError::InvalidValue(flag, value.to_string()))
 }
 
 fn validate_positive_u64(flag: &'static str, parsed: u64) -> Result<u64, ConfigError> {

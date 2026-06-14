@@ -13,6 +13,7 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
     assert!(script.contains("AUTO_DISCOVERY_KEY"));
     assert!(script.contains("--auto-discovery"));
     assert!(script.contains("HOSTNAME=\"${SMOKE_AGENT_HOSTNAME}\""));
+    assert!(script.contains("--info-report-interval 0"));
     assert!(script.contains("/api/admin/client/list"));
     assert!(script.contains("/api/admin/client/${CLIENT_UUID}/token"));
     assert!(script.contains("/api/admin/client/${CLIENT_UUID}/edit"));
