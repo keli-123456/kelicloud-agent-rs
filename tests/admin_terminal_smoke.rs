@@ -1,6 +1,6 @@
 use kelicloud_agent_rs::admin_terminal_smoke::{
     admin_terminal_origin, build_admin_terminal_ws_url, run_admin_terminal_smoke,
-    session_cookie_header, AdminTerminalSmokeRequest,
+    session_cookie_header, AdminTerminalSmokeError, AdminTerminalSmokeRequest,
 };
 use std::io::ErrorKind;
 use std::net::TcpListener;
@@ -188,5 +188,48 @@ fn admin_terminal_smoke_waits_for_shell_prompt_before_sending_input() {
         timeout: Duration::from_secs(3),
     })
     .unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn admin_terminal_smoke_times_out_without_sending_when_prompt_never_arrives() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut socket = tungstenite::accept(stream).unwrap();
+        socket
+            .send(Message::Text("waiting for agent".to_string().into()))
+            .unwrap();
+
+        socket
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(1500)))
+            .unwrap();
+        match socket.read() {
+            Err(tungstenite::Error::Io(error))
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(tungstenite::Error::Protocol(
+                tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
+            )) => {}
+            other => panic!("terminal input was sent without shell prompt: {other:?}"),
+        }
+    });
+
+    let error = run_admin_terminal_smoke(&AdminTerminalSmokeRequest {
+        endpoint,
+        session_token: "session-token".to_string(),
+        client_uuid: "node-1".to_string(),
+        command: "whoami".to_string(),
+        expect: "root".to_string(),
+        timeout: Duration::from_secs(1),
+    })
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AdminTerminalSmokeError::TimedOut(message)
+            if message.contains("terminal prompt was not observed")
+    ));
     server.join().unwrap();
 }

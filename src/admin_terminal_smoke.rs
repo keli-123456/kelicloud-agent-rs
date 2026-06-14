@@ -11,7 +11,7 @@ use tungstenite::{connect, Message, WebSocket};
 
 const TERMINAL_READ_POLL: Duration = Duration::from_millis(250);
 const TERMINAL_INITIAL_QUIET_GRACE: Duration = Duration::from_millis(500);
-const TERMINAL_PROMPT_HARD_LIMIT: Duration = Duration::from_secs(25);
+const TERMINAL_PROMPT_HARD_LIMIT: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdminTerminalSmokeError {
@@ -151,6 +151,13 @@ fn wait_for_terminal_ready(
         if first_output_at.is_none() && started_at.elapsed() >= TERMINAL_INITIAL_QUIET_GRACE {
             return Ok(());
         }
+    }
+
+    if first_output_at.is_some() && !terminal_output_has_prompt(output) {
+        return Err(AdminTerminalSmokeError::TimedOut(format!(
+            "terminal prompt was not observed before sending input, last output {:?}",
+            tail(output, 400)
+        )));
     }
 
     Ok(())

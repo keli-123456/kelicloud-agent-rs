@@ -378,7 +378,7 @@ trigger_terminal() {
         --client "${CLIENT_UUID}" \
         --command "printf '${mark}\\n'" \
         --expect "${mark}" \
-        --timeout 30 >"${HELPER_LOG}" 2>&1; then
+        --timeout 90 >"${HELPER_LOG}" 2>&1; then
         local details=""
         if [[ -f "${HELPER_LOG}" ]]; then
             details="$(printf '\n--- %s tail ---\n' "${HELPER_LOG}")$(tail -n 80 "${HELPER_LOG}" 2>/dev/null || true)"
