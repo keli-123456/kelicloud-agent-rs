@@ -28,6 +28,14 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
 }
 
 #[test]
+fn local_backend_smoke_script_surfaces_terminal_helper_failures() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+
+    assert!(script.contains("admin-terminal-smoke failed"));
+    assert!(script.contains("tail -n 80 \"${HELPER_LOG}\""));
+}
+
+#[test]
 fn local_backend_smoke_script_has_valid_bash_syntax_when_bash_is_available() {
     let Some(bash) = find_bash() else {
         eprintln!("bash not available; skipping syntax check");

@@ -372,13 +372,19 @@ trigger_terminal() {
     local root="$1"
     HELPER_LOG="${SMOKE_LOG_DIR}/admin-terminal-smoke.log"
     local mark="kelicloud-terminal-smoke"
-    "${root}/target/release/admin-terminal-smoke" \
+    if ! "${root}/target/release/admin-terminal-smoke" \
         --endpoint "${BACKEND_ENDPOINT}" \
         --session-token "${SESSION_TOKEN}" \
         --client "${CLIENT_UUID}" \
         --command "printf '${mark}\\n'" \
         --expect "${mark}" \
-        --timeout 30 >"${HELPER_LOG}" 2>&1
+        --timeout 30 >"${HELPER_LOG}" 2>&1; then
+        local details=""
+        if [[ -f "${HELPER_LOG}" ]]; then
+            details="$(printf '\n--- %s tail ---\n' "${HELPER_LOG}")$(tail -n 80 "${HELPER_LOG}" 2>/dev/null || true)"
+        fi
+        die "admin-terminal-smoke failed${details}"
+    fi
     wait_for_log "${AGENT_LOG}" "smoke: terminal_session_started" 30
 }
 
