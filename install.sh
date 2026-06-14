@@ -11,6 +11,7 @@ REPO="keli-123456/kelicloud-agent-rs"
 
 ENDPOINT=""
 TOKEN=""
+AUTO_DISCOVERY_KEY=""
 SOURCE_BINARY=""
 VERSION="latest"
 GITHUB_PROXY=""
@@ -23,13 +24,20 @@ INFO_REPORT_INTERVAL=""
 CF_ACCESS_CLIENT_ID=""
 CF_ACCESS_CLIENT_SECRET=""
 CUSTOM_DNS=""
+MEMORY_INCLUDE_CACHE=""
+INCLUDE_NICS=""
+EXCLUDE_NICS=""
+INCLUDE_MOUNTPOINTS=""
+MONTH_ROTATE=""
 KEEP_CONFIG="false"
+COMMAND=""
 
 usage() {
     cat <<'EOF'
 kelicloud-agent-rs Linux installer
 
 Usage:
+  install.sh -e URL (--token TOKEN | --auto-discovery KEY) [options]
   install.sh install --endpoint URL --token TOKEN [options]
   install.sh uninstall [--keep-config]
   install.sh restart
@@ -38,15 +46,20 @@ Usage:
   install.sh render-env --endpoint URL --token TOKEN [options]
 
 Install options:
-  --endpoint URL                 Backend endpoint, for AGENT_ENDPOINT
-  --token TOKEN                  Client token, for AGENT_TOKEN
+  -e, --endpoint URL             Backend endpoint, for AGENT_ENDPOINT
+  -t, --token TOKEN              Client token, for AGENT_TOKEN
+  --auto-discovery KEY           Auto-discovery key, for AGENT_AUTO_DISCOVERY_KEY
   --source-binary PATH           Install an already built local binary
   --version VERSION              GitHub release version to download, default latest
+  --install-version VERSION      Alias of --version
   --github-proxy URL             Prefix for GitHub download URL
+  --install-ghproxy URL          Alias of --github-proxy
+  --install-dir PATH             Install binary and config under PATH
   --bin PATH                     Binary install path, default /usr/local/bin/kelicloud-agent-rs
   --env PATH                     Environment file path, default /etc/kelicloud-agent-rs/config.env
   --disable-web-ssh              Set AGENT_DISABLE_WEB_SSH=true
   --insecure                     Set AGENT_INSECURE=true
+  --ignore-unsafe-cert           Alias of --insecure
   --interval SECONDS             Set AGENT_INTERVAL
   --max-retries COUNT            Set AGENT_MAX_RETRIES
   --reconnect-interval SECONDS   Set AGENT_RECONNECT_INTERVAL
@@ -54,6 +67,12 @@ Install options:
   --cf-access-client-id ID       Set AGENT_CF_ACCESS_CLIENT_ID
   --cf-access-client-secret SEC  Set AGENT_CF_ACCESS_CLIENT_SECRET
   --custom-dns SERVER            Set AGENT_CUSTOM_DNS
+  --memory-include-cache         Set AGENT_MEMORY_INCLUDE_CACHE=true
+  --include-nics CSV             Set AGENT_INCLUDE_NICS
+  --exclude-nics CSV             Set AGENT_EXCLUDE_NICS
+  --include-mountpoint LIST      Set AGENT_INCLUDE_MOUNTPOINTS
+  --include-mountpoints LIST     Alias of --include-mountpoint
+  --month-rotate DAY             Set AGENT_MONTH_ROTATE
 EOF
 }
 
@@ -91,14 +110,26 @@ emit_env() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --endpoint)
+            install|uninstall|restart|status|render-service|render-env)
+                if [[ -n "$COMMAND" ]]; then
+                    die "multiple commands specified: ${COMMAND} and $1"
+                fi
+                COMMAND="$1"
+                shift
+                ;;
+            -e|--endpoint)
                 need_value "$1" "${2:-}"
                 ENDPOINT="$2"
                 shift 2
                 ;;
-            --token)
+            -t|--token)
                 need_value "$1" "${2:-}"
                 TOKEN="$2"
+                shift 2
+                ;;
+            --auto-discovery)
+                need_value "$1" "${2:-}"
+                AUTO_DISCOVERY_KEY="$2"
                 shift 2
                 ;;
             --source-binary)
@@ -106,14 +137,21 @@ parse_args() {
                 SOURCE_BINARY="$2"
                 shift 2
                 ;;
-            --version)
+            --version|--install-version)
                 need_value "$1" "${2:-}"
                 VERSION="$2"
                 shift 2
                 ;;
-            --github-proxy)
+            --github-proxy|--install-ghproxy)
                 need_value "$1" "${2:-}"
                 GITHUB_PROXY="${2%/}"
+                shift 2
+                ;;
+            --install-dir)
+                need_value "$1" "${2:-}"
+                CONFIG_DIR="$2"
+                BIN_PATH="${CONFIG_DIR%/}/kelicloud-agent-rs"
+                CONFIG_FILE="${CONFIG_DIR%/}/config.env"
                 shift 2
                 ;;
             --bin)
@@ -131,7 +169,7 @@ parse_args() {
                 DISABLE_WEB_SSH="true"
                 shift
                 ;;
-            --insecure)
+            --insecure|--ignore-unsafe-cert)
                 INSECURE="true"
                 shift
                 ;;
@@ -168,6 +206,30 @@ parse_args() {
             --custom-dns)
                 need_value "$1" "${2:-}"
                 CUSTOM_DNS="$2"
+                shift 2
+                ;;
+            --memory-include-cache)
+                MEMORY_INCLUDE_CACHE="true"
+                shift
+                ;;
+            --include-nics)
+                need_value "$1" "${2:-}"
+                INCLUDE_NICS="$2"
+                shift 2
+                ;;
+            --exclude-nics)
+                need_value "$1" "${2:-}"
+                EXCLUDE_NICS="$2"
+                shift 2
+                ;;
+            --include-mountpoint|--include-mountpoints)
+                need_value "$1" "${2:-}"
+                INCLUDE_MOUNTPOINTS="$2"
+                shift 2
+                ;;
+            --month-rotate)
+                need_value "$1" "${2:-}"
+                MONTH_ROTATE="$2"
                 shift 2
                 ;;
             --keep-config)
@@ -240,6 +302,7 @@ install_binary() {
 render_env() {
     emit_env "AGENT_ENDPOINT" "$ENDPOINT"
     emit_env "AGENT_TOKEN" "$TOKEN"
+    emit_env "AGENT_AUTO_DISCOVERY_KEY" "$AUTO_DISCOVERY_KEY"
     if [[ "$DISABLE_WEB_SSH" == "true" ]]; then
         emit_env "AGENT_DISABLE_WEB_SSH" "true"
     fi
@@ -251,6 +314,11 @@ render_env() {
     emit_env "AGENT_CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_ID"
     emit_env "AGENT_CF_ACCESS_CLIENT_SECRET" "$CF_ACCESS_CLIENT_SECRET"
     emit_env "AGENT_CUSTOM_DNS" "$CUSTOM_DNS"
+    emit_env "AGENT_MEMORY_INCLUDE_CACHE" "$MEMORY_INCLUDE_CACHE"
+    emit_env "AGENT_INCLUDE_NICS" "$INCLUDE_NICS"
+    emit_env "AGENT_EXCLUDE_NICS" "$EXCLUDE_NICS"
+    emit_env "AGENT_INCLUDE_MOUNTPOINTS" "$INCLUDE_MOUNTPOINTS"
+    emit_env "AGENT_MONTH_ROTATE" "$MONTH_ROTATE"
 }
 
 render_service() {
@@ -276,7 +344,9 @@ EOF
 
 write_config() {
     [[ -n "$ENDPOINT" ]] || die "--endpoint is required"
-    [[ -n "$TOKEN" ]] || die "--token is required"
+    if [[ -z "$TOKEN" && -z "$AUTO_DISCOVERY_KEY" ]]; then
+        die "--token or --auto-discovery is required"
+    fi
     mkdir -p "$CONFIG_DIR"
     render_env > "$CONFIG_FILE"
     chmod 0600 "$CONFIG_FILE"
@@ -309,6 +379,8 @@ uninstall_agent() {
     rm -f "$BIN_PATH"
     if [[ "$KEEP_CONFIG" != "true" ]]; then
         rm -f "$CONFIG_FILE"
+        rm -f "$(dirname "$BIN_PATH")/auto-discovery.json"
+        rm -f "${CONFIG_DIR}/auto-discovery.json"
         rmdir "$CONFIG_DIR" >/dev/null 2>&1 || true
     fi
     systemctl daemon-reload
@@ -327,22 +399,23 @@ status_agent() {
 }
 
 main() {
-    local command="${1:-}"
-    if [[ -z "$command" || "$command" == "--help" || "$command" == "-h" ]]; then
+    if [[ $# -eq 0 || "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
         usage
         exit 0
     fi
-    shift || true
     parse_args "$@"
+    if [[ -z "$COMMAND" ]]; then
+        COMMAND="install"
+    fi
 
-    case "$command" in
+    case "$COMMAND" in
         install) install_agent ;;
         uninstall) uninstall_agent ;;
         restart) restart_agent ;;
         status) status_agent ;;
         render-service) render_service ;;
         render-env) render_env ;;
-        *) die "unknown command: $command" ;;
+        *) die "unknown command: $COMMAND" ;;
     esac
 }
 
