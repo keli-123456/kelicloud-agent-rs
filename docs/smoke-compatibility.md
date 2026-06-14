@@ -317,6 +317,29 @@ path from kelicloud Web or backend-generated auto-connect snippets.
   secrets, then rerun `Real Host Canary` with `control_plane=true` and
   `derive_auto_discovery_from_old_service=true`.
 
+2026-06-14 live-panel auth audit:
+
+- Local environment audit: no `KELICLOUD_PANEL_*` variables were set in the
+  current workstation session.
+- Workspace file audit: no obvious cookie jar or panel-auth env file was found
+  outside project source/config files.
+- DNS audit: `tanzhen2.huhu.icu` resolved through Cloudflare (`172.67.157.9`,
+  `104.21.40.207`) rather than directly to the canary host
+  `2.56.116.39`.
+- Canary host audit: `komari-agent.service` remained `active/enabled`,
+  `kelicloud-agent-rs.service` remained `inactive`, and the temporary
+  `actions-runner-kelicloud-canary` directory was absent after cleanup.
+- GitHub Actions audit for run
+  https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27497188515:
+  `Derive auto-discovery from old service` succeeded and
+  `Validate canary configuration` failed only because
+  `KELICLOUD_PANEL_COOKIE`, `KELICLOUD_PANEL_USERNAME`, and
+  `KELICLOUD_PANEL_PASSWORD` were empty. The Rust install/control steps were
+  skipped, so the old production agent was not disturbed.
+- Current blocker: the full real-host control canary cannot be executed until
+  an authenticated live-panel admin cookie or admin username/password is
+  provided locally or as GitHub repository secrets.
+
 Live panel control-plane helper:
 
 Integrated real-host control canary:
