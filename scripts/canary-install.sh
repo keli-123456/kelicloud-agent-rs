@@ -411,34 +411,35 @@ write_evidence() {
     finished_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
 
     {
-        printf '# kelicloud-agent-rs Real Host Canary Evidence\n\n'
-        printf '- Result: `%s`\n' "$status"
-        printf '- Started at: `%s`\n' "${STARTED_AT:-unknown}"
-        printf '- Finished at: `%s`\n' "${finished_at:-unknown}"
-        printf '- Hostname: `%s`\n' "$(shell_output_or_empty hostname)"
-        printf '- Distro: `%s`\n' "$(os_pretty_name)"
-        printf '- Kernel: `%s`\n' "$(shell_output_or_empty uname -r)"
-        printf '- Architecture: `%s`\n' "$(shell_output_or_empty uname -m)"
-        printf '- Panel endpoint: `%s`\n' "$ENDPOINT"
-        printf '- Install source: `%s`\n' "$INSTALL_URL"
-        printf '- Requested install version: `%s`\n' "${INSTALL_VERSION:-latest}"
-        printf '- Release asset: `%s`\n' "${RELEASE_ASSET:-not checked}"
-        printf '- Release asset URL: `%s`\n' "${RELEASE_ASSET_URL:-not checked}"
-        printf '- Rust install result: `%s`\n' "$INSTALL_RESULT"
-        printf '- Rust service status: `%s`\n' "$RUST_SERVICE_STATUS"
-        printf '- Rust restart result: `%s`\n' "$RESTART_RESULT"
-        printf '- Explicit install-version pin/upgrade result: `%s`\n' "$PIN_OR_UPGRADE_RESULT"
-        printf '- Rust uninstall result: `%s`\n' "$UNINSTALL_RESULT"
-        printf '- Go-agent rollback command result: `%s`\n' "$ROLLBACK_RESULT"
-        printf '- Go-agent rollback service name: `%s`\n' "$ROLLBACK_SERVICE_NAME"
-        printf '- Go-agent rollback service status: `%s`\n' "$ROLLBACK_SERVICE_STATUS"
-        printf '- Panel-side checks required: online metrics, script exec, TCP ping, and WebSSH terminal.\n'
+        printf '%s\n' '# kelicloud-agent-rs Real Host Canary Evidence'
+        printf '\n'
+        printf '%s\n' '- Result: '"\`${status}\`"
+        printf '%s\n' "- Started at: \`${STARTED_AT:-unknown}\`"
+        printf '%s\n' "- Finished at: \`${finished_at:-unknown}\`"
+        printf '%s\n' "- Hostname: \`$(shell_output_or_empty hostname)\`"
+        printf '%s\n' "- Distro: \`$(os_pretty_name)\`"
+        printf '%s\n' "- Kernel: \`$(shell_output_or_empty uname -r)\`"
+        printf '%s\n' "- Architecture: \`$(shell_output_or_empty uname -m)\`"
+        printf '%s\n' "- Panel endpoint: \`${ENDPOINT}\`"
+        printf '%s\n' "- Install source: \`${INSTALL_URL}\`"
+        printf '%s\n' "- Requested install version: \`${INSTALL_VERSION:-latest}\`"
+        printf '%s\n' "- Release asset: \`${RELEASE_ASSET:-not checked}\`"
+        printf '%s\n' "- Release asset URL: \`${RELEASE_ASSET_URL:-not checked}\`"
+        printf '%s\n' "- Rust install result: \`${INSTALL_RESULT}\`"
+        printf '%s\n' "- Rust service status: \`${RUST_SERVICE_STATUS}\`"
+        printf '%s\n' "- Rust restart result: \`${RESTART_RESULT}\`"
+        printf '%s\n' "- Explicit install-version pin/upgrade result: \`${PIN_OR_UPGRADE_RESULT}\`"
+        printf '%s\n' "- Rust uninstall result: \`${UNINSTALL_RESULT}\`"
+        printf '%s\n' "- Go-agent rollback command result: \`${ROLLBACK_RESULT}\`"
+        printf '%s\n' "- Go-agent rollback service name: \`${ROLLBACK_SERVICE_NAME}\`"
+        printf '%s\n' "- Go-agent rollback service status: \`${ROLLBACK_SERVICE_STATUS}\`"
+        printf '%s\n' '- Panel-side checks required: online metrics, script exec, TCP ping, and WebSSH terminal.'
         printf '\n## Operator Notes\n\n'
-        printf '- Panel online and metrics:\n'
-        printf '- Script exec task result:\n'
-        printf '- TCP ping task result:\n'
-        printf '- Admin WebSSH terminal result:\n'
-        printf '- Remaining gaps or rollout notes:\n'
+        printf '%s\n' '- Panel online and metrics:'
+        printf '%s\n' '- Script exec task result:'
+        printf '%s\n' '- TCP ping task result:'
+        printf '%s\n' '- Admin WebSSH terminal result:'
+        printf '%s\n' '- Remaining gaps or rollout notes:'
     } > "$EVIDENCE_FILE"
     EVIDENCE_WRITTEN="true"
     log "Evidence file: ${EVIDENCE_FILE}"

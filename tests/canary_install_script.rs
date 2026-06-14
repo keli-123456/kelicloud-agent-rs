@@ -26,6 +26,7 @@ fn canary_install_script_documents_real_host_stages() {
         "KELICLOUD_ROLLBACK_SERVICE_NAME",
         "KELICLOUD_CANARY_EVIDENCE_FILE",
         "write_evidence",
+        "printf '%s\\n' '- Result:",
         "Operator Notes",
         "Panel online and metrics",
         "kelicloud-agent",

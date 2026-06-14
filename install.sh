@@ -258,6 +258,13 @@ require_root() {
     [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "please run as root"
 }
 
+stop_existing_service_for_upgrade() {
+    if systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1 &&
+        systemctl list-unit-files "${SERVICE_NAME}.service" | grep -q "${SERVICE_NAME}.service"; then
+        systemctl stop "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
+    fi
+}
+
 detect_arch() {
     case "$(uname -m)" in
         x86_64|amd64) printf 'amd64' ;;
@@ -362,6 +369,7 @@ write_service() {
 install_agent() {
     require_linux_systemd
     require_root
+    stop_existing_service_for_upgrade
     install_binary
     write_config
     write_service

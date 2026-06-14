@@ -144,6 +144,15 @@ fn panel_style_command_defaults_to_install_when_command_is_omitted() {
     assert!(script.contains("COMMAND=\"install\""));
 }
 
+#[test]
+fn install_script_stops_existing_service_before_replacing_binary() {
+    let script = std::fs::read_to_string(install_script_path()).unwrap();
+
+    assert!(script.contains("stop_existing_service_for_upgrade"));
+    assert!(script.contains("systemctl stop \"${SERVICE_NAME}.service\""));
+    assert!(script.contains("stop_existing_service_for_upgrade\n    install_binary"));
+}
+
 #[cfg(unix)]
 #[test]
 fn render_env_maps_install_version_and_github_proxy_aliases() {
