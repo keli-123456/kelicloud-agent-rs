@@ -78,6 +78,14 @@ on:
         required: false
         default: "komari-agent"
         type: string
+      derive_auto_discovery_from_old_service:
+        description: "When the auto-discovery secret is empty, parse endpoint/key from the old Go agent service."
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
       skip_rollback_service_check:
         description: "Run rollback command without checking rollback service status."
         required: true
@@ -117,11 +125,39 @@ jobs:
       CANARY_REQUIRE_ROLLBACK: ${{ inputs.require_rollback }}
       CANARY_ROLLBACK_SERVICE_NAME: ${{ inputs.rollback_service_name }}
       CANARY_OLD_SERVICE_NAME: ${{ inputs.old_service_name }}
+      CANARY_DERIVE_AUTO_DISCOVERY_FROM_OLD_SERVICE: ${{ inputs.derive_auto_discovery_from_old_service }}
       CANARY_SKIP_ROLLBACK_SERVICE_CHECK: ${{ inputs.skip_rollback_service_check }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Derive auto-discovery from old service
+        if: ${{ inputs.derive_auto_discovery_from_old_service == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${CANARY_AUTO_DISCOVERY_KEY}" ]; then
+            echo "::add-mask::${CANARY_AUTO_DISCOVERY_KEY}"
+            exit 0
+          fi
+          if [ -z "${CANARY_OLD_SERVICE_NAME}" ]; then
+            echo "old_service_name is required when derive_auto_discovery_from_old_service=true."
+            exit 1
+          fi
+
+          service_text="$(systemctl cat "${CANARY_OLD_SERVICE_NAME}.service" 2>/dev/null | tr '\n' ' ')"
+          derived_endpoint="$(printf '%s\n' "${service_text}" | sed -n 's/.*[[:space:]]-e[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' | tail -n 1)"
+          derived_key="$(printf '%s\n' "${service_text}" | sed -n 's/.*--auto-discovery[=[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' | tail -n 1)"
+          if [ -z "${derived_key}" ]; then
+            echo "Could not parse --auto-discovery[=[:space:]] value from ${CANARY_OLD_SERVICE_NAME}.service."
+            exit 1
+          fi
+          echo "::add-mask::${derived_key}"
+          printf 'CANARY_AUTO_DISCOVERY_KEY=%s\n' "${derived_key}" >> "${GITHUB_ENV}"
+          if [ -z "${CANARY_ENDPOINT}" ] && [ -n "${derived_endpoint}" ]; then
+            printf 'CANARY_ENDPOINT=%s\n' "${derived_endpoint}" >> "${GITHUB_ENV}"
+          fi
 
       - name: Validate canary configuration
         shell: bash

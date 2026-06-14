@@ -25,6 +25,9 @@ rotation with post-recovery control-plane actions.
   `Real Host Canary` workflow with `control_plane=true`, plus either
   `KELICLOUD_PANEL_COOKIE` or
   `KELICLOUD_PANEL_USERNAME`/`KELICLOUD_PANEL_PASSWORD` repository secrets.
+  If `KELICLOUD_CANARY_AUTO_DISCOVERY_KEY` is not set, the workflow can derive
+  the endpoint and auto-discovery key from the existing Go agent service when
+  `derive_auto_discovery_from_old_service=true`.
 - GitHub Actions real backend: the `Local Backend Smoke` workflow runs on pushes
   to `main` and can also be run manually.
 - Required secret: `KELICLOUD_SMOKE_TOKEN`.
@@ -283,7 +286,11 @@ path from kelicloud Web or backend-generated auto-connect snippets.
 - Remaining rollout gap: configure `KELICLOUD_CANARY_AUTO_DISCOVERY_KEY` plus
   either `KELICLOUD_PANEL_COOKIE` or
   `KELICLOUD_PANEL_USERNAME`/`KELICLOUD_PANEL_PASSWORD` as GitHub repository
-  secrets, then rerun `Real Host Canary` with `control_plane=true`.
+  secrets, then rerun `Real Host Canary` with `control_plane=true`. If the old
+  Go agent service is present on the self-hosted runner, the auto-discovery key
+  secret can be omitted by leaving
+  `derive_auto_discovery_from_old_service=true`; panel authentication is still
+  required.
 
 Live panel control-plane helper:
 

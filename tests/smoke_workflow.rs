@@ -73,6 +73,7 @@ fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     assert!(workflow.contains("require_rollback:"));
     assert!(workflow.contains("keep_installed:"));
     assert!(workflow.contains("control_plane:"));
+    assert!(workflow.contains("derive_auto_discovery_from_old_service:"));
     assert!(workflow.contains("ping_target:"));
     assert!(workflow.contains("old_service_name:"));
     assert!(workflow.contains("rollback_service_name:"));
@@ -83,6 +84,12 @@ fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     assert!(workflow.contains("KELICLOUD_PANEL_COOKIE"));
     assert!(workflow.contains("KELICLOUD_PANEL_USERNAME"));
     assert!(workflow.contains("KELICLOUD_PANEL_PASSWORD"));
+    assert!(workflow.contains("CANARY_DERIVE_AUTO_DISCOVERY_FROM_OLD_SERVICE"));
+    assert!(workflow.contains("Derive auto-discovery from old service"));
+    assert!(workflow.contains("systemctl cat \"${CANARY_OLD_SERVICE_NAME}.service\""));
+    assert!(workflow.contains("--auto-discovery[=[:space:]]"));
+    assert!(workflow.contains("CANARY_AUTO_DISCOVERY_KEY="));
+    assert!(workflow.contains("GITHUB_ENV"));
     assert!(workflow.contains("sudo bash scripts/canary-install.sh"));
     assert!(workflow.contains("sudo --preserve-env=KELICLOUD_PANEL_COOKIE,KELICLOUD_PANEL_USERNAME,KELICLOUD_PANEL_PASSWORD bash scripts/real-host-control-canary.sh"));
     assert!(workflow.contains("--workdir canary-logs"));
