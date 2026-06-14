@@ -5,7 +5,8 @@ backend and passed the data-plane checks: basic-info upload, report WebSocket
 connection, report send, and database persistence. The repeatable
 local-backend Linux smoke path has also passed against the current kelicloud
 backend and latest prepared web bundle, covering CN connectivity config, script
-exec, TCP ping, and admin WebSSH terminal.
+exec, TCP ping, admin WebSSH terminal, and forced auto-discovery token
+rotation with post-recovery control-plane actions.
 
 ## Smoke Entry Points
 
@@ -58,6 +59,23 @@ First full local-backend control-plane pass:
   CN connectivity config receipt, exec task result upload, TCP ping result
   upload, admin terminal session start, xterm-compatible terminal input, and a
   live-agent duration marker for the long-running report loop.
+
+First full auto-discovery forced-token-rotation pass:
+
+- Commit: `a7fc75dd55e2863c800068d15dba2b9119cacddf`
+- Workflow: `Local Backend Smoke`
+- Run: https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27489107929
+- CI run for the same commit:
+  https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27489107928
+- Evidence covered: startup auto-discovery registration, admin API token
+  rotation for the initially registered client, invalid-token detection during
+  periodic basic-info upload, second auto-discovery registration, report
+  WebSocket reconnect with the recovered token, and post-recovery CN
+  connectivity config, exec task result upload, TCP ping result upload, admin
+  WebSSH terminal session, and live-agent duration evidence.
+- Caveat: this smoke verifies token recovery and post-recovery control-plane
+  behavior. Client deletion/offline cleanup behavior is still outside this
+  smoke path.
 
 ## Static Parity Evidence
 
@@ -116,10 +134,12 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
   missing or failed.
 - The local backend smoke path clones the backend, prepares the current web
   bundle through `scripts/prepare-frontend.sh`, starts a MySQL-backed kelicloud
-  server, creates a smoke client, triggers exec/ping/terminal/CN actions through
-  real admin APIs, and runs `smoke-summary --require-pass`. Its companion
-  `Local Backend Smoke` workflow provides the Linux host that this Windows
-  workstation lacks.
+  server, starts the agent through backend auto-discovery, rotates the
+  auto-discovered token through the real admin edit endpoint, waits for
+  invalid-token recovery and re-registration evidence, then triggers
+  exec/ping/terminal/CN actions through real admin APIs against the recovered
+  client and runs `smoke-summary --require-pass`. Its companion `Local Backend
+  Smoke` workflow provides the Linux host that this Windows workstation lacks.
 - Admin WebSSH terminal smoke must match browser behavior: include an `Origin`
   header accepted by backend `CheckOrigin`, wait until the backend/PTY sends a
   shell prompt before typing, send xterm input as binary bytes, and translate
@@ -209,8 +229,7 @@ dynamic smoke produces logs:
 - This workstation is Windows-only for this project, while the agent runtime is
   intentionally Linux-only. Use the `Local Backend Smoke` workflow for the
   repeatable full Linux control-plane check from here.
-- Auto-discovery stale-token recovery still needs a live forced-rotation smoke
-  with exec and terminal after rotation, even though the static recovery paths
-  and shared-token propagation are covered by tests.
+- Client deletion/offline cleanup after auto-discovery re-registration is not
+  covered by the smoke path.
 - Auto-update and non-systemd install parity remain outside the first
   replacement smoke path.
