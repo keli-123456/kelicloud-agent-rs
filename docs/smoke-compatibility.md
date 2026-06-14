@@ -172,6 +172,47 @@ path from kelicloud Web or backend-generated auto-connect snippets.
 - Remaining rollout gap: run one more short real-host canary window and trigger
   a script exec task plus a TCP ping task from the panel while Rust is installed.
 
+2026-06-14 real-host installer replacement follow-up:
+
+- Commit: `b56a879893e5fe9289547267587ff023dde6ac97`
+- Fix committed before this run: `install.sh` now downloads the release asset to
+  a same-directory temporary file and then `mv -f`s it over
+  `/usr/local/bin/kelicloud-agent-rs`. This avoids writing directly to an inode
+  that may still be executing, even if systemd shutdown has a small race.
+- CI workflow for the same commit:
+  https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27494681820
+- Local Backend Smoke workflow for the same commit:
+  https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27494681822
+- Host/provider/region: `vm57463.desivps.com` / `2.56.116.39`
+- Distro/kernel/arch: `Debian GNU/Linux 12 (bookworm)` /
+  `6.1.0-31-amd64` / `x86_64`
+- Evidence file on host:
+  `/root/kelicloud-agent-rs-canary-20260614T093621Z-control/real-host-canary.evidence.md`
+- Canary result: `passed`
+- Explicit install-version pin/upgrade result: `passed: v0.1.0`; the previous
+  `Text file busy` failure did not recur with the atomic replacement installer.
+- Panel online and metrics evidence from the Rust journal:
+  `smoke: basic_info_uploaded`, `smoke: report_websocket_connected`, and 120
+  `smoke: report_sent` lines during the observation window, with zero `error`
+  keyword matches.
+- Script exec task result: not observed on this real host; no
+  `task_result_uploaded` line appeared during either the six-minute observation
+  window or the later manual hold window.
+- TCP ping task result: not observed on this real host; no
+  `ping_result_uploaded` line appeared during either the six-minute observation
+  window or the later manual hold window.
+- Manual hold window:
+  `/root/kelicloud-agent-rs-canary-20260614T094336Z-manual` left Rust active for
+  panel interaction, produced `basic_info_uploaded`, `report_websocket_connected`,
+  and 112 `report_sent` lines, then was rolled back to `komari-agent.service`.
+- Final host state after rollback: `komari-agent.service` was `active/enabled`;
+  `kelicloud-agent-rs.service` was `inactive`.
+- Remaining rollout gap: an authenticated admin must trigger one script exec
+  task and one TCP ping task against the real Rust-hosted client, or provide an
+  authenticated session so the same `POST /api/admin/task/exec` and
+  `POST /api/admin/ping/add` calls used by `scripts/smoke-local-backend.sh` can
+  be executed against the live panel.
+
 Real-host canary evidence template:
 
 - Date:
