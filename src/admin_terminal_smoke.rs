@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::net::{IpAddr, TcpStream};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use tungstenite::client::IntoClientRequest;
@@ -93,6 +94,9 @@ pub fn run_admin_terminal_smoke(
     let (mut socket, _response) = connect(ws_request)
         .map_err(|error| AdminTerminalSmokeError::RequestFailed(error.to_string()))?;
     set_read_timeout(&mut socket, Some(Duration::from_millis(250)))?;
+
+    // Real users type after the backend has paired the browser and agent sockets.
+    thread::sleep(Duration::from_secs(1));
 
     let command = normalize_terminal_command(&request.command);
     socket
