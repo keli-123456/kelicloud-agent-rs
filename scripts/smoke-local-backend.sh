@@ -315,6 +315,7 @@ create_client() {
 start_agent() {
     local root="$1"
     AGENT_LOG="${SMOKE_LOG_DIR}/agent.log"
+    : >"${AGENT_LOG}"
 
     log "Building agent and smoke helpers"
     (cd "${root}" && cargo build --locked --release --bin kelicloud-agent-rs --bin admin-terminal-smoke --bin smoke-summary)
@@ -326,7 +327,7 @@ start_agent() {
         --interval 1 \
         --max-retries 3 \
         --reconnect-interval 1 \
-        --info-report-interval 1 >"${AGENT_LOG}" 2>&1 &
+        --info-report-interval 1 >>"${AGENT_LOG}" 2>&1 &
     AGENT_PID="$!"
 
     wait_for_log "${AGENT_LOG}" "smoke: report_websocket_connected" 45
