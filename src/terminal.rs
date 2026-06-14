@@ -23,6 +23,11 @@ use std::time::Duration;
 const WEB_SSH_DISABLED_MESSAGE: &str =
     "\n\nWeb SSH is disabled. Enable it by running without the --disable-web-ssh flag.";
 
+#[cfg(target_os = "linux")]
+const TERMINAL_SOCKET_READ_TIMEOUT: Duration = Duration::from_millis(20);
+#[cfg(target_os = "linux")]
+const TERMINAL_SOCKET_IDLE_SLEEP: Duration = Duration::from_millis(5);
+
 #[derive(Debug)]
 pub enum TerminalError {
     Protocol(ProtocolError),
@@ -297,7 +302,7 @@ fn run_terminal_session(socket: WebSocket<MaybeTlsStream<TcpStream>>) -> Result<
             let mut socket = socket.lock().map_err(|_| {
                 std::io::Error::new(ErrorKind::Other, "terminal socket lock poisoned")
             })?;
-            set_websocket_read_timeout(&mut socket, Some(Duration::from_millis(100)))?;
+            set_websocket_read_timeout(&mut socket, Some(TERMINAL_SOCKET_READ_TIMEOUT))?;
             match socket.read() {
                 Ok(message) => Some(message),
                 Err(tungstenite::Error::Io(error))
@@ -346,7 +351,8 @@ fn run_terminal_session(socket: WebSocket<MaybeTlsStream<TcpStream>>) -> Result<
                 let _ = output_thread.join();
                 return Ok(());
             }
-            Some(_) | None => {}
+            Some(_) => {}
+            None => thread::sleep(TERMINAL_SOCKET_IDLE_SLEEP),
         }
     }
 }
@@ -408,4 +414,55 @@ fn set_websocket_read_timeout(
         _ => Ok(()),
     }
     .map_err(TerminalError::Io)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_terminal_tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::time::Instant;
+
+    #[test]
+    fn terminal_session_emits_shell_prompt_before_input() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let agent = thread::spawn(move || {
+            let (socket, _) = tungstenite::connect(url).unwrap();
+            let _ = run_terminal_session(socket);
+        });
+
+        let (stream, _) = listener.accept().unwrap();
+        let mut browser = tungstenite::accept(stream).unwrap();
+        browser
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .unwrap();
+
+        let mut output = String::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match browser.read() {
+                Ok(Message::Text(text)) => output.push_str(&text),
+                Ok(Message::Binary(bytes)) => output.push_str(&String::from_utf8_lossy(&bytes)),
+                Ok(Message::Ping(bytes)) => {
+                    let _ = browser.send(Message::Pong(bytes));
+                }
+                Ok(Message::Close(_)) => break,
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(error))
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                Err(error) => panic!("terminal websocket read failed: {error}"),
+            }
+
+            if output.contains("$ ") || output.contains("# ") {
+                let _ = browser.close(None);
+                agent.join().unwrap();
+                return;
+            }
+        }
+
+        let _ = browser.close(None);
+        agent.join().unwrap();
+        panic!("terminal prompt was not emitted before input, last output {output:?}");
+    }
 }
