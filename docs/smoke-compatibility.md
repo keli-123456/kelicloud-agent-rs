@@ -2,9 +2,10 @@
 
 Status: cross-platform backend protocol smoke has run against a real kelicloud
 backend and passed the data-plane checks: basic-info upload, report WebSocket
-connection, report send, and database persistence. A repeatable local-backend
-Linux smoke entry point now exists for control-plane checks, but the first
-GitHub-hosted run is still pending.
+connection, report send, and database persistence. The repeatable
+local-backend Linux smoke path has also passed against the current kelicloud
+backend and latest prepared web bundle, covering CN connectivity config, script
+exec, TCP ping, and admin WebSSH terminal.
 
 ## Smoke Entry Points
 
@@ -47,6 +48,16 @@ and CN connectivity config receipt. `scripts/smoke-local-backend.sh` now covers
 those automatically by starting kelicloud, creating a smoke client, enabling CN
 connectivity settings, dispatching an exec task, creating a TCP ping task, and
 opening an admin WebSSH terminal through `admin-terminal-smoke`.
+
+First full local-backend control-plane pass:
+
+- Commit: `172c1dc3cd5c966447e52781f84a26f266e0912c`
+- Workflow: `Local Backend Smoke`
+- Run: https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27487689850
+- Evidence covered: basic-info upload, report WebSocket, repeated report sends,
+  CN connectivity config receipt, exec task result upload, TCP ping result
+  upload, admin terminal session start, xterm-compatible terminal input, and a
+  live-agent duration marker for the long-running report loop.
 
 ## Static Parity Evidence
 
@@ -109,6 +120,14 @@ These areas have direct Rust tests or code paths matching the Go agent behavior:
   real admin APIs, and runs `smoke-summary --require-pass`. Its companion
   `Local Backend Smoke` workflow provides the Linux host that this Windows
   workstation lacks.
+- Admin WebSSH terminal smoke must match browser behavior: include an `Origin`
+  header accepted by backend `CheckOrigin`, wait until the backend/PTY sends a
+  shell prompt before typing, send xterm input as binary bytes, and translate
+  carriage return input to newline before writing to the Linux PTY.
+- The local-backend smoke script opens `agent.log` in append mode after an
+  explicit truncation. This prevents helper-written evidence, such as
+  `live smoke duration reached`, from being overwritten by the still-running
+  agent process.
 
 ## First Dynamic Smoke Checks
 
@@ -185,11 +204,13 @@ dynamic smoke produces logs:
    targets systemd only. Runtime smoke can still pass, but installation parity is
    incomplete for OpenRC/procd/upstart hosts.
 
-## Current Blockers
+## Remaining Limits
 
-- Full agent live smoke needs a Linux execution environment because the agent
-  binary intentionally exits on non-Linux platforms.
-- This workstation does not have bash, WSL, or Docker, so
-  `scripts/smoke-local-backend.sh` cannot be executed locally here.
-- The first `Local Backend Smoke` GitHub Actions run has not completed yet; its
-  result should become the first full Linux control-plane evidence record.
+- This workstation is Windows-only for this project, while the agent runtime is
+  intentionally Linux-only. Use the `Local Backend Smoke` workflow for the
+  repeatable full Linux control-plane check from here.
+- Auto-discovery stale-token recovery still needs a live forced-rotation smoke
+  with exec and terminal after rotation, even though the static recovery paths
+  and shared-token propagation are covered by tests.
+- Auto-update and non-systemd install parity remain outside the first
+  replacement smoke path.
