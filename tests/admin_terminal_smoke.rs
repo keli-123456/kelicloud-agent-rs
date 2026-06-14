@@ -101,6 +101,24 @@ fn admin_terminal_smoke_does_not_send_input_immediately_after_connect() {
         socket
             .send(Message::Text("waiting for agent".to_string().into()))
             .unwrap();
+
+        socket
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(1200)))
+            .unwrap();
+        match socket.read() {
+            Err(tungstenite::Error::Io(error))
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            other => panic!("terminal input was sent before shell prompt: {other:?}"),
+        }
+
+        socket
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        socket
+            .send(Message::Binary(b"runner@test:~$ ".to_vec().into()))
+            .unwrap();
         let message = socket.read().unwrap();
         match message {
             Message::Binary(bytes) => assert_eq!(bytes.as_ref(), b"whoami\r"),
@@ -136,7 +154,7 @@ fn admin_terminal_smoke_waits_for_shell_prompt_before_sending_input() {
 
         socket
             .get_mut()
-            .set_read_timeout(Some(Duration::from_millis(1200)))
+            .set_read_timeout(Some(Duration::from_millis(2200)))
             .unwrap();
         match socket.read() {
             Err(tungstenite::Error::Io(error))

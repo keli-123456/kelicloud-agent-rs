@@ -11,8 +11,8 @@ use tungstenite::{connect, Message, WebSocket};
 
 const TERMINAL_READ_POLL: Duration = Duration::from_millis(250);
 const TERMINAL_INITIAL_QUIET_GRACE: Duration = Duration::from_millis(500);
-const TERMINAL_PROMPT_GRACE: Duration = Duration::from_millis(1500);
-const TERMINAL_PROMPT_HARD_LIMIT: Duration = Duration::from_secs(5);
+const TERMINAL_PROMPT_GRACE: Duration = Duration::from_secs(8);
+const TERMINAL_PROMPT_HARD_LIMIT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdminTerminalSmokeError {
