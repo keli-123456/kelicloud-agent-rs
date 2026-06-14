@@ -13,6 +13,8 @@ rotation with post-recovery control-plane actions.
 - Cross-platform backend data-plane: `cargo run --locked --bin backend-protocol-smoke`.
 - Local Linux: `scripts/smoke-live.sh --mode live --duration 120`.
 - Real Linux host install/rollback: `scripts/canary-install.sh`.
+- Real Linux host install/control/rollback:
+  `scripts/real-host-control-canary.sh`.
 - Real Linux host live panel control-plane trigger:
   `scripts/live-panel-control-smoke.sh`.
 - Local real backend Linux: `scripts/smoke-local-backend.sh`.
@@ -219,6 +221,26 @@ path from kelicloud Web or backend-generated auto-connect snippets.
   the real host.
 
 Live panel control-plane helper:
+
+Integrated real-host control canary:
+
+```bash
+sudo KELICLOUD_PANEL_COOKIE='session_token=...' \
+scripts/real-host-control-canary.sh \
+  --endpoint https://tanzhen2.huhu.icu \
+  --auto-discovery <auto-discovery-key> \
+  --ping-target 1.1.1.1:443
+```
+
+Run this wrapper on the real Linux host when an authenticated admin cookie is
+available. It downloads the latest `install.sh`, `canary-install.sh`, and
+`live-panel-control-smoke.sh` from `main`, stops the old `komari-agent.service`,
+installs `kelicloud-agent-rs`, verifies restart plus install-version pinning,
+keeps Rust active, parses the latest `smoke: auto_discovery_registered uuid=...`
+line from `journalctl`, triggers one exec task and one TCP ping task through the
+live panel APIs, then uninstalls Rust and restores the old service before exit.
+The generated `real-host-control-canary.evidence.md` is the preferred evidence
+file for closing the remaining real-host exec/ping rollout gap.
 
 ```bash
 KELICLOUD_PANEL_COOKIE='session_token=...' \
