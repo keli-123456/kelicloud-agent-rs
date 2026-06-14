@@ -101,8 +101,14 @@ pub fn run_admin_terminal_smoke(
 
     let mut output = String::new();
     wait_for_terminal_ready(&mut socket, &mut output, request.timeout)?;
+    println!(
+        "smoke: admin_terminal_ready prompt={} output_chars={}",
+        terminal_output_has_prompt(&output),
+        output.chars().count()
+    );
 
     let command = normalize_terminal_command(&request.command);
+    println!("smoke: admin_terminal_input_sent bytes={}", command.len());
     socket
         .send(Message::Binary(command.into()))
         .map_err(|error| AdminTerminalSmokeError::RequestFailed(error.to_string()))?;

@@ -2,9 +2,9 @@ use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::protocol::BackendMessage;
 use kelicloud_agent_rs::runtime::ControlMessageHandler;
 use kelicloud_agent_rs::terminal::{
-    parse_terminal_client_text, terminal_input_received_event, terminal_output_sent_event,
-    terminal_session_error_event, TerminalClientCommand, TerminalConnector,
-    TerminalControlMessageHandler, TerminalError, TungsteniteTerminalConnector,
+    parse_terminal_client_text, terminal_input_for_pty, terminal_input_received_event,
+    terminal_output_sent_event, terminal_session_error_event, TerminalClientCommand,
+    TerminalConnector, TerminalControlMessageHandler, TerminalError, TungsteniteTerminalConnector,
 };
 use kelicloud_agent_rs::token::SharedAgentToken;
 use std::io::{Read, Write};
@@ -118,6 +118,14 @@ fn parse_terminal_client_text_treats_plain_text_as_input() {
     assert_eq!(
         parse_terminal_client_text(b"raw input"),
         TerminalClientCommand::Input(b"raw input".to_vec())
+    );
+}
+
+#[test]
+fn terminal_input_for_pty_converts_xterm_carriage_return_to_newline() {
+    assert_eq!(
+        terminal_input_for_pty(b"printf 'ok\\n'\r"),
+        b"printf 'ok\\n'\n".to_vec()
     );
 }
 

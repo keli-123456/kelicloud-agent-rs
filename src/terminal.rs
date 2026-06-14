@@ -161,6 +161,13 @@ pub fn terminal_output_sent_event(bytes: usize) -> String {
     smoke_event_line("terminal_output_sent", &[("bytes", &bytes.to_string())])
 }
 
+pub fn terminal_input_for_pty(input: &[u8]) -> Vec<u8> {
+    input
+        .iter()
+        .map(|byte| if *byte == b'\r' { b'\n' } else { *byte })
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct TungsteniteTerminalConnector {
     endpoint: String,
@@ -312,7 +319,7 @@ fn run_terminal_session(socket: WebSocket<MaybeTlsStream<TcpStream>>) -> Result<
             Some(Message::Text(text)) => match parse_terminal_client_text(text.as_bytes()) {
                 TerminalClientCommand::Input(input) => {
                     println!("{}", terminal_input_received_event(input.len()));
-                    writer.write_all(&input)?;
+                    writer.write_all(&terminal_input_for_pty(&input))?;
                     writer.flush()?;
                 }
                 TerminalClientCommand::Resize { cols, rows } => {
@@ -331,7 +338,7 @@ fn run_terminal_session(socket: WebSocket<MaybeTlsStream<TcpStream>>) -> Result<
             },
             Some(Message::Binary(bytes)) => {
                 println!("{}", terminal_input_received_event(bytes.len()));
-                writer.write_all(&bytes)?;
+                writer.write_all(&terminal_input_for_pty(&bytes))?;
                 writer.flush()?;
             }
             Some(Message::Close(_)) => {
