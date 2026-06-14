@@ -220,6 +220,36 @@ path from kelicloud Web or backend-generated auto-connect snippets.
   `--ping-target` are provided while `kelicloud-agent-rs.service` is active on
   the real host.
 
+2026-06-14 integrated real-host wrapper follow-up:
+
+- Commit: `596450549507acad035954c3fb7d46170137f3fb`
+- CI workflow:
+  https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27495588232
+- Local Backend Smoke workflow:
+  https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27495588233
+- Host/provider/region: `vm57463.desivps.com` / `2.56.116.39`
+- Wrapper command source: latest
+  `scripts/real-host-control-canary.sh` from `main`.
+- Wrapper mode: `--skip-control`, because no authenticated live-panel admin
+  cookie was available in this session.
+- Evidence file on host:
+  `/root/kelicloud-agent-rs-canary-20260614T101903Z-wrapper-skip/real-host-control-canary.evidence.md`
+- Wrapper result: `passed`
+- Rust client UUID parsed from journal:
+  `ba3612ba-9b73-4271-842c-be05615d7a6a`
+- Verified wrapper stages: latest script download, Rust install, service
+  activation, systemd restart, explicit `v0.1.0` pin/reinstall with atomic
+  binary replacement, UUID parsing from
+  `smoke: auto_discovery_registered uuid=...`, Rust uninstall, and old-service
+  rollback.
+- Final host state after wrapper exit: `komari-agent.service` was
+  `active/enabled`; `kelicloud-agent-rs.service` was `inactive`.
+- Remaining rollout gap: run the same wrapper without `--skip-control` while
+  providing `KELICLOUD_PANEL_COOKIE` or `KELICLOUD_PANEL_COOKIE_JAR`, so the
+  live panel can create the script exec task and TCP ping task and the Rust
+  journal can prove `smoke: task_result_uploaded` plus
+  `smoke: ping_result_uploaded`.
+
 Live panel control-plane helper:
 
 Integrated real-host control canary:
