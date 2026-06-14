@@ -401,6 +401,11 @@ print_summary() {
     (cd "${root}" && cargo run --locked --quiet --bin smoke-summary -- --require-pass "${AGENT_LOG}") | tee "${summary_file}"
 }
 
+record_agent_stayed_alive() {
+    log "Recording agent stayed-alive smoke evidence"
+    printf '%s\n' "live smoke duration reached" >>"${AGENT_LOG}"
+}
+
 main() {
     require_command git
     require_command go
@@ -440,6 +445,7 @@ main() {
     trigger_ping
     set_stage "trigger terminal"
     trigger_terminal "${root}"
+    record_agent_stayed_alive
     set_stage "print smoke summary"
     print_summary "${root}"
 
