@@ -203,6 +203,32 @@ parse_latest_registered_uuid() {
     printf '%s\n' "$uuid"
 }
 
+wait_for_journal_evidence() {
+    local since="$1"
+    local needle="$2"
+    local timeout="$3"
+    local deadline=$((SECONDS + timeout))
+    until journalctl -u "$SERVICE_NAME" --since "$since" --no-pager 2>/dev/null | grep -Fq "$needle"; do
+        if (( SECONDS >= deadline )); then
+            log "journalctl -u ${SERVICE_NAME} --since ${since} --no-pager"
+            journalctl -u "$SERVICE_NAME" --since "$since" --no-pager 2>/dev/null | tail -n 120 || true
+            die "timed out waiting for journal evidence: ${needle}"
+        fi
+        sleep 1
+    done
+}
+
+wait_for_rust_report_websocket() {
+    local since_epoch
+    since_epoch="$(date -u '+%s' 2>/dev/null || true)"
+    [[ -n "$since_epoch" ]] || since_epoch="$STARTED_EPOCH"
+
+    log "==> wait for rust report websocket"
+    systemctl restart "${SERVICE_NAME}.service"
+    wait_for_journal_evidence "@${since_epoch}" "smoke: report_websocket_connected" "$SERVICE_WAIT_SECONDS"
+    log "Rust report WebSocket connected."
+}
+
 run_install_canary() {
     log "==> canary install/restart/pin"
     log "Endpoint: ${ENDPOINT}"
@@ -229,6 +255,8 @@ run_control_smoke() {
     fi
 
     log "==> live panel control-plane smoke"
+    wait_for_rust_report_websocket
+
     local args=(
         --endpoint "$ENDPOINT"
         --client "$RUST_CLIENT_UUID"

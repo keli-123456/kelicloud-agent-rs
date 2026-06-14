@@ -80,6 +80,27 @@ fn real_host_control_canary_passes_panel_credentials_through_environment() {
 }
 
 #[test]
+fn real_host_control_canary_waits_for_report_websocket_before_control_api() {
+    let script = std::fs::read_to_string(real_host_control_canary_script_path()).unwrap();
+
+    for expected in [
+        "wait_for_rust_report_websocket",
+        "smoke: report_websocket_connected",
+        "systemctl restart \"${SERVICE_NAME}.service\"",
+        "Rust report WebSocket connected.",
+    ] {
+        assert!(script.contains(expected), "missing {expected}");
+    }
+
+    let wait_pos = script.find("wait_for_rust_report_websocket").unwrap();
+    let control_pos = script.find("bash \"${WORKDIR}/live-panel-control-smoke.sh\"").unwrap();
+    assert!(
+        wait_pos < control_pos,
+        "wrapper should wait for the Rust report websocket before calling live panel control APIs"
+    );
+}
+
+#[test]
 fn real_host_control_canary_has_valid_bash_syntax_when_bash_is_available() {
     let Some(bash) = find_bash() else {
         eprintln!("bash not available; skipping syntax check");
