@@ -1,5 +1,5 @@
 use kelicloud_agent_rs::admin_terminal_smoke::{
-    build_admin_terminal_ws_url, session_cookie_header,
+    admin_terminal_origin, build_admin_terminal_ws_url, session_cookie_header,
 };
 
 #[test]
@@ -27,5 +27,17 @@ fn session_cookie_header_uses_backend_cookie_name() {
     assert_eq!(
         session_cookie_header(" session-token "),
         "session_token=session-token"
+    );
+}
+
+#[test]
+fn admin_terminal_origin_matches_panel_origin() {
+    assert_eq!(
+        admin_terminal_origin("http://127.0.0.1:25775/base/").unwrap(),
+        "http://127.0.0.1:25775"
+    );
+    assert_eq!(
+        admin_terminal_origin("https://panel.example.com/base/").unwrap(),
+        "https://panel.example.com"
     );
 }

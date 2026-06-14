@@ -4,7 +4,7 @@ use std::net::{IpAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 use tungstenite::client::IntoClientRequest;
-use tungstenite::http::header::COOKIE;
+use tungstenite::http::header::{COOKIE, ORIGIN};
 use tungstenite::http::HeaderValue;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{connect, Message, WebSocket};
@@ -66,6 +66,10 @@ pub fn session_cookie_header(session_token: &str) -> String {
     format!("session_token={}", session_token.trim())
 }
 
+pub fn admin_terminal_origin(endpoint: &str) -> Result<String, AdminTerminalSmokeError> {
+    normalize_http_origin(endpoint)
+}
+
 pub fn run_admin_terminal_smoke(
     request: &AdminTerminalSmokeRequest,
 ) -> Result<(), AdminTerminalSmokeError> {
@@ -82,6 +86,9 @@ pub fn run_admin_terminal_smoke(
     let cookie = HeaderValue::from_str(&session_cookie_header(&request.session_token))
         .map_err(|error| AdminTerminalSmokeError::InvalidRequest(error.to_string()))?;
     ws_request.headers_mut().insert(COOKIE, cookie);
+    let origin = HeaderValue::from_str(&admin_terminal_origin(&request.endpoint)?)
+        .map_err(|error| AdminTerminalSmokeError::InvalidRequest(error.to_string()))?;
+    ws_request.headers_mut().insert(ORIGIN, origin);
 
     let (mut socket, _response) = connect(ws_request)
         .map_err(|error| AdminTerminalSmokeError::RequestFailed(error.to_string()))?;
@@ -173,12 +180,56 @@ fn normalize_ws_base(endpoint: &str) -> Result<String, AdminTerminalSmokeError> 
     Err(AdminTerminalSmokeError::UnsupportedScheme(scheme))
 }
 
+fn normalize_http_origin(endpoint: &str) -> Result<String, AdminTerminalSmokeError> {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    if endpoint.is_empty() {
+        return Err(AdminTerminalSmokeError::EmptyEndpoint);
+    }
+
+    if let Some(rest) = endpoint.strip_prefix("https://") {
+        return Ok(format!(
+            "https://{}",
+            authority_with_ascii_host(endpoint_authority(rest))
+        ));
+    }
+    if let Some(rest) = endpoint.strip_prefix("http://") {
+        return Ok(format!(
+            "http://{}",
+            authority_with_ascii_host(endpoint_authority(rest))
+        ));
+    }
+    if let Some(rest) = endpoint.strip_prefix("wss://") {
+        return Ok(format!(
+            "https://{}",
+            authority_with_ascii_host(endpoint_authority(rest))
+        ));
+    }
+    if let Some(rest) = endpoint.strip_prefix("ws://") {
+        return Ok(format!(
+            "http://{}",
+            authority_with_ascii_host(endpoint_authority(rest))
+        ));
+    }
+
+    let scheme = endpoint
+        .split_once("://")
+        .map(|(scheme, _)| scheme.to_string())
+        .unwrap_or_else(|| "missing".to_string());
+    Err(AdminTerminalSmokeError::UnsupportedScheme(scheme))
+}
+
 fn endpoint_rest_with_ascii_host(rest: &str) -> String {
     let (authority, suffix) = rest
         .split_once('/')
         .map(|(authority, suffix)| (authority, format!("/{suffix}")))
         .unwrap_or_else(|| (rest, String::new()));
     format!("{}{}", authority_with_ascii_host(authority), suffix)
+}
+
+fn endpoint_authority(rest: &str) -> &str {
+    rest.split_once('/')
+        .map(|(authority, _)| authority)
+        .unwrap_or(rest)
 }
 
 fn authority_with_ascii_host(authority: &str) -> String {
