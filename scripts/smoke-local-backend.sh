@@ -385,7 +385,13 @@ trigger_terminal() {
         fi
         die "admin-terminal-smoke failed${details}$(log_tail_for_error)"
     fi
-    wait_for_log "${AGENT_LOG}" "smoke: terminal_session_started" 30
+    log "admin-terminal-smoke succeeded"
+    if [[ -f "${HELPER_LOG}" ]]; then
+        tail -n 20 "${HELPER_LOG}" || true
+    fi
+    if ! grep -Fq "smoke: terminal_session_started" "${AGENT_LOG}"; then
+        die "admin-terminal-smoke succeeded but terminal_session_started was not observed$(log_tail_for_error)"
+    fi
 }
 
 print_summary() {
