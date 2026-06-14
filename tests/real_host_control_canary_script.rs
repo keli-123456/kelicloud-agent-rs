@@ -86,8 +86,9 @@ fn real_host_control_canary_waits_for_report_websocket_before_control_api() {
     for expected in [
         "wait_for_rust_report_websocket",
         "smoke: report_websocket_connected",
+        "smoke: report_sent",
         "systemctl restart \"${SERVICE_NAME}.service\"",
-        "Rust report WebSocket connected.",
+        "Rust report WebSocket connected and report sent.",
     ] {
         assert!(script.contains(expected), "missing {expected}");
     }

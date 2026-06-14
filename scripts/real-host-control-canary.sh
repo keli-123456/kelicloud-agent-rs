@@ -226,7 +226,8 @@ wait_for_rust_report_websocket() {
     log "==> wait for rust report websocket"
     systemctl restart "${SERVICE_NAME}.service"
     wait_for_journal_evidence "@${since_epoch}" "smoke: report_websocket_connected" "$SERVICE_WAIT_SECONDS"
-    log "Rust report WebSocket connected."
+    wait_for_journal_evidence "@${since_epoch}" "smoke: report_sent" "$SERVICE_WAIT_SECONDS"
+    log "Rust report WebSocket connected and report sent."
 }
 
 run_install_canary() {
