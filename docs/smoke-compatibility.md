@@ -292,6 +292,31 @@ path from kelicloud Web or backend-generated auto-connect snippets.
   `derive_auto_discovery_from_old_service=true`; panel authentication is still
   required.
 
+2026-06-14 GitHub control-plane workflow derived-key check:
+
+- Commit: `d844a9ac3c055a6e816e704f7e906c8cae23df8e`
+- Workflow: `Real Host Canary`
+- Run:
+  https://github.com/keli-123456/kelicloud-agent-rs/actions/runs/27497188515
+- Runner: temporary ephemeral runner registered on
+  `vm57463.desivps.com` / `2.56.116.39` with the `kelicloud-canary` label.
+- Result: `failed before canary execution`
+- Evidence from job log: `CANARY_AUTO_DISCOVERY_KEY` became masked after the
+  `Derive auto-discovery from old service` step, proving the workflow parsed
+  the key from `komari-agent.service` and no longer requires
+  `KELICLOUD_CANARY_AUTO_DISCOVERY_KEY` when the old service is present.
+- Remaining failure: `control_plane=true requires KELICLOUD_PANEL_COOKIE or
+  KELICLOUD_PANEL_USERNAME/KELICLOUD_PANEL_PASSWORD secrets.`
+- Host impact: the workflow failed during configuration validation; it did not
+  install or start `kelicloud-agent-rs`.
+- Post-run cleanup: the ephemeral runner exited and was removed; final host
+  state remained `komari-agent.service active/enabled` and
+  `kelicloud-agent-rs.service inactive`.
+- Remaining rollout gap: configure either `KELICLOUD_PANEL_COOKIE` or
+  `KELICLOUD_PANEL_USERNAME`/`KELICLOUD_PANEL_PASSWORD` as GitHub repository
+  secrets, then rerun `Real Host Canary` with `control_plane=true` and
+  `derive_auto_discovery_from_old_service=true`.
+
 Live panel control-plane helper:
 
 Integrated real-host control canary:
