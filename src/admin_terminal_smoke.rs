@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::fmt;
 use std::net::{IpAddr, TcpStream};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use tungstenite::client::IntoClientRequest;
@@ -9,6 +8,11 @@ use tungstenite::http::header::{COOKIE, ORIGIN};
 use tungstenite::http::HeaderValue;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{connect, Message, WebSocket};
+
+const TERMINAL_READ_POLL: Duration = Duration::from_millis(250);
+const TERMINAL_INITIAL_QUIET_GRACE: Duration = Duration::from_millis(500);
+const TERMINAL_PROMPT_GRACE: Duration = Duration::from_millis(1500);
+const TERMINAL_PROMPT_HARD_LIMIT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdminTerminalSmokeError {
@@ -93,40 +97,19 @@ pub fn run_admin_terminal_smoke(
 
     let (mut socket, _response) = connect(ws_request)
         .map_err(|error| AdminTerminalSmokeError::RequestFailed(error.to_string()))?;
-    set_read_timeout(&mut socket, Some(Duration::from_millis(250)))?;
+    set_read_timeout(&mut socket, Some(TERMINAL_READ_POLL))?;
 
-    // Real users type after the backend has paired the browser and agent sockets.
-    thread::sleep(Duration::from_secs(1));
+    let mut output = String::new();
+    wait_for_terminal_ready(&mut socket, &mut output, request.timeout)?;
 
     let command = normalize_terminal_command(&request.command);
     socket
         .send(Message::Binary(command.into()))
         .map_err(|error| AdminTerminalSmokeError::RequestFailed(error.to_string()))?;
 
-    let mut output = String::new();
     let deadline = Instant::now() + request.timeout;
     while Instant::now() < deadline {
-        match socket.read() {
-            Ok(Message::Text(text)) => output.push_str(&text),
-            Ok(Message::Binary(bytes)) => output.push_str(&String::from_utf8_lossy(&bytes)),
-            Ok(Message::Ping(bytes)) => {
-                let _ = socket.send(Message::Pong(bytes));
-            }
-            Ok(Message::Close(_)) => {
-                return Err(AdminTerminalSmokeError::RequestFailed(
-                    "terminal websocket closed before expected output".to_string(),
-                ));
-            }
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(error))
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
-            Err(error) => {
-                return Err(AdminTerminalSmokeError::RequestFailed(error.to_string()));
-            }
-        }
+        read_terminal_message(&mut socket, &mut output)?;
 
         if output.contains(&request.expect) {
             let _ = socket.close(None);
@@ -139,6 +122,76 @@ pub fn run_admin_terminal_smoke(
         request.expect,
         tail(&output, 400)
     )))
+}
+
+fn wait_for_terminal_ready(
+    socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+    output: &mut String,
+    request_timeout: Duration,
+) -> Result<(), AdminTerminalSmokeError> {
+    let hard_limit = request_timeout.min(TERMINAL_PROMPT_HARD_LIMIT);
+    let started_at = Instant::now();
+    let deadline = started_at + hard_limit;
+    let mut first_output_at = None;
+
+    while Instant::now() < deadline {
+        if read_terminal_message(socket, output)? && first_output_at.is_none() {
+            first_output_at = Some(Instant::now());
+        }
+
+        if terminal_output_has_prompt(output) {
+            return Ok(());
+        }
+
+        if first_output_at.is_none() && started_at.elapsed() >= TERMINAL_INITIAL_QUIET_GRACE {
+            return Ok(());
+        }
+
+        if let Some(first_output_at) = first_output_at {
+            if first_output_at.elapsed() >= TERMINAL_PROMPT_GRACE {
+                return Ok(());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn read_terminal_message(
+    socket: &mut WebSocket<MaybeTlsStream<TcpStream>>,
+    output: &mut String,
+) -> Result<bool, AdminTerminalSmokeError> {
+    match socket.read() {
+        Ok(Message::Text(text)) => {
+            output.push_str(&text);
+            Ok(true)
+        }
+        Ok(Message::Binary(bytes)) => {
+            output.push_str(&String::from_utf8_lossy(&bytes));
+            Ok(true)
+        }
+        Ok(Message::Ping(bytes)) => {
+            let _ = socket.send(Message::Pong(bytes));
+            Ok(false)
+        }
+        Ok(Message::Close(_)) => Err(AdminTerminalSmokeError::RequestFailed(
+            "terminal websocket closed before expected output".to_string(),
+        )),
+        Ok(_) => Ok(false),
+        Err(tungstenite::Error::Io(error))
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(AdminTerminalSmokeError::RequestFailed(error.to_string())),
+    }
+}
+
+fn terminal_output_has_prompt(output: &str) -> bool {
+    output.contains("$ ") || output.contains("# ")
 }
 
 fn normalize_terminal_command(command: &str) -> Vec<u8> {
