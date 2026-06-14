@@ -94,7 +94,9 @@ fn real_host_control_canary_waits_for_report_websocket_before_control_api() {
     }
 
     let wait_pos = script.find("wait_for_rust_report_websocket").unwrap();
-    let control_pos = script.find("bash \"${WORKDIR}/live-panel-control-smoke.sh\"").unwrap();
+    let control_pos = script
+        .find("bash \"${WORKDIR}/live-panel-control-smoke.sh\"")
+        .unwrap();
     assert!(
         wait_pos < control_pos,
         "wrapper should wait for the Rust report websocket before calling live panel control APIs"
