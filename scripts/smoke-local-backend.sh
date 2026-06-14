@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 KELICLOUD_BACKEND_REPO="${KELICLOUD_BACKEND_REPO:-https://github.com/keli-123456/kelicloud.git}"
 KELICLOUD_BACKEND_REF="${KELICLOUD_BACKEND_REF:-main}"
