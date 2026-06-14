@@ -13,6 +13,8 @@ rotation with post-recovery control-plane actions.
 - Cross-platform backend data-plane: `cargo run --locked --bin backend-protocol-smoke`.
 - Local Linux: `scripts/smoke-live.sh --mode live --duration 120`.
 - Real Linux host install/rollback: `scripts/canary-install.sh`.
+- Real Linux host live panel control-plane trigger:
+  `scripts/live-panel-control-smoke.sh`.
 - Local real backend Linux: `scripts/smoke-local-backend.sh`.
 - GitHub Actions: manually run the `Smoke` workflow.
 - GitHub Actions real host canary: manually run the `Real Host Canary` workflow
@@ -211,7 +213,26 @@ path from kelicloud Web or backend-generated auto-connect snippets.
   task and one TCP ping task against the real Rust-hosted client, or provide an
   authenticated session so the same `POST /api/admin/task/exec` and
   `POST /api/admin/ping/add` calls used by `scripts/smoke-local-backend.sh` can
-  be executed against the live panel.
+  be executed against the live panel. `scripts/live-panel-control-smoke.sh`
+  automates this once `KELICLOUD_PANEL_COOKIE`, `--endpoint`, `--client`, and
+  `--ping-target` are provided while `kelicloud-agent-rs.service` is active on
+  the real host.
+
+Live panel control-plane helper:
+
+```bash
+KELICLOUD_PANEL_COOKIE='session_token=...' \
+scripts/live-panel-control-smoke.sh \
+  --endpoint https://tanzhen2.huhu.icu \
+  --client <rust-client-uuid> \
+  --ping-target 1.1.1.1:443
+```
+
+Run this helper on the real Linux host during a Rust canary hold window. It
+creates one script exec task through `/api/admin/task/exec`, creates one TCP
+ping task through `/api/admin/ping/add`, waits for the exec API result, and
+waits for `smoke: task_result_uploaded` plus `smoke: ping_result_uploaded` in
+`journalctl -u kelicloud-agent-rs`.
 
 Real-host canary evidence template:
 
