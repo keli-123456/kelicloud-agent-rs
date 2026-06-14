@@ -100,7 +100,12 @@ where
         let connector = Arc::clone(&self.connector);
         let remote_control_disabled = self.remote_control_disabled;
         thread::spawn(move || {
-            let _ = connector.start_terminal(&request_id, remote_control_disabled);
+            if let Err(error) = connector.start_terminal(&request_id, remote_control_disabled) {
+                eprintln!(
+                    "{}",
+                    terminal_session_error_event(&request_id, &error.to_string())
+                );
+            }
         });
     }
 }
@@ -139,6 +144,13 @@ pub fn parse_terminal_client_text(bytes: &[u8]) -> TerminalClientCommand {
         },
         Err(_) => TerminalClientCommand::Input(bytes.to_vec()),
     }
+}
+
+pub fn terminal_session_error_event(request_id: &str, error: &str) -> String {
+    smoke_event_line(
+        "terminal_session_error",
+        &[("request_id", request_id), ("error", error)],
+    )
 }
 
 #[derive(Debug, Clone)]

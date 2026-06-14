@@ -33,6 +33,7 @@ fn local_backend_smoke_script_surfaces_terminal_helper_failures() {
 
     assert!(script.contains("admin-terminal-smoke failed"));
     assert!(script.contains("tail -n 80 \"${HELPER_LOG}\""));
+    assert!(script.contains("admin-terminal-smoke failed${details}$(log_tail_for_error)"));
 }
 
 #[test]

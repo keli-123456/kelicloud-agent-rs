@@ -383,7 +383,7 @@ trigger_terminal() {
         if [[ -f "${HELPER_LOG}" ]]; then
             details="$(printf '\n--- %s tail ---\n' "${HELPER_LOG}")$(tail -n 80 "${HELPER_LOG}" 2>/dev/null || true)"
         fi
-        die "admin-terminal-smoke failed${details}"
+        die "admin-terminal-smoke failed${details}$(log_tail_for_error)"
     fi
     wait_for_log "${AGENT_LOG}" "smoke: terminal_session_started" 30
 }
