@@ -259,10 +259,15 @@ require_root() {
 }
 
 stop_existing_service_for_upgrade() {
-    if systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1 &&
-        systemctl list-unit-files "${SERVICE_NAME}.service" | grep -q "${SERVICE_NAME}.service"; then
-        systemctl stop "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
-    fi
+    systemctl stop "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
+    local deadline=$((SECONDS + 30))
+    while systemctl is-active --quiet "${SERVICE_NAME}.service" 2>/dev/null; do
+        if (( SECONDS >= deadline )); then
+            systemctl kill "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
+            break
+        fi
+        sleep 1
+    done
 }
 
 detect_arch() {
@@ -290,9 +295,15 @@ download_url() {
 
 install_binary() {
     mkdir -p "$(dirname "$BIN_PATH")"
+    local tmp_binary
+    tmp_binary="$(mktemp "$(dirname "$BIN_PATH")/.${SERVICE_NAME}.XXXXXX")"
     if [[ -n "$SOURCE_BINARY" ]]; then
         [[ -f "$SOURCE_BINARY" ]] || die "source binary not found: $SOURCE_BINARY"
-        install -m 0755 "$SOURCE_BINARY" "$BIN_PATH"
+        if ! install -m 0755 "$SOURCE_BINARY" "$tmp_binary"; then
+            rm -f "$tmp_binary"
+            return 1
+        fi
+        mv -f "$tmp_binary" "$BIN_PATH"
         return
     fi
 
@@ -302,8 +313,15 @@ install_binary() {
     local url
     url="$(download_url "$arch")"
     log "Downloading ${url}"
-    curl -fL "$url" -o "$BIN_PATH"
-    chmod 0755 "$BIN_PATH"
+    if ! curl -fL "$url" -o "$tmp_binary"; then
+        rm -f "$tmp_binary"
+        return 1
+    fi
+    if ! chmod 0755 "$tmp_binary"; then
+        rm -f "$tmp_binary"
+        return 1
+    fi
+    mv -f "$tmp_binary" "$BIN_PATH"
 }
 
 render_env() {

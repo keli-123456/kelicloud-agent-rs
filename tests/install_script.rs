@@ -153,6 +153,17 @@ fn install_script_stops_existing_service_before_replacing_binary() {
     assert!(script.contains("stop_existing_service_for_upgrade\n    install_binary"));
 }
 
+#[test]
+fn install_script_downloads_to_temporary_file_before_replacing_binary() {
+    let script = std::fs::read_to_string(install_script_path()).unwrap();
+
+    assert!(script
+        .contains("tmp_binary=\"$(mktemp \"$(dirname \"$BIN_PATH\")/.${SERVICE_NAME}.XXXXXX\")\""));
+    assert!(script.contains("curl -fL \"$url\" -o \"$tmp_binary\""));
+    assert!(script.contains("mv -f \"$tmp_binary\" \"$BIN_PATH\""));
+    assert!(!script.contains("curl -fL \"$url\" -o \"$BIN_PATH\""));
+}
+
 #[cfg(unix)]
 #[test]
 fn render_env_maps_install_version_and_github_proxy_aliases() {
