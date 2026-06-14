@@ -1,7 +1,8 @@
 use kelicloud_agent_rs::auto_discovery::{
-    build_auto_discovery_register_url, resolve_auto_discovery_with, AutoDiscoveryCache,
-    AutoDiscoveryError, AutoDiscoveryRegisterRequest, AutoDiscoveryRegistrar,
-    AutoDiscoveryTokenRecovery, ReqwestAutoDiscoveryRegistrar,
+    auto_discovery_registered_smoke_line, build_auto_discovery_register_url,
+    resolve_auto_discovery_with, AutoDiscoveryCache, AutoDiscoveryError,
+    AutoDiscoveryRegisterRequest, AutoDiscoveryRegistrar, AutoDiscoveryTokenRecovery,
+    ReqwestAutoDiscoveryRegistrar,
 };
 use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::transport::TransportError;
@@ -22,6 +23,19 @@ fn register_url_normalizes_base_and_escapes_hostname() {
     assert_eq!(
         url,
         "https://panel.example.com/base/api/clients/register?name=Auto%20node%2Fslash"
+    );
+}
+
+#[test]
+fn auto_discovery_registered_smoke_line_includes_uuid_only() {
+    let cache = AutoDiscoveryCache {
+        uuid: "registered-client".to_string(),
+        token: "registered-token".to_string(),
+    };
+
+    assert_eq!(
+        auto_discovery_registered_smoke_line(&cache),
+        "smoke: auto_discovery_registered uuid=registered-client"
     );
 }
 

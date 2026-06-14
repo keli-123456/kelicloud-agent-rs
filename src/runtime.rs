@@ -255,7 +255,7 @@ fn upload_basic_info_with_token_recovery<H, R>(
     headers: &[HeaderPair],
     basic_info: &BasicInfo,
     recovery: &mut R,
-) -> Result<(), RuntimeError>
+) -> Result<bool, RuntimeError>
 where
     H: HttpTransport,
     R: TokenRecovery,
@@ -264,7 +264,7 @@ where
     loop {
         let basic_info_url = build_basic_info_url(&config.endpoint, &config.token)?;
         match upload_basic_info_with_legacy_retry(http, &basic_info_url, headers, basic_info) {
-            Ok(()) => return Ok(()),
+            Ok(()) => return Ok(recovered),
             Err(error) if !recovered && recovery.recover_from_transport_error(config, &error) => {
                 recovered = true;
             }
@@ -433,8 +433,11 @@ where
                 &basic_info,
                 recovery,
             );
-            if cycle == 0 {
-                upload_result?;
+            match upload_result {
+                Ok(true) => socket = None,
+                Ok(false) => {}
+                Err(error) if cycle == 0 => return Err(error),
+                Err(_) => {}
             }
         }
 

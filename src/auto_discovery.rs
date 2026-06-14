@@ -185,8 +185,13 @@ where
         return Err(AutoDiscoveryError::EmptyRegisteredToken);
     }
     save_cache(cache_path, &cache)?;
+    println!("{}", auto_discovery_registered_smoke_line(&cache));
     config.token = cache.token;
     Ok(true)
+}
+
+pub fn auto_discovery_registered_smoke_line(cache: &AutoDiscoveryCache) -> String {
+    crate::smoke_summary::smoke_event_line("auto_discovery_registered", &[("uuid", &cache.uuid)])
 }
 
 pub fn build_auto_discovery_register_url(

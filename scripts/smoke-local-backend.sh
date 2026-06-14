@@ -28,6 +28,10 @@ COOKIE_JAR=""
 BACKEND_LOG=""
 AGENT_LOG=""
 HELPER_LOG=""
+AUTO_DISCOVERY_KEY=""
+SMOKE_AGENT_HOSTNAME="${SMOKE_AGENT_HOSTNAME:-agent-rs-smoke}"
+SMOKE_AGENT_CLIENT_NAME="Auto-${SMOKE_AGENT_HOSTNAME}"
+ROTATED_AGENT_TOKEN=""
 CURRENT_STAGE="startup"
 
 log() {
@@ -164,6 +168,8 @@ elif kind == "cn":
         "cn_connectivity_retry_delay_seconds": 1,
         "cn_connectivity_timeout_seconds": 1,
     }))
+elif kind == "client-token":
+    print(json.dumps({"token": sys.argv[2]}))
 else:
     raise SystemExit(f"unknown payload kind: {kind}")
 PY
@@ -192,6 +198,24 @@ wait_for_log() {
                 tail -n 120 "${file}" >&2 || true
             fi
             die "timed out waiting for log text: ${needle}"
+        fi
+        sleep 1
+    done
+}
+
+wait_for_log_count() {
+    local file="$1"
+    local needle="$2"
+    local expected_count="$3"
+    local timeout_seconds="$4"
+    local deadline=$((SECONDS + timeout_seconds))
+    local count
+    until [[ -f "${file}" ]] && count="$(grep -F "${needle}" "${file}" | wc -l)" && (( count >= expected_count )); do
+        if (( SECONDS >= deadline )); then
+            if [[ -f "${file}" ]]; then
+                tail -n 120 "${file}" >&2 || true
+            fi
+            die "timed out waiting for ${expected_count} log entries: ${needle}"
         fi
         sleep 1
     done
@@ -302,14 +326,47 @@ print(json.dumps({"username": sys.argv[1], "password": sys.argv[2]}))
     [[ -n "${SESSION_TOKEN}" ]] || die "login response did not include session token"
 }
 
-create_client() {
+load_auto_discovery_key() {
     local response
-    response="$(curl_api POST "/api/admin/client/add" '{"name":"agent-rs-smoke"}')"
-    CLIENT_UUID="$(printf '%s' "${response}" | json_value "uuid")"
-    AGENT_TOKEN="$(printf '%s' "${response}" | json_value "token")"
-    [[ -n "${CLIENT_UUID}" ]] || die "client create response did not include uuid"
-    [[ -n "${AGENT_TOKEN}" ]] || die "client create response did not include token"
-    log "Created smoke client ${CLIENT_UUID}"
+    response="$(curl_api GET "/api/admin/settings/")"
+    AUTO_DISCOVERY_KEY="$(printf '%s' "${response}" | json_value "data.auto_discovery_key")"
+    [[ -n "${AUTO_DISCOVERY_KEY}" ]] || die "settings response did not include auto_discovery_key"
+    log "Loaded auto-discovery key for smoke"
+}
+
+resolve_auto_discovery_client() {
+    local response uuid token deadline
+    deadline=$((SECONDS + 45))
+    until response="$(curl_api GET "/api/admin/client/list" 2>/dev/null)" &&
+        uuid="$(printf '%s' "${response}" | python3 -c 'import json, sys
+target = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("")
+    raise SystemExit(0)
+clients = data.get("data", data) if isinstance(data, dict) else data
+if not isinstance(clients, list):
+    print("")
+    raise SystemExit(0)
+for client in reversed(clients):
+    if isinstance(client, dict) and client.get("name") == target:
+        print(client.get("uuid", ""))
+        break
+else:
+    print("")' "${SMOKE_AGENT_CLIENT_NAME}")" && [[ -n "${uuid}" ]]; do
+        if (( SECONDS >= deadline )); then
+            die "timed out waiting for auto-discovered client ${SMOKE_AGENT_CLIENT_NAME}"
+        fi
+        sleep 1
+    done
+
+    CLIENT_UUID="${uuid}"
+    response="$(curl_api GET "/api/admin/client/${CLIENT_UUID}/token")"
+    token="$(printf '%s' "${response}" | json_value "token")"
+    [[ -n "${token}" ]] || die "client token response did not include token"
+    AGENT_TOKEN="${token}"
+    log "Resolved auto-discovered smoke client ${CLIENT_UUID}"
 }
 
 start_agent() {
@@ -319,11 +376,12 @@ start_agent() {
 
     log "Building agent and smoke helpers"
     (cd "${root}" && cargo build --locked --release --bin kelicloud-agent-rs --bin admin-terminal-smoke --bin smoke-summary)
+    rm -f "${root}/target/release/auto-discovery.json"
 
     log "Starting kelicloud-agent-rs"
-    "${root}/target/release/kelicloud-agent-rs" \
+    HOSTNAME="${SMOKE_AGENT_HOSTNAME}" "${root}/target/release/kelicloud-agent-rs" \
         --endpoint "${BACKEND_ENDPOINT}" \
-        --token "${AGENT_TOKEN}" \
+        --auto-discovery "${AUTO_DISCOVERY_KEY}" \
         --interval 1 \
         --max-retries 3 \
         --reconnect-interval 1 \
@@ -332,6 +390,22 @@ start_agent() {
 
     wait_for_log "${AGENT_LOG}" "smoke: report_websocket_connected" 45
     wait_for_log "${AGENT_LOG}" "smoke: report_sent" 45
+}
+
+rotate_auto_discovery_token() {
+    ROTATED_AGENT_TOKEN="rotated-${CLIENT_UUID}-${SECONDS}"
+    local payload
+    payload="$(json_payload client-token "${ROTATED_AGENT_TOKEN}")"
+    curl_api POST "/api/admin/client/${CLIENT_UUID}/edit" "${payload}" >/dev/null
+    log "Rotated auto-discovered client token through admin API"
+}
+
+wait_for_auto_discovery_recovery() {
+    wait_for_log_count "${AGENT_LOG}" "smoke: token_recovered" 1 120
+    wait_for_log_count "${AGENT_LOG}" "smoke: auto_discovery_registered" 2 120
+    wait_for_log_count "${AGENT_LOG}" "smoke: report_websocket_connected" 2 120
+    wait_for_log_count "${AGENT_LOG}" "smoke: report_sent" 2 120
+    resolve_auto_discovery_client
 }
 
 enable_cn_connectivity_probe() {
@@ -434,10 +508,16 @@ main() {
     start_backend
     set_stage "login admin"
     login_admin
-    set_stage "create smoke client"
-    create_client
+    set_stage "load auto-discovery key"
+    load_auto_discovery_key
     set_stage "start agent"
     start_agent "${root}"
+    set_stage "resolve auto-discovered client"
+    resolve_auto_discovery_client
+    set_stage "rotate auto-discovery token"
+    rotate_auto_discovery_token
+    set_stage "wait for auto-discovery recovery"
+    wait_for_auto_discovery_recovery
     set_stage "enable CN connectivity probe"
     enable_cn_connectivity_probe
     set_stage "trigger exec"

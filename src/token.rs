@@ -55,7 +55,15 @@ where
         let recovered = self.inner.recover_from_transport_error(config, error);
         if recovered {
             self.shared_token.set(config.token.clone());
+            if let TransportError::InvalidClientToken { operation, .. } = error {
+                println!("{}", token_recovered_smoke_line(operation));
+            }
         }
         recovered
     }
+}
+
+pub fn token_recovered_smoke_line(operation: &str) -> String {
+    let operation = operation.trim().replace(' ', "_");
+    crate::smoke_summary::smoke_event_line("token_recovered", &[("operation", &operation)])
 }
