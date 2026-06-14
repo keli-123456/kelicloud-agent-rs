@@ -1,0 +1,361 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SERVICE_NAME="kelicloud-agent-rs"
+BIN_PATH="/usr/local/bin/kelicloud-agent-rs"
+CONFIG_FILE="/etc/kelicloud-agent-rs/config.env"
+INSTALL_URL="https://raw.githubusercontent.com/keli-123456/kelicloud-agent-rs/refs/heads/main/install.sh"
+REPO="keli-123456/kelicloud-agent-rs"
+
+ENDPOINT="${AGENT_ENDPOINT:-}"
+AUTO_DISCOVERY_KEY="${AGENT_AUTO_DISCOVERY_KEY:-}"
+INSTALL_VERSION=""
+GITHUB_PROXY=""
+INSECURE="false"
+DURATION_SECONDS="90"
+SERVICE_WAIT_SECONDS="45"
+KEEP_INSTALLED="false"
+ROLLBACK_COMMAND=""
+INSTALLER_PATH=""
+
+usage() {
+    cat <<'EOF'
+Real Linux host install canary for kelicloud-agent-rs.
+
+Usage:
+  sudo bash scripts/canary-install.sh --endpoint URL --auto-discovery KEY [options]
+  sudo AGENT_ENDPOINT=URL AGENT_AUTO_DISCOVERY_KEY=KEY bash scripts/canary-install.sh [options]
+
+Required:
+  --endpoint URL                 kelicloud panel endpoint, also read from AGENT_ENDPOINT
+  --auto-discovery KEY           kelicloud auto-discovery key, also read from AGENT_AUTO_DISCOVERY_KEY
+
+Options:
+  --install-version VERSION      Re-run install with this release tag, for example v0.1.0
+  --github-proxy URL             Prefix used by the installer for GitHub downloads
+  --insecure                     Pass --ignore-unsafe-cert to the installer
+  --duration SECONDS             Online observation window for panel exec/ping/WebSSH, default 90
+  --service-wait SECONDS         Wait time for systemd active checks, default 45
+  --keep-installed               Leave kelicloud-agent-rs installed at the end
+  --rollback-command COMMAND     Run this panel-generated Go agent command after Rust uninstall
+  --help                         Show this help
+
+This script verifies the release asset name pattern kelicloud-agent-rs-linux-*,
+the installed systemd service, AGENT_ENDPOINT / AGENT_AUTO_DISCOVERY_KEY config,
+restart behavior, optional version pin/upgrade, uninstall, and optional rollback.
+EOF
+}
+
+log() {
+    printf '%s\n' "$*"
+}
+
+stage() {
+    printf '\n==> %s\n' "$*"
+}
+
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+need_value() {
+    local flag="$1"
+    local value="${2:-}"
+    if [[ -z "$value" ]]; then
+        die "$flag requires a value"
+    fi
+}
+
+redact_value() {
+    local value="$1"
+    local length="${#value}"
+    if [[ "$length" -le 8 ]]; then
+        printf '****'
+    else
+        printf '%s...%s' "${value:0:4}" "${value: -4}"
+    fi
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --endpoint)
+                need_value "$1" "${2:-}"
+                ENDPOINT="$2"
+                shift 2
+                ;;
+            --auto-discovery)
+                need_value "$1" "${2:-}"
+                AUTO_DISCOVERY_KEY="$2"
+                shift 2
+                ;;
+            --install-version)
+                need_value "$1" "${2:-}"
+                INSTALL_VERSION="$2"
+                shift 2
+                ;;
+            --github-proxy)
+                need_value "$1" "${2:-}"
+                GITHUB_PROXY="${2%/}"
+                shift 2
+                ;;
+            --insecure)
+                INSECURE="true"
+                shift
+                ;;
+            --duration)
+                need_value "$1" "${2:-}"
+                DURATION_SECONDS="$2"
+                shift 2
+                ;;
+            --service-wait)
+                need_value "$1" "${2:-}"
+                SERVICE_WAIT_SECONDS="$2"
+                shift 2
+                ;;
+            --keep-installed)
+                KEEP_INSTALLED="true"
+                shift
+                ;;
+            --rollback-command)
+                need_value "$1" "${2:-}"
+                ROLLBACK_COMMAND="$2"
+                shift 2
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                die "unknown option: $1"
+                ;;
+        esac
+    done
+}
+
+validate_config() {
+    [[ -n "$ENDPOINT" ]] || die "--endpoint or AGENT_ENDPOINT is required"
+    [[ -n "$AUTO_DISCOVERY_KEY" ]] || die "--auto-discovery or AGENT_AUTO_DISCOVERY_KEY is required"
+    [[ "$DURATION_SECONDS" =~ ^[0-9]+$ ]] || die "--duration must be whole seconds"
+    [[ "$SERVICE_WAIT_SECONDS" =~ ^[0-9]+$ ]] || die "--service-wait must be whole seconds"
+    [[ "$DURATION_SECONDS" -gt 0 ]] || die "--duration must be greater than zero"
+    [[ "$SERVICE_WAIT_SECONDS" -gt 0 ]] || die "--service-wait must be greater than zero"
+    if [[ "$KEEP_INSTALLED" == "true" && -n "$ROLLBACK_COMMAND" ]]; then
+        die "--keep-installed cannot be combined with --rollback-command"
+    fi
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "$1 command is required"
+}
+
+require_linux_systemd() {
+    [[ "$(uname -s)" == "Linux" ]] || die "this canary must run on Linux"
+    [[ "${EUID:-$(id -u)}" -eq 0 ]] || die "please run as root"
+    require_command curl
+    require_command systemctl
+    require_command journalctl
+    if [[ ! -d /run/systemd/system ]]; then
+        die "a real systemd host is required; /run/systemd/system is missing"
+    fi
+}
+
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64) printf 'amd64' ;;
+        aarch64|arm64) printf 'arm64' ;;
+        armv7l|armv7*) printf 'armv7' ;;
+        *) die "unsupported architecture: $(uname -m)" ;;
+    esac
+}
+
+release_asset_name() {
+    printf 'kelicloud-agent-rs-linux-%s' "$(detect_arch)"
+}
+
+download_url_for_asset() {
+    local asset="$1"
+    local version_path="latest/download"
+    if [[ -n "$INSTALL_VERSION" ]]; then
+        version_path="download/${INSTALL_VERSION}"
+    fi
+    local url="https://github.com/${REPO}/releases/${version_path}/${asset}"
+    if [[ -n "$GITHUB_PROXY" ]]; then
+        printf '%s/%s' "$GITHUB_PROXY" "$url"
+    else
+        printf '%s' "$url"
+    fi
+}
+
+verify_release_asset() {
+    local asset url
+    asset="$(release_asset_name)"
+    url="$(download_url_for_asset "$asset")"
+    stage "verify release asset"
+    log "Expected asset: ${asset}"
+    log "Checking download URL: ${url}"
+    curl -fsIL "$url" >/dev/null || die "release asset is not reachable: ${asset}"
+}
+
+download_installer() {
+    INSTALLER_PATH="$(mktemp "${TMPDIR:-/tmp}/kelicloud-agent-rs-install.XXXXXX.sh")"
+    curl -fsSL "$INSTALL_URL" -o "$INSTALLER_PATH"
+    chmod 0700 "$INSTALLER_PATH"
+}
+
+installer_args() {
+    INSTALL_ARGS=(
+        -e "$ENDPOINT"
+        --auto-discovery "$AUTO_DISCOVERY_KEY"
+    )
+    if [[ -n "$INSTALL_VERSION" ]]; then
+        INSTALL_ARGS+=(--install-version "$INSTALL_VERSION")
+    fi
+    if [[ -n "$GITHUB_PROXY" ]]; then
+        INSTALL_ARGS+=(--install-ghproxy "$GITHUB_PROXY")
+    fi
+    if [[ "$INSECURE" == "true" ]]; then
+        INSTALL_ARGS+=(--ignore-unsafe-cert)
+    fi
+}
+
+install_agent() {
+    stage "install_agent"
+    installer_args
+    bash "$INSTALLER_PATH" "${INSTALL_ARGS[@]}"
+}
+
+wait_for_service() {
+    local deadline=$((SECONDS + SERVICE_WAIT_SECONDS))
+    until systemctl is-active --quiet "${SERVICE_NAME}.service"; do
+        if (( SECONDS >= deadline )); then
+            log "systemctl is-active ${SERVICE_NAME}.service: $(systemctl is-active "${SERVICE_NAME}.service" 2>/dev/null || true)"
+            log "journalctl -u kelicloud-agent-rs -n 80 --no-pager"
+            journalctl -u kelicloud-agent-rs -n 80 --no-pager || true
+            die "${SERVICE_NAME}.service did not become active"
+        fi
+        sleep 1
+    done
+}
+
+print_config_preview() {
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        die "config file missing: ${CONFIG_FILE}"
+    fi
+    log "Config preview:"
+    sed -E \
+        -e "s/^(AGENT_TOKEN=).*/\1'[redacted]'/" \
+        -e "s/^(AGENT_AUTO_DISCOVERY_KEY=).*/\1'[redacted]'/" \
+        -e "s/^(AGENT_CF_ACCESS_CLIENT_SECRET=).*/\1'[redacted]'/" \
+        "$CONFIG_FILE"
+}
+
+verify_service() {
+    stage "verify_service"
+    [[ -x "$BIN_PATH" ]] || die "binary missing or not executable: ${BIN_PATH}"
+    [[ -f "$CONFIG_FILE" ]] || die "config missing: ${CONFIG_FILE}"
+    [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]] || die "systemd unit missing"
+    grep -q "^AGENT_ENDPOINT=" "$CONFIG_FILE" || die "AGENT_ENDPOINT missing from config"
+    grep -q "^AGENT_AUTO_DISCOVERY_KEY=" "$CONFIG_FILE" || die "AGENT_AUTO_DISCOVERY_KEY missing from config"
+    wait_for_service
+    log "systemctl is-active ${SERVICE_NAME}.service: $(systemctl is-active "${SERVICE_NAME}.service")"
+    log "Binary: ${BIN_PATH}"
+    log "Config: ${CONFIG_FILE}"
+    print_config_preview
+}
+
+restart_agent() {
+    stage "restart_agent"
+    systemctl restart "${SERVICE_NAME}.service"
+    wait_for_service
+    log "Restart verified."
+}
+
+pin_or_upgrade_agent() {
+    if [[ -z "$INSTALL_VERSION" ]]; then
+        stage "pin_or_upgrade_agent"
+        log "Skipped: pass --install-version VERSION to verify an explicit release pin or upgrade."
+        return
+    fi
+
+    stage "pin_or_upgrade_agent"
+    installer_args
+    bash "$INSTALLER_PATH" "${INSTALL_ARGS[@]}"
+    wait_for_service
+    log "Pinned or upgraded to requested release: ${INSTALL_VERSION}"
+}
+
+observe_panel_window() {
+    stage "panel observation window"
+    log "Keep this host selected in kelicloud now."
+    log "Trigger one script exec task, one TCP ping task, and one WebSSH terminal before this window ends."
+    log "Observation window: ${DURATION_SECONDS}s"
+    sleep "$DURATION_SECONDS"
+}
+
+uninstall_agent() {
+    stage "uninstall_agent"
+    bash "$INSTALLER_PATH" uninstall
+    if systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1 &&
+        systemctl list-unit-files "${SERVICE_NAME}.service" | grep -q "${SERVICE_NAME}.service"; then
+        die "systemd unit still appears after uninstall"
+    fi
+    [[ ! -e "$BIN_PATH" ]] || die "binary still exists after uninstall: ${BIN_PATH}"
+    [[ ! -e "$CONFIG_FILE" ]] || die "config still exists after uninstall: ${CONFIG_FILE}"
+    log "Rust agent uninstall verified."
+}
+
+run_rollback_command() {
+    if [[ -z "$ROLLBACK_COMMAND" ]]; then
+        return
+    fi
+
+    stage "run_rollback_command"
+    log "Running the supplied panel-generated rollback command."
+    bash -lc "$ROLLBACK_COMMAND"
+}
+
+cleanup() {
+    if [[ -n "$INSTALLER_PATH" && -f "$INSTALLER_PATH" ]]; then
+        rm -f "$INSTALLER_PATH"
+    fi
+}
+trap cleanup EXIT
+
+main() {
+    parse_args "$@"
+    validate_config
+    require_linux_systemd
+
+    stage "canary context"
+    log "Endpoint: ${ENDPOINT}"
+    log "Auto-discovery key: $(redact_value "$AUTO_DISCOVERY_KEY")"
+    log "Install source: ${INSTALL_URL}"
+    if [[ -n "$INSTALL_VERSION" ]]; then
+        log "Install version: ${INSTALL_VERSION}"
+    else
+        log "Install version: latest"
+    fi
+
+    verify_release_asset
+    download_installer
+    install_agent
+    verify_service
+    restart_agent
+    pin_or_upgrade_agent
+    observe_panel_window
+
+    if [[ "$KEEP_INSTALLED" == "true" ]]; then
+        stage "keep installed"
+        log "Leaving ${SERVICE_NAME} installed for longer canary observation."
+    else
+        uninstall_agent
+        run_rollback_command
+    fi
+
+    stage "canary finished"
+    log "Record panel-side exec, TCP ping, WebSSH, restart, install, upgrade, uninstall, and rollback evidence in docs/smoke-compatibility.md."
+}
+
+main "$@"
