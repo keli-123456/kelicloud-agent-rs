@@ -18,7 +18,19 @@ KEEP_INSTALLED="false"
 ROLLBACK_COMMAND=""
 ROLLBACK_SERVICE_NAME="${KELICLOUD_ROLLBACK_SERVICE_NAME:-kelicloud-agent}"
 SKIP_ROLLBACK_SERVICE_CHECK="false"
+EVIDENCE_FILE="${KELICLOUD_CANARY_EVIDENCE_FILE:-}"
 INSTALLER_PATH=""
+STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+RELEASE_ASSET=""
+RELEASE_ASSET_URL=""
+RUST_SERVICE_STATUS="not checked"
+ROLLBACK_SERVICE_STATUS="not checked"
+INSTALL_RESULT="not run"
+RESTART_RESULT="not run"
+PIN_OR_UPGRADE_RESULT="not run"
+UNINSTALL_RESULT="not run"
+ROLLBACK_RESULT="not run"
+EVIDENCE_WRITTEN="false"
 
 usage() {
     cat <<'EOF'
@@ -42,6 +54,7 @@ Options:
   --rollback-command COMMAND     Run this panel-generated Go agent command after Rust uninstall
   --rollback-service-name NAME   Service expected after rollback, default kelicloud-agent
   --skip-rollback-service-check  Do not check rollback service status
+  --evidence-file PATH           Write Markdown evidence, even when the canary fails
   --help                         Show this help
 
 This script verifies the release asset name pattern kelicloud-agent-rs-linux-*,
@@ -136,6 +149,11 @@ parse_args() {
                 SKIP_ROLLBACK_SERVICE_CHECK="true"
                 shift
                 ;;
+            --evidence-file)
+                need_value "$1" "${2:-}"
+                EVIDENCE_FILE="$2"
+                shift 2
+                ;;
             --help|-h)
                 usage
                 exit 0
@@ -208,6 +226,8 @@ verify_release_asset() {
     local asset url
     asset="$(release_asset_name)"
     url="$(download_url_for_asset "$asset")"
+    RELEASE_ASSET="$asset"
+    RELEASE_ASSET_URL="$url"
     stage "verify release asset"
     log "Expected asset: ${asset}"
     log "Checking download URL: ${url}"
@@ -240,6 +260,7 @@ install_agent() {
     stage "install_agent"
     installer_args
     bash "$INSTALLER_PATH" "${INSTALL_ARGS[@]}"
+    INSTALL_RESULT="passed"
 }
 
 wait_for_service() {
@@ -275,7 +296,8 @@ verify_service() {
     grep -q "^AGENT_ENDPOINT=" "$CONFIG_FILE" || die "AGENT_ENDPOINT missing from config"
     grep -q "^AGENT_AUTO_DISCOVERY_KEY=" "$CONFIG_FILE" || die "AGENT_AUTO_DISCOVERY_KEY missing from config"
     wait_for_service
-    log "systemctl is-active ${SERVICE_NAME}.service: $(systemctl is-active "${SERVICE_NAME}.service")"
+    RUST_SERVICE_STATUS="$(systemctl is-active "${SERVICE_NAME}.service")"
+    log "systemctl is-active ${SERVICE_NAME}.service: ${RUST_SERVICE_STATUS}"
     log "Binary: ${BIN_PATH}"
     log "Config: ${CONFIG_FILE}"
     print_config_preview
@@ -285,6 +307,7 @@ restart_agent() {
     stage "restart_agent"
     systemctl restart "${SERVICE_NAME}.service"
     wait_for_service
+    RESTART_RESULT="passed"
     log "Restart verified."
 }
 
@@ -292,6 +315,7 @@ pin_or_upgrade_agent() {
     if [[ -z "$INSTALL_VERSION" ]]; then
         stage "pin_or_upgrade_agent"
         log "Skipped: pass --install-version VERSION to verify an explicit release pin or upgrade."
+        PIN_OR_UPGRADE_RESULT="skipped"
         return
     fi
 
@@ -299,6 +323,7 @@ pin_or_upgrade_agent() {
     installer_args
     bash "$INSTALLER_PATH" "${INSTALL_ARGS[@]}"
     wait_for_service
+    PIN_OR_UPGRADE_RESULT="passed: ${INSTALL_VERSION}"
     log "Pinned or upgraded to requested release: ${INSTALL_VERSION}"
 }
 
@@ -319,6 +344,8 @@ uninstall_agent() {
     fi
     [[ ! -e "$BIN_PATH" ]] || die "binary still exists after uninstall: ${BIN_PATH}"
     [[ ! -e "$CONFIG_FILE" ]] || die "config still exists after uninstall: ${CONFIG_FILE}"
+    UNINSTALL_RESULT="passed"
+    RUST_SERVICE_STATUS="uninstalled"
     log "Rust agent uninstall verified."
 }
 
@@ -330,11 +357,13 @@ run_rollback_command() {
     stage "run_rollback_command"
     log "Running the supplied panel-generated rollback command."
     bash -lc "$ROLLBACK_COMMAND"
+    ROLLBACK_RESULT="command passed"
     verify_rollback_service
 }
 
 verify_rollback_service() {
     if [[ "$SKIP_ROLLBACK_SERVICE_CHECK" == "true" ]]; then
+        ROLLBACK_SERVICE_STATUS="skipped"
         log "Rollback service check skipped."
         return
     fi
@@ -350,6 +379,8 @@ verify_rollback_service() {
         fi
         sleep 1
     done
+    ROLLBACK_SERVICE_STATUS="$(systemctl is-active "${ROLLBACK_SERVICE_NAME}.service")"
+    ROLLBACK_RESULT="passed"
     log "Rollback service active: ${ROLLBACK_SERVICE_NAME}.service"
 }
 
@@ -358,7 +389,70 @@ cleanup() {
         rm -f "$INSTALLER_PATH"
     fi
 }
-trap cleanup EXIT
+
+shell_output_or_empty() {
+    "$@" 2>/dev/null || true
+}
+
+os_pretty_name() {
+    if [[ -r /etc/os-release ]]; then
+        . /etc/os-release
+        printf '%s' "${PRETTY_NAME:-unknown}"
+    else
+        printf 'unknown'
+    fi
+}
+
+write_evidence() {
+    local status="$1"
+    [[ -n "$EVIDENCE_FILE" ]] || return 0
+    mkdir -p "$(dirname "$EVIDENCE_FILE")"
+    local finished_at
+    finished_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+
+    {
+        printf '# kelicloud-agent-rs Real Host Canary Evidence\n\n'
+        printf '- Result: `%s`\n' "$status"
+        printf '- Started at: `%s`\n' "${STARTED_AT:-unknown}"
+        printf '- Finished at: `%s`\n' "${finished_at:-unknown}"
+        printf '- Hostname: `%s`\n' "$(shell_output_or_empty hostname)"
+        printf '- Distro: `%s`\n' "$(os_pretty_name)"
+        printf '- Kernel: `%s`\n' "$(shell_output_or_empty uname -r)"
+        printf '- Architecture: `%s`\n' "$(shell_output_or_empty uname -m)"
+        printf '- Panel endpoint: `%s`\n' "$ENDPOINT"
+        printf '- Install source: `%s`\n' "$INSTALL_URL"
+        printf '- Requested install version: `%s`\n' "${INSTALL_VERSION:-latest}"
+        printf '- Release asset: `%s`\n' "${RELEASE_ASSET:-not checked}"
+        printf '- Release asset URL: `%s`\n' "${RELEASE_ASSET_URL:-not checked}"
+        printf '- Rust install result: `%s`\n' "$INSTALL_RESULT"
+        printf '- Rust service status: `%s`\n' "$RUST_SERVICE_STATUS"
+        printf '- Rust restart result: `%s`\n' "$RESTART_RESULT"
+        printf '- Explicit install-version pin/upgrade result: `%s`\n' "$PIN_OR_UPGRADE_RESULT"
+        printf '- Rust uninstall result: `%s`\n' "$UNINSTALL_RESULT"
+        printf '- Go-agent rollback command result: `%s`\n' "$ROLLBACK_RESULT"
+        printf '- Go-agent rollback service name: `%s`\n' "$ROLLBACK_SERVICE_NAME"
+        printf '- Go-agent rollback service status: `%s`\n' "$ROLLBACK_SERVICE_STATUS"
+        printf '- Panel-side checks required: online metrics, script exec, TCP ping, and WebSSH terminal.\n'
+        printf '\n## Operator Notes\n\n'
+        printf '- Panel online and metrics:\n'
+        printf '- Script exec task result:\n'
+        printf '- TCP ping task result:\n'
+        printf '- Admin WebSSH terminal result:\n'
+        printf '- Remaining gaps or rollout notes:\n'
+    } > "$EVIDENCE_FILE"
+    EVIDENCE_WRITTEN="true"
+    log "Evidence file: ${EVIDENCE_FILE}"
+}
+
+on_exit() {
+    local status="$?"
+    if [[ "$EVIDENCE_WRITTEN" != "true" && -n "$EVIDENCE_FILE" ]]; then
+        write_evidence "exit ${status}" || true
+    fi
+    cleanup
+    exit "$status"
+}
+trap on_exit EXIT
 
 main() {
     parse_args "$@"
@@ -392,6 +486,7 @@ main() {
     fi
 
     stage "canary finished"
+    write_evidence "passed"
     log "Record panel-side exec, TCP ping, WebSSH, restart, install, upgrade, uninstall, and rollback evidence in docs/smoke-compatibility.md."
 }
 

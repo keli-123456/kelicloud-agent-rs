@@ -142,6 +142,7 @@ Real-host canary evidence template:
 - Go-agent rollback command result:
 - Go-agent rollback service name/status:
 - GitHub Actions artifact, if used: `kelicloud-agent-rs-real-host-canary`
+- Evidence file, if used: `real-host-canary.evidence.md`
 - Remaining gaps or production rollout notes:
 
 ## Static Parity Evidence

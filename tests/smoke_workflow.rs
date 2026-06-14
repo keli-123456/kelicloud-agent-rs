@@ -76,8 +76,10 @@ fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     assert!(workflow.contains("::add-mask::${CANARY_AUTO_DISCOVERY_KEY}"));
     assert!(workflow.contains("::add-mask::${CANARY_ROLLBACK_COMMAND}"));
     assert!(workflow.contains("sudo bash scripts/canary-install.sh"));
+    assert!(workflow.contains("--evidence-file canary-logs/real-host-canary.evidence.md"));
     assert!(workflow.contains("--rollback-command \"${CANARY_ROLLBACK_COMMAND}\""));
     assert!(workflow.contains("canary-logs/real-host-canary.log"));
+    assert!(workflow.contains("real-host-canary.evidence.md"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(workflow.contains("kelicloud-agent-rs-real-host-canary"));
 }

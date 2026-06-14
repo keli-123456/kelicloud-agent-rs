@@ -79,6 +79,9 @@ Create `scripts/canary-install.sh` as a Linux-only Bash script that:
 - If `--install-version` is supplied, reruns install with that version to prove explicit pin/upgrade path.
 - If `--keep-installed` is not supplied, uninstalls the Rust agent.
 - If `--rollback-command` is supplied after uninstall, runs that exact command and waits for `kelicloud-agent.service` or `--rollback-service-name` to become active to prove Go-agent rollback.
+- If `--evidence-file` is supplied, writes a Markdown evidence file with host,
+  release asset, service, restart, upgrade, uninstall, rollback, and panel-side
+  checklist fields.
 
 - [ ] **Step 4: Run the targeted test and confirm it passes**
 

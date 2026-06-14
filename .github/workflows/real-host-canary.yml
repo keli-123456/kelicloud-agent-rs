@@ -134,6 +134,7 @@ jobs:
             --auto-discovery "${CANARY_AUTO_DISCOVERY_KEY}"
             --duration "${CANARY_DURATION}"
             --service-wait "${CANARY_SERVICE_WAIT}"
+            --evidence-file canary-logs/real-host-canary.evidence.md
           )
           if [ -n "${CANARY_INSTALL_VERSION}" ]; then
             args+=(--install-version "${CANARY_INSTALL_VERSION}")

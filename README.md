@@ -177,7 +177,8 @@ Linux runner. Label the runner with `kelicloud-canary`, add
 `KELICLOUD_CANARY_AUTO_DISCOVERY_KEY`, optionally add
 `KELICLOUD_CANARY_ENDPOINT` and `KELICLOUD_CANARY_ROLLBACK_COMMAND`, then run
 the `Real Host Canary` workflow manually. The workflow uploads
-`kelicloud-agent-rs-real-host-canary` logs for the release evidence record.
+`kelicloud-agent-rs-real-host-canary` logs for the release evidence record,
+including `real-host-canary.evidence.md`.
 
 ## Live Smoke Test
 
