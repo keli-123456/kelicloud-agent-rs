@@ -335,7 +335,7 @@ load_auto_discovery_key() {
 }
 
 resolve_auto_discovery_client() {
-    local response uuid token deadline
+    local response uuid deadline
     deadline=$((SECONDS + 45))
     until response="$(curl_api GET "/api/admin/client/list" 2>/dev/null)" &&
         uuid="$(printf '%s' "${response}" | python3 -c 'import json, sys
@@ -361,12 +361,28 @@ else:
         sleep 1
     done
 
+    bind_auto_discovery_client "${uuid}"
+}
+
+bind_auto_discovery_client() {
+    local uuid="$1"
+    local response token
+    [[ -n "${uuid}" ]] || die "auto-discovered client uuid is empty"
     CLIENT_UUID="${uuid}"
     response="$(curl_api GET "/api/admin/client/${CLIENT_UUID}/token")"
     token="$(printf '%s' "${response}" | json_value "token")"
     [[ -n "${token}" ]] || die "client token response did not include token"
     AGENT_TOKEN="${token}"
     log "Resolved auto-discovered smoke client ${CLIENT_UUID}"
+}
+
+latest_auto_discovery_registered_uuid() {
+    local uuid
+    uuid="$(grep -F "smoke: auto_discovery_registered" "${AGENT_LOG}" |
+        tail -n 1 |
+        sed -n 's/.*[[:space:]]uuid=\([^[:space:]]*\).*/\1/p')"
+    [[ -n "${uuid}" ]] || die "agent log did not include an auto-discovery uuid"
+    printf '%s\n' "${uuid}"
 }
 
 start_agent() {
@@ -405,7 +421,7 @@ wait_for_auto_discovery_recovery() {
     wait_for_log_count "${AGENT_LOG}" "smoke: auto_discovery_registered" 2 120
     wait_for_log_count "${AGENT_LOG}" "smoke: report_websocket_connected" 2 120
     wait_for_log_count "${AGENT_LOG}" "smoke: report_sent" 2 120
-    resolve_auto_discovery_client
+    bind_auto_discovery_client "$(latest_auto_discovery_registered_uuid)"
 }
 
 enable_cn_connectivity_probe() {

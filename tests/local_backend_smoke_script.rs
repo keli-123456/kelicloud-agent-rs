@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn local_backend_smoke_script_orchestrates_real_backend_controls() {
@@ -78,6 +79,54 @@ fn local_backend_smoke_script_has_valid_bash_syntax_when_bash_is_available() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn local_backend_smoke_script_reads_latest_auto_discovery_uuid_from_agent_log() {
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping latest auto-discovery UUID test");
+        return;
+    };
+
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+    let sourced_script = script
+        .strip_suffix("main \"$@\"\n")
+        .or_else(|| script.strip_suffix("main \"$@\""))
+        .expect("script should end with main invocation");
+    let temp_dir = std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-smoke-script-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let sourced_path = temp_dir.join("smoke-local-backend-functions.sh");
+    let agent_log_path = temp_dir.join("agent.log");
+    std::fs::write(&sourced_path, sourced_script).unwrap();
+    std::fs::write(
+        &agent_log_path,
+        "noise\nsmoke: auto_discovery_registered uuid=old-uuid\nsmoke: token_recovered operation=upload_basic_info\nsmoke: auto_discovery_registered uuid=new-uuid\n",
+    )
+    .unwrap();
+
+    let output = Command::new(bash)
+        .arg("-c")
+        .arg(r#"source "$1"; AGENT_LOG="$2"; latest_auto_discovery_registered_uuid"#)
+        .arg("bash")
+        .arg(&sourced_path)
+        .arg(&agent_log_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "latest UUID helper failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "new-uuid");
 }
 
 fn local_backend_smoke_script_path() -> PathBuf {
