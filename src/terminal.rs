@@ -153,6 +153,14 @@ pub fn terminal_session_error_event(request_id: &str, error: &str) -> String {
     )
 }
 
+pub fn terminal_input_received_event(bytes: usize) -> String {
+    smoke_event_line("terminal_input_received", &[("bytes", &bytes.to_string())])
+}
+
+pub fn terminal_output_sent_event(bytes: usize) -> String {
+    smoke_event_line("terminal_output_sent", &[("bytes", &bytes.to_string())])
+}
+
 #[derive(Debug, Clone)]
 pub struct TungsteniteTerminalConnector {
     endpoint: String,
@@ -273,6 +281,7 @@ fn run_terminal_session(socket: WebSocket<MaybeTlsStream<TcpStream>>) -> Result<
             {
                 return;
             }
+            println!("{}", terminal_output_sent_event(count));
         }
     });
 
@@ -302,6 +311,7 @@ fn run_terminal_session(socket: WebSocket<MaybeTlsStream<TcpStream>>) -> Result<
         match message {
             Some(Message::Text(text)) => match parse_terminal_client_text(text.as_bytes()) {
                 TerminalClientCommand::Input(input) => {
+                    println!("{}", terminal_input_received_event(input.len()));
                     writer.write_all(&input)?;
                     writer.flush()?;
                 }
@@ -320,6 +330,7 @@ fn run_terminal_session(socket: WebSocket<MaybeTlsStream<TcpStream>>) -> Result<
                 TerminalClientCommand::Ignore => {}
             },
             Some(Message::Binary(bytes)) => {
+                println!("{}", terminal_input_received_event(bytes.len()));
                 writer.write_all(&bytes)?;
                 writer.flush()?;
             }

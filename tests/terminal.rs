@@ -2,8 +2,9 @@ use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::protocol::BackendMessage;
 use kelicloud_agent_rs::runtime::ControlMessageHandler;
 use kelicloud_agent_rs::terminal::{
-    parse_terminal_client_text, terminal_session_error_event, TerminalClientCommand,
-    TerminalConnector, TerminalControlMessageHandler, TerminalError, TungsteniteTerminalConnector,
+    parse_terminal_client_text, terminal_input_received_event, terminal_output_sent_event,
+    terminal_session_error_event, TerminalClientCommand, TerminalConnector,
+    TerminalControlMessageHandler, TerminalError, TungsteniteTerminalConnector,
 };
 use kelicloud_agent_rs::token::SharedAgentToken;
 use std::io::{Read, Write};
@@ -78,6 +79,18 @@ fn terminal_session_error_event_reports_request_and_error() {
     assert_eq!(
         terminal_session_error_event("term-1", "connection refused"),
         "smoke: terminal_session_error request_id=term-1 error=connection refused"
+    );
+}
+
+#[test]
+fn terminal_io_events_report_byte_counts() {
+    assert_eq!(
+        terminal_input_received_event(7),
+        "smoke: terminal_input_received bytes=7"
+    );
+    assert_eq!(
+        terminal_output_sent_event(11),
+        "smoke: terminal_output_sent bytes=11"
     );
 }
 
