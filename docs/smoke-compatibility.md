@@ -110,8 +110,8 @@ path from kelicloud Web or backend-generated auto-connect snippets.
   `wget -qO- https://raw.githubusercontent.com/keli-123456/kelicloud-agent-rs/refs/heads/main/install.sh | sudo bash -s -- -e <endpoint> --auto-discovery <key>`.
 - [x] The installed service appears online in the panel with sane CPU, RAM,
   disk, network rate, TCP/UDP connection count, uptime, OS, and version fields.
-- [ ] A script exec task uploads stdout/stderr and exit code.
-- [ ] A TCP ping task returns a backend-visible result.
+- [x] A script exec task uploads stdout/stderr and exit code.
+- [x] A TCP ping task returns a backend-visible result.
 - [x] An admin WebSSH terminal opens, accepts input, and closes cleanly.
 - [x] `systemctl restart kelicloud-agent-rs` reconnects without manual token
   repair.
@@ -339,6 +339,43 @@ path from kelicloud Web or backend-generated auto-connect snippets.
 - Current blocker: the full real-host control canary cannot be executed until
   an authenticated live-panel admin cookie or admin username/password is
   provided locally or as GitHub repository secrets.
+
+2026-06-14 full real-host control-plane pass:
+
+- Commit: `73f21e506457501f9b9d3e6755c2c88f7a802832`
+- Fix committed before this run: `scripts/real-host-control-canary.sh` now
+  restarts `kelicloud-agent-rs.service` before the live control-plane phase and
+  waits for both `smoke: report_websocket_connected` and `smoke: report_sent`
+  before calling `/api/admin/task/exec`. Earlier attempts reached
+  `report_websocket_connected` but failed with `No clients connected` because
+  the backend only adds the client to `ws.GetConnectedClients()` after reading
+  the first report message.
+- Test command:
+  `cargo test --test real_host_control_canary_script`
+- Host/provider/region: `vm57463.desivps.com` / `2.56.116.39`
+- Distro/kernel/arch: `Debian GNU/Linux 12 (bookworm)` /
+  `6.1.0-31-amd64` / `x86_64`
+- Panel endpoint: `https://tanzhen2.huhu.icu`
+- Rust release/version requested: `v0.1.0`
+- Evidence directory on host:
+  `/root/kelicloud-agent-rs-canary-20260614T115815Z-control-live`
+- Evidence file on host:
+  `/root/kelicloud-agent-rs-canary-20260614T115815Z-control-live/real-host-control-canary.evidence.md`
+- Canary result: `passed`
+- Rust client UUID:
+  `e6d57d8b-1285-4c00-a2f7-34e590d360dc`
+- Script exec task result: `passed`; live panel task ID
+  `JWrypdjR72xfDOdy`, and Rust journal evidence
+  `smoke: task_result_uploaded task_id=JWrypdjR72xfDOdy exit_code=0`.
+- TCP ping task result: `passed`; live panel ping task ID `1`, and Rust
+  journal evidence `smoke: ping_result_uploaded task_id=1 value=1`.
+- Report/WebSocket readiness evidence from the Rust journal:
+  `smoke: auto_discovery_registered`,
+  `smoke: basic_info_uploaded`,
+  `smoke: report_websocket_connected`, and
+  `smoke: report_sent`.
+- Final rollback status: `komari-agent.service` returned to `active/enabled`;
+  `kelicloud-agent-rs.service` returned to `inactive`.
 
 Live panel control-plane helper:
 
