@@ -72,14 +72,28 @@ fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     assert!(workflow.contains("KELICLOUD_CANARY_ROLLBACK_COMMAND"));
     assert!(workflow.contains("require_rollback:"));
     assert!(workflow.contains("keep_installed:"));
+    assert!(workflow.contains("control_plane:"));
+    assert!(workflow.contains("ping_target:"));
+    assert!(workflow.contains("old_service_name:"));
     assert!(workflow.contains("rollback_service_name:"));
     assert!(workflow.contains("::add-mask::${CANARY_AUTO_DISCOVERY_KEY}"));
     assert!(workflow.contains("::add-mask::${CANARY_ROLLBACK_COMMAND}"));
+    assert!(workflow.contains("::add-mask::${CANARY_PANEL_COOKIE}"));
+    assert!(workflow.contains("::add-mask::${CANARY_PANEL_PASSWORD}"));
+    assert!(workflow.contains("KELICLOUD_PANEL_COOKIE"));
+    assert!(workflow.contains("KELICLOUD_PANEL_USERNAME"));
+    assert!(workflow.contains("KELICLOUD_PANEL_PASSWORD"));
     assert!(workflow.contains("sudo bash scripts/canary-install.sh"));
+    assert!(workflow.contains("sudo --preserve-env=KELICLOUD_PANEL_COOKIE,KELICLOUD_PANEL_USERNAME,KELICLOUD_PANEL_PASSWORD bash scripts/real-host-control-canary.sh"));
+    assert!(workflow.contains("--workdir canary-logs"));
+    assert!(workflow.contains("--old-service \"${CANARY_OLD_SERVICE_NAME}\""));
+    assert!(workflow.contains("--ping-target \"${CANARY_PANEL_PING_TARGET}\""));
     assert!(workflow.contains("--evidence-file canary-logs/real-host-canary.evidence.md"));
     assert!(workflow.contains("--rollback-command \"${CANARY_ROLLBACK_COMMAND}\""));
     assert!(workflow.contains("canary-logs/real-host-canary.log"));
+    assert!(workflow.contains("canary-logs/real-host-control-canary.log"));
     assert!(workflow.contains("real-host-canary.evidence.md"));
+    assert!(workflow.contains("real-host-control-canary.evidence.md"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(workflow.contains("kelicloud-agent-rs-real-host-canary"));
 }

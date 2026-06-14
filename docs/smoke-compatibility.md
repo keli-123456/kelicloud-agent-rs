@@ -21,6 +21,10 @@ rotation with post-recovery control-plane actions.
 - GitHub Actions: manually run the `Smoke` workflow.
 - GitHub Actions real host canary: manually run the `Real Host Canary` workflow
   on a self-hosted Linux runner labelled `kelicloud-canary`.
+- GitHub Actions real host control canary: manually run the same
+  `Real Host Canary` workflow with `control_plane=true`, plus either
+  `KELICLOUD_PANEL_COOKIE` or
+  `KELICLOUD_PANEL_USERNAME`/`KELICLOUD_PANEL_PASSWORD` repository secrets.
 - GitHub Actions real backend: the `Local Backend Smoke` workflow runs on pushes
   to `main` and can also be run manually.
 - Required secret: `KELICLOUD_SMOKE_TOKEN`.
@@ -28,6 +32,9 @@ rotation with post-recovery control-plane actions.
 - Real-host canary required secret: `KELICLOUD_CANARY_AUTO_DISCOVERY_KEY`.
 - Real-host canary optional secrets: `KELICLOUD_CANARY_ENDPOINT`,
   `KELICLOUD_CANARY_ROLLBACK_COMMAND`.
+- Real-host control canary optional secrets: `KELICLOUD_PANEL_COOKIE`,
+  `KELICLOUD_PANEL_USERNAME`, `KELICLOUD_PANEL_PASSWORD`,
+  `KELICLOUD_PANEL_PING_TARGET`.
 - Optional secrets: `KELICLOUD_SMOKE_ENDPOINT`,
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_ID`,
   `KELICLOUD_SMOKE_CF_ACCESS_CLIENT_SECRET`.
@@ -249,6 +256,10 @@ path from kelicloud Web or backend-generated auto-connect snippets.
   live panel can create the script exec task and TCP ping task and the Rust
   journal can prove `smoke: task_result_uploaded` plus
   `smoke: ping_result_uploaded`.
+- Automation path: the `Real Host Canary` workflow can now run this same full
+  wrapper on a self-hosted Linux runner with `control_plane=true`; it uploads
+  `real-host-control-canary.evidence.md`, `real-host-control-canary.log`, and
+  `service-status.log` as the `kelicloud-agent-rs-real-host-canary` artifact.
 
 Live panel control-plane helper:
 

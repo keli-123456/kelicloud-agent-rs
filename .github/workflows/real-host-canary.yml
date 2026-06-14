@@ -22,6 +22,19 @@ on:
         required: true
         default: "180"
         type: string
+      control_plane:
+        description: "Run the full real-host control-plane canary wrapper with live panel exec/ping."
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      ping_target:
+        description: "TCP ping target for control_plane=true."
+        required: false
+        default: "1.1.1.1:443"
+        type: string
       service_wait:
         description: "Seconds to wait for Rust or rollback services to become active."
         required: true
@@ -60,6 +73,11 @@ on:
         required: false
         default: "kelicloud-agent"
         type: string
+      old_service_name:
+        description: "Existing Go agent service restored by control_plane=true."
+        required: false
+        default: "komari-agent"
+        type: string
       skip_rollback_service_check:
         description: "Run rollback command without checking rollback service status."
         required: true
@@ -91,8 +109,14 @@ jobs:
       CANARY_GITHUB_PROXY: ${{ inputs.github_proxy }}
       CANARY_INSECURE: ${{ inputs.insecure }}
       CANARY_KEEP_INSTALLED: ${{ inputs.keep_installed }}
+      CANARY_CONTROL_PLANE: ${{ inputs.control_plane }}
+      CANARY_PANEL_PING_TARGET: ${{ inputs.ping_target != '' && inputs.ping_target || secrets.KELICLOUD_PANEL_PING_TARGET }}
+      CANARY_PANEL_COOKIE: ${{ secrets.KELICLOUD_PANEL_COOKIE }}
+      CANARY_PANEL_USERNAME: ${{ secrets.KELICLOUD_PANEL_USERNAME }}
+      CANARY_PANEL_PASSWORD: ${{ secrets.KELICLOUD_PANEL_PASSWORD }}
       CANARY_REQUIRE_ROLLBACK: ${{ inputs.require_rollback }}
       CANARY_ROLLBACK_SERVICE_NAME: ${{ inputs.rollback_service_name }}
+      CANARY_OLD_SERVICE_NAME: ${{ inputs.old_service_name }}
       CANARY_SKIP_ROLLBACK_SERVICE_CHECK: ${{ inputs.skip_rollback_service_check }}
 
     steps:
@@ -120,12 +144,23 @@ jobs:
             echo "KELICLOUD_CANARY_ROLLBACK_COMMAND secret is required when require_rollback=true."
             exit 1
           fi
+          if [ "${CANARY_CONTROL_PLANE}" = "true" ] && [ -z "${CANARY_PANEL_COOKIE}" ] && { [ -z "${CANARY_PANEL_USERNAME}" ] || [ -z "${CANARY_PANEL_PASSWORD}" ]; }; then
+            echo "control_plane=true requires KELICLOUD_PANEL_COOKIE or KELICLOUD_PANEL_USERNAME/KELICLOUD_PANEL_PASSWORD secrets."
+            exit 1
+          fi
           echo "::add-mask::${CANARY_AUTO_DISCOVERY_KEY}"
           if [ -n "${CANARY_ROLLBACK_COMMAND}" ]; then
             echo "::add-mask::${CANARY_ROLLBACK_COMMAND}"
           fi
+          if [ -n "${CANARY_PANEL_COOKIE}" ]; then
+            echo "::add-mask::${CANARY_PANEL_COOKIE}"
+          fi
+          if [ -n "${CANARY_PANEL_PASSWORD}" ]; then
+            echo "::add-mask::${CANARY_PANEL_PASSWORD}"
+          fi
 
       - name: Run real host canary
+        if: ${{ inputs.control_plane != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -159,6 +194,32 @@ jobs:
 
           sudo bash scripts/canary-install.sh "${args[@]}" 2>&1 | tee canary-logs/real-host-canary.log
 
+      - name: Run real host control canary
+        if: ${{ inputs.control_plane == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export KELICLOUD_PANEL_COOKIE="${CANARY_PANEL_COOKIE}"
+          export KELICLOUD_PANEL_USERNAME="${CANARY_PANEL_USERNAME}"
+          export KELICLOUD_PANEL_PASSWORD="${CANARY_PANEL_PASSWORD}"
+          args=(
+            --endpoint "${CANARY_ENDPOINT}"
+            --auto-discovery "${CANARY_AUTO_DISCOVERY_KEY}"
+            --ping-target "${CANARY_PANEL_PING_TARGET}"
+            --service-wait "${CANARY_SERVICE_WAIT}"
+            --workdir canary-logs
+            --old-service "${CANARY_OLD_SERVICE_NAME}"
+          )
+          if [ -n "${CANARY_INSTALL_VERSION}" ]; then
+            args+=(--install-version "${CANARY_INSTALL_VERSION}")
+          fi
+          if [ -n "${CANARY_ROLLBACK_COMMAND}" ]; then
+            args+=(--rollback-command "${CANARY_ROLLBACK_COMMAND}")
+          fi
+
+          sudo --preserve-env=KELICLOUD_PANEL_COOKIE,KELICLOUD_PANEL_USERNAME,KELICLOUD_PANEL_PASSWORD bash scripts/real-host-control-canary.sh "${args[@]}" 2>&1 | tee canary-logs/real-host-control-canary.log
+          test -s canary-logs/real-host-control-canary.evidence.md
+
       - name: Capture service status
         if: always()
         shell: bash
@@ -175,6 +236,12 @@ jobs:
             if [ -n "${CANARY_ROLLBACK_SERVICE_NAME}" ]; then
               systemctl status "${CANARY_ROLLBACK_SERVICE_NAME}.service" --no-pager
               journalctl -u "${CANARY_ROLLBACK_SERVICE_NAME}" -n 120 --no-pager
+            fi
+            if [ -n "${CANARY_OLD_SERVICE_NAME}" ] && [ "${CANARY_OLD_SERVICE_NAME}" != "${CANARY_ROLLBACK_SERVICE_NAME}" ]; then
+              echo
+              echo "## old service status"
+              systemctl status "${CANARY_OLD_SERVICE_NAME}.service" --no-pager
+              journalctl -u "${CANARY_OLD_SERVICE_NAME}" -n 120 --no-pager
             fi
           } > canary-logs/service-status.log 2>&1
 
