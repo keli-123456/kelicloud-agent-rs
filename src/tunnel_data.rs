@@ -200,9 +200,10 @@ impl TungsteniteTunnelDataSocket {
                 Ok(Message::Text(text)) => return Ok(Some(text.to_string().into_bytes())),
                 Ok(Message::Close(_)) => return Err(TransportError::SocketClosed),
                 Ok(_) => continue,
-                Err(tungstenite::Error::Io(error))
-                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-                {
+                Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::Interrupted => {
+                    continue;
+                }
+                Err(tungstenite::Error::Io(error)) if is_idle_read_error(error.kind()) => {
                     if timeout_as_idle {
                         return Ok(None);
                     }
@@ -222,6 +223,24 @@ impl TungsteniteTunnelDataSocket {
             _ => Ok(()),
         }
         .map_err(|error| TransportError::RequestFailed(error.to_string()))
+    }
+}
+
+fn is_idle_read_error(kind: ErrorKind) -> bool {
+    matches!(kind, ErrorKind::WouldBlock | ErrorKind::TimedOut)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_idle_read_error;
+    use std::io::ErrorKind;
+
+    #[test]
+    fn data_read_timeout_errors_are_idle_but_interrupted_retries() {
+        assert!(is_idle_read_error(ErrorKind::TimedOut));
+        assert!(is_idle_read_error(ErrorKind::WouldBlock));
+        assert!(!is_idle_read_error(ErrorKind::Interrupted));
+        assert!(!is_idle_read_error(ErrorKind::ConnectionReset));
     }
 }
 

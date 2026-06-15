@@ -454,13 +454,30 @@ impl TunnelControlSocket for TungsteniteTunnelControlSocket {
             Ok(Message::Binary(bytes)) => Ok(Some(bytes.to_vec())),
             Ok(Message::Close(_)) => Err(TransportError::SocketClosed),
             Ok(_) => Ok(None),
-            Err(tungstenite::Error::Io(error))
-                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-            {
-                Ok(None)
-            }
+            Err(tungstenite::Error::Io(error)) if is_idle_read_error(error.kind()) => Ok(None),
             Err(error) => Err(TransportError::RequestFailed(error.to_string())),
         }
+    }
+}
+
+fn is_idle_read_error(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_idle_read_error;
+    use std::io::ErrorKind;
+
+    #[test]
+    fn interrupted_control_read_is_retryable_idle() {
+        assert!(is_idle_read_error(ErrorKind::Interrupted));
+        assert!(is_idle_read_error(ErrorKind::TimedOut));
+        assert!(is_idle_read_error(ErrorKind::WouldBlock));
+        assert!(!is_idle_read_error(ErrorKind::ConnectionReset));
     }
 }
 
