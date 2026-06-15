@@ -3,7 +3,7 @@ use kelicloud_agent_rs::cn_connectivity::{
 };
 use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::ping::LinuxPingExecutor;
-use kelicloud_agent_rs::protocol::build_tunnel_control_ws_url;
+use kelicloud_agent_rs::protocol::{build_tunnel_control_ws_url, build_tunnel_data_ws_url};
 use kelicloud_agent_rs::runtime::{
     run_once_with_ping, run_once_with_ping_and_token_recovery, run_report_cycles_with_ping_delay,
     run_report_cycles_with_ping_delay_and_token_recovery, startup_summary,
@@ -20,6 +20,10 @@ use kelicloud_agent_rs::transport::{
 };
 use kelicloud_agent_rs::tunnel_control::{
     run_tunnel_control_once, tunnel_control_startup_line, TungsteniteTunnelControlTransport,
+};
+use kelicloud_agent_rs::tunnel_data::{
+    run_tunnel_data_once, tunnel_data_startup_line, TungsteniteTunnelDataTransport,
+    TunnelDataReadyState,
 };
 
 fn main() {
@@ -56,6 +60,17 @@ fn main() {
         println!("tunnel control: enabled url=invalid");
     } else {
         println!("{}", tunnel_control_startup_line("", false));
+    }
+    let tunnel_data_url = build_tunnel_data_ws_url(&config.endpoint, &shared_token.get()).ok();
+    if let Some(url) = tunnel_data_url.as_deref() {
+        println!(
+            "{}",
+            tunnel_data_startup_line(url, config.tunnel_data_enabled)
+        );
+    } else if config.tunnel_data_enabled {
+        println!("tunnel data: enabled url=invalid");
+    } else {
+        println!("{}", tunnel_data_startup_line("", false));
     }
 
     let basic_info_config = config.clone();
@@ -145,6 +160,41 @@ fn main() {
                 }
             });
         }
+    }
+
+    if config.tunnel_data_enabled {
+        let tunnel_data_headers = access_headers(&config);
+        let tunnel_data_endpoint = config.endpoint.clone();
+        let tunnel_data_custom_dns = config.custom_dns.clone();
+        let tunnel_data_agent_version = env!("CARGO_PKG_VERSION").to_string();
+        let tunnel_data_shared_token = shared_token.clone();
+        std::thread::spawn(move || {
+            let ready = TunnelDataReadyState::empty("");
+            loop {
+                match build_tunnel_data_ws_url(
+                    &tunnel_data_endpoint,
+                    &tunnel_data_shared_token.get(),
+                ) {
+                    Ok(url) => {
+                        let mut transport = TungsteniteTunnelDataTransport::new_with_custom_dns(
+                            &tunnel_data_custom_dns,
+                        );
+                        if let Err(error) = run_tunnel_data_once(
+                            &url,
+                            &tunnel_data_headers,
+                            "",
+                            &tunnel_data_agent_version,
+                            &ready,
+                            &mut transport,
+                        ) {
+                            eprintln!("tunnel data warning: {error}");
+                        }
+                    }
+                    Err(error) => eprintln!("tunnel data warning: {error}"),
+                }
+                std::thread::sleep(std::time::Duration::from_secs(30));
+            }
+        });
     }
 
     let auto_discovery_recovery =

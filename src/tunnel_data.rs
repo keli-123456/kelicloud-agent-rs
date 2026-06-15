@@ -1,5 +1,10 @@
 use crate::ktp::{encode_frame, FrameType, KtpFrame};
-use crate::transport::{HeaderPair, TransportError};
+use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
+use std::net::TcpStream;
+use tungstenite::client::IntoClientRequest;
+use tungstenite::http::{HeaderName, HeaderValue};
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Message, WebSocket};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TunnelDataReadyState {
@@ -39,6 +44,59 @@ pub trait TunnelDataTransport {
         url: &str,
         headers: &[HeaderPair],
     ) -> Result<Self::Socket, TransportError>;
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TungsteniteTunnelDataTransport {
+    custom_dns: String,
+}
+
+impl TungsteniteTunnelDataTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn new_with_custom_dns(custom_dns: &str) -> Self {
+        Self {
+            custom_dns: custom_dns.trim().to_string(),
+        }
+    }
+}
+
+impl TunnelDataTransport for TungsteniteTunnelDataTransport {
+    type Socket = TungsteniteTunnelDataSocket;
+
+    fn connect_tunnel_data(
+        &mut self,
+        url: &str,
+        headers: &[HeaderPair],
+    ) -> Result<Self::Socket, TransportError> {
+        let mut request = url
+            .into_client_request()
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        for (name, value) in headers {
+            let header_name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            let header_value = HeaderValue::from_str(value)
+                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            request.headers_mut().insert(header_name, header_value);
+        }
+
+        let (socket, _response) = connect_websocket_request(request, &self.custom_dns)?;
+        Ok(TungsteniteTunnelDataSocket { socket })
+    }
+}
+
+pub struct TungsteniteTunnelDataSocket {
+    socket: WebSocket<MaybeTlsStream<TcpStream>>,
+}
+
+impl TunnelDataSocket for TungsteniteTunnelDataSocket {
+    fn send_frame(&mut self, frame: &[u8]) -> Result<(), TransportError> {
+        self.socket
+            .send(Message::Binary(frame.to_vec().into()))
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))
+    }
 }
 
 pub fn run_tunnel_data_once<T>(

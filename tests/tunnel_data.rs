@@ -4,8 +4,8 @@ use std::rc::Rc;
 use kelicloud_agent_rs::ktp::{decode_frame, FrameType, KTP_MAX_PAYLOAD_LEN};
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_data::{
-    run_tunnel_data_once, tunnel_data_startup_line, TunnelDataReadyState, TunnelDataRuleFailure,
-    TunnelDataSocket, TunnelDataTransport,
+    run_tunnel_data_once, tunnel_data_startup_line, TungsteniteTunnelDataTransport,
+    TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
 };
 
 struct FakeTunnelDataTransport {
@@ -255,6 +255,16 @@ fn tunnel_data_startup_line_redacts_token() {
         line,
         "tunnel data: enabled url=wss://panel.example.com/api/clients/tunnel/data?token=redacted"
     );
+}
+
+#[test]
+fn tunnel_data_startup_line_reports_disabled() {
+    assert_eq!(tunnel_data_startup_line("", false), "tunnel data: disabled");
+}
+
+#[test]
+fn tungstenite_tunnel_data_transport_can_be_constructed() {
+    let _transport = TungsteniteTunnelDataTransport::new_with_custom_dns("8.8.8.8");
 }
 
 fn bytes_to_hex(bytes: &[u8]) -> String {

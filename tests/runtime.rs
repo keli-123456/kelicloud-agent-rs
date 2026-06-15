@@ -59,6 +59,7 @@ fn startup_summary_redacts_token() {
     assert!(summary.contains("insecure tls: enabled"));
     assert!(summary.contains("web ssh: disabled"));
     assert!(!summary.contains("secret-token-value"));
+    assert!(!summary.contains("tunnel data"));
 }
 
 #[test]
