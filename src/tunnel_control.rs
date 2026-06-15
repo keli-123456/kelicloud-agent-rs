@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
+use crate::transport::{HeaderPair, TransportError};
+
 pub const TUNNEL_CONTROL_PROTOCOL_V1: &str = "keli-tunnel-control.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,4 +137,95 @@ pub fn parse_server_message(
 ) -> Result<TunnelControlServerMessage, TunnelControlError> {
     serde_json::from_slice(bytes)
         .map_err(|error| TunnelControlError::InvalidMessage(error.to_string()))
+}
+
+pub trait TunnelControlSocket {
+    fn send_message(&mut self, message: &TunnelControlClientMessage) -> Result<(), TransportError>;
+    fn read_message(&mut self) -> Result<Option<Vec<u8>>, TransportError>;
+}
+
+pub trait TunnelControlTransport {
+    type Socket: TunnelControlSocket;
+
+    fn connect_tunnel_control(
+        &mut self,
+        url: &str,
+        headers: &[HeaderPair],
+    ) -> Result<Self::Socket, TransportError>;
+}
+
+pub fn is_non_fatal_tunnel_control_error(error: &TransportError) -> bool {
+    match error {
+        TransportError::InvalidClientToken { .. } => false,
+        TransportError::EmptyEndpoint
+        | TransportError::EmptyToken
+        | TransportError::UnsupportedScheme(_) => false,
+        TransportError::RequestFailed(message) => {
+            let lower = message.to_ascii_lowercase();
+            lower.contains("404") || lower.contains("403") || lower.contains("feature_disabled")
+        }
+        TransportError::SocketClosed => true,
+    }
+}
+
+pub fn run_tunnel_control_once<T>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_version: &str,
+    transport: &mut T,
+) -> Result<(), TransportError>
+where
+    T: TunnelControlTransport,
+{
+    let mut socket = match transport.connect_tunnel_control(url, headers) {
+        Ok(socket) => socket,
+        Err(error) if is_non_fatal_tunnel_control_error(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+
+    socket.send_message(&build_hello(agent_version))?;
+    let mut latest_revision = String::new();
+    let mut accepted_rules = Vec::new();
+
+    while let Some(bytes) = socket.read_message()? {
+        match parse_server_message(&bytes) {
+            Ok(TunnelControlServerMessage::HelloAck {
+                server_protocol, ..
+            }) => {
+                if server_protocol.trim() != TUNNEL_CONTROL_PROTOCOL_V1 {
+                    return Err(TransportError::RequestFailed(format!(
+                        "unsupported tunnel control protocol: {server_protocol}"
+                    )));
+                }
+            }
+            Ok(TunnelControlServerMessage::RuleSync { revision, rules }) => {
+                latest_revision = revision;
+                accepted_rules = rules;
+                socket.send_message(&build_rule_ack(&latest_revision, &accepted_rules, &[]))?;
+                let statuses = accepted_rules
+                    .iter()
+                    .map(|rule| TunnelRuleStatus {
+                        id: rule.id,
+                        status: "ok".to_string(),
+                        error: String::new(),
+                    })
+                    .collect::<Vec<_>>();
+                socket.send_message(&build_rule_status(&latest_revision, &statuses))?;
+            }
+            Ok(TunnelControlServerMessage::Error { code, message }) => {
+                if code == "feature_disabled" {
+                    return Ok(());
+                }
+                return Err(TransportError::RequestFailed(message));
+            }
+            Err(error) => return Err(TransportError::RequestFailed(error.to_string())),
+        }
+    }
+
+    let active_rules = accepted_rules
+        .iter()
+        .map(|rule| rule.id)
+        .collect::<Vec<_>>();
+    socket.send_message(&build_heartbeat(&latest_revision, &active_rules))?;
+    Ok(())
 }

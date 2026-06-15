@@ -1,8 +1,11 @@
+use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_control::{
-    build_heartbeat, build_hello, build_rule_ack, parse_server_message, RejectedTunnelRule,
-    SelectedTunnelRule, TunnelControlClientMessage, TunnelControlServerMessage,
-    TUNNEL_CONTROL_PROTOCOL_V1,
+    build_heartbeat, build_hello, build_rule_ack, parse_server_message, run_tunnel_control_once,
+    RejectedTunnelRule, SelectedTunnelRule, TunnelControlClientMessage, TunnelControlServerMessage,
+    TunnelControlSocket, TunnelControlTransport, TUNNEL_CONTROL_PROTOCOL_V1,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[test]
 fn tunnel_control_hello_declares_capability_without_data_plane() {
@@ -123,4 +126,122 @@ fn tunnel_control_parses_hello_ack() {
             heartbeat_interval_seconds: 15,
         }
     );
+}
+
+#[test]
+fn tunnel_control_once_acks_rule_sync_and_sends_heartbeat() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelControlTransport::new(
+        events.clone(),
+        vec![
+            br#"{"type":"hello_ack","server_protocol":"keli-tunnel-control.v1","heartbeat_interval_seconds":15}"#.to_vec(),
+            br#"{"type":"rule_sync","revision":"rev-a","rules":[{"id":7,"name":"RDP","enabled":true,"protocol":"tcp","role":"ingress","ingress_group":"edge","listen_address":"0.0.0.0","listen_port":10088,"egress_group":"rdp","target_host":"127.0.0.1","target_port":3389,"source_allowlist":"0.0.0.0/0","max_concurrent_sessions":32,"last_revision":1}]}"#.to_vec(),
+        ],
+    );
+
+    run_tunnel_control_once(
+        "wss://panel.example.com/api/clients/tunnel?token=secret",
+        &[],
+        "0.1.0",
+        &mut transport,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow()[0],
+        "connect:wss://panel.example.com/api/clients/tunnel?token=secret"
+    );
+    assert!(events
+        .borrow()
+        .iter()
+        .any(|event| event.contains(r#""type":"hello""#)));
+    assert!(events
+        .borrow()
+        .iter()
+        .any(|event| event.contains(r#""type":"rule_ack""#)));
+    assert!(events
+        .borrow()
+        .iter()
+        .any(|event| event.contains(r#""type":"rule_status""#)));
+    assert!(events
+        .borrow()
+        .iter()
+        .any(|event| event.contains(r#""type":"heartbeat""#)));
+}
+
+#[test]
+fn tunnel_control_unsupported_endpoint_is_non_fatal() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelControlTransport::new(events, Vec::new())
+        .with_connect_error(TransportError::RequestFailed("HTTP 404".to_string()));
+
+    let result = run_tunnel_control_once(
+        "wss://panel.example.com/api/clients/tunnel?token=secret",
+        &[],
+        "0.1.0",
+        &mut transport,
+    );
+
+    assert!(result.is_ok());
+}
+
+struct FakeTunnelControlTransport {
+    events: Rc<RefCell<Vec<String>>>,
+    inbound: Vec<Vec<u8>>,
+    connect_error: Option<TransportError>,
+}
+
+impl FakeTunnelControlTransport {
+    fn new(events: Rc<RefCell<Vec<String>>>, inbound: Vec<Vec<u8>>) -> Self {
+        Self {
+            events,
+            inbound,
+            connect_error: None,
+        }
+    }
+
+    fn with_connect_error(mut self, error: TransportError) -> Self {
+        self.connect_error = Some(error);
+        self
+    }
+}
+
+impl TunnelControlTransport for FakeTunnelControlTransport {
+    type Socket = FakeTunnelControlSocket;
+
+    fn connect_tunnel_control(
+        &mut self,
+        url: &str,
+        _headers: &[HeaderPair],
+    ) -> Result<Self::Socket, TransportError> {
+        self.events.borrow_mut().push(format!("connect:{url}"));
+        if let Some(error) = self.connect_error.take() {
+            return Err(error);
+        }
+        Ok(FakeTunnelControlSocket {
+            events: self.events.clone(),
+            inbound: self.inbound.drain(..).collect(),
+        })
+    }
+}
+
+struct FakeTunnelControlSocket {
+    events: Rc<RefCell<Vec<String>>>,
+    inbound: Vec<Vec<u8>>,
+}
+
+impl TunnelControlSocket for FakeTunnelControlSocket {
+    fn send_message(&mut self, message: &TunnelControlClientMessage) -> Result<(), TransportError> {
+        self.events
+            .borrow_mut()
+            .push(serde_json::to_string(message).unwrap());
+        Ok(())
+    }
+
+    fn read_message(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        if self.inbound.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(self.inbound.remove(0)))
+    }
 }
