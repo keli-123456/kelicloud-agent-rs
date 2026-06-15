@@ -1,6 +1,7 @@
 use crate::ktp::{decode_frame, encode_frame, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN};
 use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
 use crate::tunnel_control::SelectedTunnelRule;
+use crate::tunnel_runtime::{NoopTunnelSessionRuntime, TunnelSessionRuntime};
 use std::io::ErrorKind;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
@@ -315,6 +316,32 @@ where
     T: TunnelDataTransport,
     S: TunnelDataReadySource,
 {
+    let mut runtime = NoopTunnelSessionRuntime;
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        url,
+        headers,
+        agent_id_hint,
+        agent_version,
+        ready_source,
+        transport,
+        &mut runtime,
+    )
+}
+
+pub fn run_tunnel_data_session_with_ready_source_and_runtime<T, S, R>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_id_hint: &str,
+    agent_version: &str,
+    ready_source: &S,
+    transport: &mut T,
+    runtime: &mut R,
+) -> Result<(), TransportError>
+where
+    T: TunnelDataTransport,
+    S: TunnelDataReadySource,
+    R: TunnelSessionRuntime,
+{
     let mut socket = match transport.connect_tunnel_data(url, headers) {
         Ok(socket) => socket,
         Err(error) if is_nonfatal_connect_error(&error) => return Ok(()),
@@ -345,8 +372,9 @@ where
             }
             last_ready = current_ready;
         }
+        drain_tunnel_session_runtime_frames(&mut socket, runtime)?;
         match socket.read_optional_frame() {
-            Ok(Some(bytes)) => handle_tunnel_data_session_frame(&mut socket, &bytes)?,
+            Ok(Some(bytes)) => handle_tunnel_data_session_frame(&mut socket, &bytes, runtime)?,
             Ok(None) => continue,
             Err(TransportError::SocketClosed) => return Ok(()),
             Err(error) => return Err(error),
@@ -437,16 +465,52 @@ where
     Ok(ReadFrameOutcome::Frame)
 }
 
-fn handle_tunnel_data_session_frame<S>(socket: &mut S, bytes: &[u8]) -> Result<(), TransportError>
+fn drain_tunnel_session_runtime_frames<S, R>(
+    socket: &mut S,
+    runtime: &mut R,
+) -> Result<(), TransportError>
 where
     S: TunnelDataSocket,
+    R: TunnelSessionRuntime,
+{
+    while let Some(frame) = runtime.next_client_frame()? {
+        let bytes = encode_frame(&frame)
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        let _ = send_tunnel_data_frame(socket, &bytes)?;
+    }
+    Ok(())
+}
+
+fn handle_tunnel_data_session_frame<S, R>(
+    socket: &mut S,
+    bytes: &[u8],
+    runtime: &mut R,
+) -> Result<(), TransportError>
+where
+    S: TunnelDataSocket,
+    R: TunnelSessionRuntime,
 {
     let frame = decode_frame(bytes, KTP_MAX_PAYLOAD_LEN)
         .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    if frame.frame_type == FrameType::Ping {
-        let pong = encode_frame(&KtpFrame::connection(FrameType::Pong, frame.payload))
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-        let _ = send_tunnel_data_frame(socket, &pong)?;
+    match frame.frame_type {
+        FrameType::Ping => {
+            let pong = encode_frame(&KtpFrame::connection(FrameType::Pong, frame.payload))
+                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            let _ = send_tunnel_data_frame(socket, &pong)?;
+        }
+        FrameType::SessionOpen
+        | FrameType::SessionAccept
+        | FrameType::SessionData
+        | FrameType::SessionWindow
+        | FrameType::SessionClose
+        | FrameType::SessionError => {
+            for response in runtime.handle_server_frame(frame)? {
+                let bytes = encode_frame(&response)
+                    .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+                let _ = send_tunnel_data_frame(socket, &bytes)?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

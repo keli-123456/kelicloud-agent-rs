@@ -1,3 +1,5 @@
+use crate::ktp::KtpFrame;
+use crate::transport::TransportError;
 use crate::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
 use crate::tunnel_data::{TunnelDataReadySource, TunnelDataReadyState};
 use std::net::{IpAddr, SocketAddr};
@@ -60,6 +62,21 @@ impl TunnelDataReadySource for SharedTunnelRuleState {
         TunnelDataReadyState::from_selected_rules(&snapshot.revision, &snapshot.rules)
     }
 }
+
+pub trait TunnelSessionRuntime {
+    fn handle_server_frame(&mut self, _frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
+        Ok(Vec::new())
+    }
+
+    fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct NoopTunnelSessionRuntime;
+
+impl TunnelSessionRuntime for NoopTunnelSessionRuntime {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TunnelTcpListenerSpec {

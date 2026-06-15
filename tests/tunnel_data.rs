@@ -2,15 +2,17 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use kelicloud_agent_rs::ktp::{
-    decode_frame, encode_frame, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN,
+    decode_frame, encode_frame, FrameLeg, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN,
 };
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
 use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_once, run_tunnel_data_session, run_tunnel_data_session_with_ready_source,
-    tunnel_data_startup_line, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
-    TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
+    run_tunnel_data_session_with_ready_source_and_runtime, tunnel_data_startup_line,
+    SharedTunnelDataReadyState, TungsteniteTunnelDataTransport, TunnelDataReadyState,
+    TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
 };
+use kelicloud_agent_rs::tunnel_runtime::TunnelSessionRuntime;
 
 type OptionalReadHook = Rc<RefCell<dyn FnMut(usize)>>;
 
@@ -331,6 +333,63 @@ fn tunnel_data_session_resends_ready_when_shared_state_changes() {
 }
 
 #[test]
+fn tunnel_data_session_dispatches_session_frames_to_runtime_and_sends_responses() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let server_frame = encode_frame(&KtpFrame {
+        frame_type: FrameType::SessionAccept,
+        leg: FrameLeg::Ingress,
+        flags: 0,
+        session_id: 77,
+        payload: 7u64.to_be_bytes().to_vec(),
+    })
+    .expect("session accept frame should encode");
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![
+            Ok(hello_ack_frame()),
+            Ok(server_frame),
+            Err(TransportError::SocketClosed),
+        ],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: None,
+    };
+    let mut runtime = FakeSessionRuntime {
+        handled: Vec::new(),
+        response: Some(KtpFrame {
+            frame_type: FrameType::SessionData,
+            leg: FrameLeg::Ingress,
+            flags: 0,
+            session_id: 77,
+            payload: b"ok".to_vec(),
+        }),
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "wss://panel.example.com/api/clients/tunnel/data?token=secret",
+        &[],
+        "node-a",
+        "0.1.0",
+        &TunnelDataReadyState::empty("rev-1"),
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should dispatch server session frame");
+
+    assert_eq!(runtime.handled.len(), 1);
+    assert_eq!(runtime.handled[0].frame_type, FrameType::SessionAccept);
+    assert_eq!(runtime.handled[0].session_id, 77);
+
+    let sent_session_frames = sent_frames(&events)
+        .into_iter()
+        .filter(|frame| frame.frame_type == FrameType::SessionData)
+        .collect::<Vec<_>>();
+    assert_eq!(sent_session_frames.len(), 1);
+    assert_eq!(sent_session_frames[0].payload, b"ok");
+}
+
+#[test]
 fn main_wires_tunnel_control_state_into_data_ready_source() {
     let source = std::fs::read_to_string("src/main.rs").expect("main source should be readable");
 
@@ -473,6 +532,18 @@ fn tunnel_data_send_socket_closed_stops_without_ready() {
     assert_eq!(hello.frame_type, FrameType::Hello);
 }
 
+struct FakeSessionRuntime {
+    handled: Vec<KtpFrame>,
+    response: Option<KtpFrame>,
+}
+
+impl TunnelSessionRuntime for FakeSessionRuntime {
+    fn handle_server_frame(&mut self, frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
+        self.handled.push(frame);
+        Ok(self.response.take().into_iter().collect())
+    }
+}
+
 fn hello_ack_frame() -> Vec<u8> {
     encode_frame(&KtpFrame::connection(FrameType::HelloAck, Vec::new()))
         .expect("hello_ack frame should encode")
@@ -485,6 +556,21 @@ fn frame_type_from_event(event: &str) -> FrameType {
     )
     .expect("frame should decode")
     .frame_type
+}
+
+fn sent_frames(events: &Rc<RefCell<Vec<String>>>) -> Vec<KtpFrame> {
+    events
+        .borrow()
+        .iter()
+        .filter(|event| event.starts_with("frame:"))
+        .map(|event| {
+            decode_frame(
+                &hex_to_bytes(event.strip_prefix("frame:").expect("frame prefix")),
+                KTP_MAX_PAYLOAD_LEN,
+            )
+            .expect("frame should decode")
+        })
+        .collect()
 }
 
 #[test]
