@@ -184,6 +184,45 @@ fn tcp_runtime_ingress_listener_queues_open_data_and_writes_server_response() {
 }
 
 #[test]
+fn tcp_runtime_stops_listener_when_rule_is_removed() {
+    let listen_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(41, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = listen_port;
+    state.update_rules("rev-a", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state.clone());
+    runtime.refresh_listeners().expect("start listener");
+    assert!(TcpStream::connect(("127.0.0.1", listen_port)).is_ok());
+
+    state.update_rules("rev-b", &[]);
+    runtime.refresh_listeners().expect("stop removed listener");
+
+    assert_port_eventually_closed(listen_port);
+}
+
+#[test]
+fn tcp_runtime_restarts_listener_when_listen_port_changes() {
+    let first_port = free_tcp_port();
+    let second_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(42, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = first_port;
+    state.update_rules("rev-a", &[rule.clone()]);
+    let mut runtime = TunnelTcpRuntime::new(state.clone());
+    runtime.refresh_listeners().expect("start first listener");
+    assert!(TcpStream::connect(("127.0.0.1", first_port)).is_ok());
+
+    rule.listen_port = second_port;
+    state.update_rules("rev-b", &[rule]);
+    runtime.refresh_listeners().expect("restart listener");
+
+    assert_port_eventually_closed(first_port);
+    connect_with_retry(("127.0.0.1", second_port));
+}
+
+#[test]
 fn tcp_runtime_two_agent_relay_simulation_forwards_echo() {
     let target = TcpListener::bind("127.0.0.1:0").expect("bind target echo listener");
     let target_addr = target.local_addr().expect("target local addr");
@@ -289,6 +328,17 @@ fn connect_with_retry(addr: (&str, u16)) -> TcpStream {
             Err(error) => panic!("connect ingress listener: {error}"),
         }
     }
+}
+
+fn assert_port_eventually_closed(port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if TcpStream::connect(("127.0.0.1", port)).is_err() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("port {port} remained open");
 }
 
 fn selected_rule(id: u64, protocol: &str, role: &str, enabled: bool) -> SelectedTunnelRule {

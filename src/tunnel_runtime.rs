@@ -9,7 +9,7 @@ use crate::tunnel_session::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -91,12 +91,17 @@ pub struct TunnelTcpRuntime {
     rule_state: SharedTunnelRuleState,
     outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
     sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
-    listeners: HashSet<u64>,
+    listeners: HashMap<u64, TcpListenerHandle>,
     next_session_id: Arc<AtomicU64>,
 }
 
 struct TcpTunnelSession {
     to_target: mpsc::Sender<Vec<u8>>,
+}
+
+struct TcpListenerHandle {
+    spec: TunnelTcpListenerSpec,
+    stop: Arc<AtomicBool>,
 }
 
 impl TunnelTcpRuntime {
@@ -105,23 +110,42 @@ impl TunnelTcpRuntime {
             rule_state,
             outbound: Arc::new(Mutex::new(VecDeque::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            listeners: HashSet::new(),
+            listeners: HashMap::new(),
             next_session_id: Arc::new(AtomicU64::new(initial_session_id())),
         }
     }
 
     pub fn refresh_listeners(&mut self) -> Result<(), TransportError> {
-        for spec in self.rule_state.tcp_listener_plan() {
-            if self.listeners.contains(&spec.rule_id) {
+        let plan = self.rule_state.tcp_listener_plan();
+        let desired_rule_ids = plan.iter().map(|spec| spec.rule_id).collect::<HashSet<_>>();
+
+        self.listeners.retain(|rule_id, handle| {
+            let should_keep = desired_rule_ids.contains(rule_id)
+                && plan
+                    .iter()
+                    .find(|spec| spec.rule_id == *rule_id)
+                    .map(|spec| same_listener_endpoint(spec, &handle.spec))
+                    .unwrap_or(false);
+            if !should_keep {
+                handle.stop.store(true, Ordering::SeqCst);
+            }
+            should_keep
+        });
+
+        for spec in plan {
+            if self.listeners.contains_key(&spec.rule_id) {
                 continue;
             }
+            let stop = Arc::new(AtomicBool::new(false));
             start_tcp_listener(
                 spec.clone(),
                 Arc::clone(&self.outbound),
                 Arc::clone(&self.sessions),
                 Arc::clone(&self.next_session_id),
+                Arc::clone(&stop),
             )?;
-            self.listeners.insert(spec.rule_id);
+            self.listeners
+                .insert(spec.rule_id, TcpListenerHandle { spec, stop });
         }
         Ok(())
     }
@@ -240,6 +264,12 @@ fn tcp_target_addr(host: &str, port: u16) -> String {
     }
 }
 
+fn same_listener_endpoint(left: &TunnelTcpListenerSpec, right: &TunnelTcpListenerSpec) -> bool {
+    left.listen_address.trim() == right.listen_address.trim()
+        && left.listen_port == right.listen_port
+        && left.source_allowlist.trim() == right.source_allowlist.trim()
+}
+
 fn initial_session_id() -> u64 {
     let seed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -261,21 +291,31 @@ fn start_tcp_listener(
     outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
     sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
     next_session_id: Arc<AtomicU64>,
+    stop: Arc<AtomicBool>,
 ) -> Result<(), TransportError> {
     let listener = TcpListener::bind(tcp_target_addr(&spec.listen_address, spec.listen_port))
         .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
     thread::spawn(move || {
-        for accepted in listener.incoming() {
-            let Ok(stream) = accepted else {
-                continue;
-            };
-            handle_ingress_stream(
-                spec.clone(),
-                stream,
-                Arc::clone(&outbound),
-                Arc::clone(&sessions),
-                Arc::clone(&next_session_id),
-            );
+        while !stop.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    handle_ingress_stream(
+                        spec.clone(),
+                        stream,
+                        Arc::clone(&outbound),
+                        Arc::clone(&sessions),
+                        Arc::clone(&next_session_id),
+                    );
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                    thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
         }
     });
     Ok(())
