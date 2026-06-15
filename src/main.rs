@@ -3,6 +3,7 @@ use kelicloud_agent_rs::cn_connectivity::{
 };
 use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::ping::LinuxPingExecutor;
+use kelicloud_agent_rs::protocol::build_tunnel_control_ws_url;
 use kelicloud_agent_rs::runtime::{
     run_once_with_ping, run_once_with_ping_and_token_recovery, run_report_cycles_with_ping_delay,
     run_report_cycles_with_ping_delay_and_token_recovery, startup_summary,
@@ -14,7 +15,12 @@ use kelicloud_agent_rs::task::{
 };
 use kelicloud_agent_rs::terminal::{TerminalControlMessageHandler, TungsteniteTerminalConnector};
 use kelicloud_agent_rs::token::{SharedAgentToken, SharedTokenRecovery};
-use kelicloud_agent_rs::transport::{ReqwestHttpTransport, TungsteniteWebSocketTransport};
+use kelicloud_agent_rs::transport::{
+    access_headers, ReqwestHttpTransport, TungsteniteWebSocketTransport,
+};
+use kelicloud_agent_rs::tunnel_control::{
+    run_tunnel_control_once, tunnel_control_startup_line, TungsteniteTunnelControlTransport,
+};
 
 fn main() {
     if !kelicloud_agent_rs::linux_proc::linux_supported() {
@@ -39,6 +45,18 @@ fn main() {
 
     println!("{}", startup_summary(&config));
     let shared_token = SharedAgentToken::new(config.token.clone());
+    let tunnel_control_url =
+        build_tunnel_control_ws_url(&config.endpoint, &shared_token.get()).ok();
+    if let Some(url) = tunnel_control_url.as_deref() {
+        println!(
+            "{}",
+            tunnel_control_startup_line(url, config.tunnel_control_enabled)
+        );
+    } else if config.tunnel_control_enabled {
+        println!("tunnel control: enabled url=invalid");
+    } else {
+        println!("{}", tunnel_control_startup_line("", false));
+    }
 
     let basic_info_config = config.clone();
     let basic_info_provider = move || {
@@ -78,6 +96,56 @@ fn main() {
     let control_handler = ChainControlMessageHandler::new(cn_handler, task_handler);
     let mut handler = ChainControlMessageHandler::new(control_handler, terminal_handler);
     let ping_executor = LinuxPingExecutor::default();
+
+    if config.tunnel_control_enabled {
+        let tunnel_headers = access_headers(&config);
+        let tunnel_endpoint = config.endpoint.clone();
+        let tunnel_custom_dns = config.custom_dns.clone();
+        let tunnel_agent_version = env!("CARGO_PKG_VERSION").to_string();
+        if config.once {
+            if let Ok(url) = build_tunnel_control_ws_url(&tunnel_endpoint, &shared_token.get()) {
+                let mut tunnel_transport =
+                    TungsteniteTunnelControlTransport::new_with_custom_dns(&tunnel_custom_dns);
+                if let Err(error) = run_tunnel_control_once(
+                    &url,
+                    &tunnel_headers,
+                    &tunnel_agent_version,
+                    &mut tunnel_transport,
+                ) {
+                    eprintln!("tunnel control warning: {error}");
+                }
+            }
+        } else {
+            let tunnel_shared_token = shared_token.clone();
+            std::thread::spawn(move || {
+                let mut retry_delay = std::time::Duration::from_secs(5);
+                loop {
+                    match build_tunnel_control_ws_url(&tunnel_endpoint, &tunnel_shared_token.get())
+                    {
+                        Ok(url) => {
+                            let mut tunnel_transport =
+                                TungsteniteTunnelControlTransport::new_with_custom_dns(
+                                    &tunnel_custom_dns,
+                                );
+                            match run_tunnel_control_once(
+                                &url,
+                                &tunnel_headers,
+                                &tunnel_agent_version,
+                                &mut tunnel_transport,
+                            ) {
+                                Ok(()) => retry_delay = std::time::Duration::from_secs(15),
+                                Err(error) => eprintln!("tunnel control warning: {error}"),
+                            }
+                        }
+                        Err(error) => eprintln!("tunnel control warning: {error}"),
+                    }
+                    std::thread::sleep(retry_delay);
+                    retry_delay =
+                        (retry_delay + retry_delay).min(std::time::Duration::from_secs(60));
+                }
+            });
+        }
+    }
 
     let auto_discovery_recovery =
         match kelicloud_agent_rs::auto_discovery::token_recovery_from_config(&config) {

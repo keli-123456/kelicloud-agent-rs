@@ -1,8 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
+use std::io::ErrorKind;
+use std::net::TcpStream;
+use std::time::Duration;
 
-use crate::transport::{HeaderPair, TransportError};
+use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
+use tungstenite::client::IntoClientRequest;
+use tungstenite::http::{HeaderName, HeaderValue};
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Message, WebSocket};
 
 pub const TUNNEL_CONTROL_PROTOCOL_V1: &str = "keli-tunnel-control.v1";
 
@@ -228,4 +235,114 @@ where
         .collect::<Vec<_>>();
     socket.send_message(&build_heartbeat(&latest_revision, &active_rules))?;
     Ok(())
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct TungsteniteTunnelControlTransport {
+    custom_dns: String,
+}
+
+impl TungsteniteTunnelControlTransport {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn new_with_custom_dns(custom_dns: &str) -> Self {
+        Self {
+            custom_dns: custom_dns.trim().to_string(),
+        }
+    }
+}
+
+impl TunnelControlTransport for TungsteniteTunnelControlTransport {
+    type Socket = TungsteniteTunnelControlSocket;
+
+    fn connect_tunnel_control(
+        &mut self,
+        url: &str,
+        headers: &[HeaderPair],
+    ) -> Result<Self::Socket, TransportError> {
+        let mut request = url
+            .into_client_request()
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        for (name, value) in headers {
+            let header_name = HeaderName::from_bytes(name.as_bytes())
+                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            let header_value = HeaderValue::from_str(value)
+                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            request.headers_mut().insert(header_name, header_value);
+        }
+        let (socket, _response) = connect_websocket_request(request, &self.custom_dns)?;
+        Ok(TungsteniteTunnelControlSocket {
+            socket,
+            read_timeout: Duration::from_millis(500),
+        })
+    }
+}
+
+pub struct TungsteniteTunnelControlSocket {
+    socket: WebSocket<MaybeTlsStream<TcpStream>>,
+    read_timeout: Duration,
+}
+
+impl TunnelControlSocket for TungsteniteTunnelControlSocket {
+    fn send_message(&mut self, message: &TunnelControlClientMessage) -> Result<(), TransportError> {
+        let payload = serde_json::to_string(message)
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        self.socket
+            .send(Message::Text(payload.into()))
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))
+    }
+
+    fn read_message(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        self.set_read_timeout(Some(self.read_timeout))?;
+        match self.socket.read() {
+            Ok(Message::Text(text)) => Ok(Some(text.to_string().into_bytes())),
+            Ok(Message::Binary(bytes)) => Ok(Some(bytes.to_vec())),
+            Ok(Message::Close(_)) => Err(TransportError::SocketClosed),
+            Ok(_) => Ok(None),
+            Err(tungstenite::Error::Io(error))
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(TransportError::RequestFailed(error.to_string())),
+        }
+    }
+}
+
+impl TungsteniteTunnelControlSocket {
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<(), TransportError> {
+        match self.socket.get_mut() {
+            MaybeTlsStream::Plain(stream) => stream.set_read_timeout(timeout),
+            MaybeTlsStream::Rustls(stream) => stream.sock.set_read_timeout(timeout),
+            _ => Ok(()),
+        }
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))
+    }
+}
+
+pub fn tunnel_control_startup_line(url: &str, enabled: bool) -> String {
+    if !enabled {
+        return "tunnel control: disabled".to_string();
+    }
+    format!("tunnel control: enabled url={}", redact_token_in_url(url))
+}
+
+fn redact_token_in_url(url: &str) -> String {
+    let Some((base, query)) = url.split_once('?') else {
+        return url.to_string();
+    };
+    let query = query
+        .split('&')
+        .map(|part| {
+            if part.split_once('=').is_some_and(|(key, _)| key == "token") {
+                "token=redacted".to_string()
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{base}?{query}")
 }

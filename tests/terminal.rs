@@ -255,6 +255,7 @@ fn test_config(endpoint: String) -> AgentConfig {
         auto_discovery_key: String::new(),
         insecure: true,
         disable_web_ssh: false,
+        tunnel_control_enabled: true,
         interval_seconds: 1.0,
         max_retries: 0,
         reconnect_interval_seconds: 5,

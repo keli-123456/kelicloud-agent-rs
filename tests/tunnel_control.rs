@@ -185,6 +185,19 @@ fn tunnel_control_unsupported_endpoint_is_non_fatal() {
     assert!(result.is_ok());
 }
 
+#[test]
+fn tungstenite_tunnel_control_connector_redacts_token_in_startup_line() {
+    let line = kelicloud_agent_rs::tunnel_control::tunnel_control_startup_line(
+        "wss://panel.example.com/api/clients/tunnel?token=secret",
+        true,
+    );
+
+    assert_eq!(
+        line,
+        "tunnel control: enabled url=wss://panel.example.com/api/clients/tunnel?token=redacted"
+    );
+}
+
 struct FakeTunnelControlTransport {
     events: Rc<RefCell<Vec<String>>>,
     inbound: Vec<Vec<u8>>,
