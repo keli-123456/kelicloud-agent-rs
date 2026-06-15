@@ -1,8 +1,15 @@
+use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
 use kelicloud_agent_rs::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
 use kelicloud_agent_rs::tunnel_data::TunnelDataReadySource;
 use kelicloud_agent_rs::tunnel_runtime::{
-    build_tcp_listener_plan, source_addr_allowed, SharedTunnelRuleState,
+    build_tcp_listener_plan, source_addr_allowed, SharedTunnelRuleState, TunnelSessionRuntime,
+    TunnelTcpRuntime,
 };
+use kelicloud_agent_rs::tunnel_session::encode_session_open_payload;
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[test]
 fn tcp_listener_plan_includes_enabled_ingress_and_both_rules_only() {
@@ -72,6 +79,79 @@ fn shared_tunnel_rule_state_feeds_ready_source_and_listener_plan() {
             .collect::<Vec<_>>(),
         vec![7, 9]
     );
+}
+
+#[test]
+fn tcp_runtime_egress_connects_target_and_queues_response_data() {
+    let target = TcpListener::bind("127.0.0.1:0").expect("bind target echo listener");
+    let target_addr = target.local_addr().expect("target local addr");
+    let echo_thread = thread::spawn(move || {
+        let (mut stream, _) = target.accept().expect("accept target connection");
+        let mut buffer = [0u8; 16];
+        let read = stream.read(&mut buffer).expect("read target input");
+        assert_eq!(&buffer[..read], b"ping");
+        stream.write_all(b"pong").expect("write target output");
+    });
+
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(7, "tcp", "egress", true);
+    rule.target_host = "127.0.0.1".to_string();
+    rule.target_port = target_addr.port();
+    state.update_rules("rev-a", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state);
+    let open_payload = encode_session_open_payload(
+        &kelicloud_agent_rs::tunnel_session::TunnelSessionOpenPayload {
+            rule_id: 7,
+            listen_host: "127.0.0.1".to_string(),
+            listen_port: 10088,
+            source_addr: "127.0.0.1:50123".to_string(),
+        },
+    )
+    .expect("encode session open");
+
+    let responses = runtime
+        .handle_server_frame(KtpFrame {
+            frame_type: FrameType::SessionOpen,
+            leg: FrameLeg::Egress,
+            flags: 0,
+            session_id: 77,
+            payload: open_payload,
+        })
+        .expect("handle session open");
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].frame_type, FrameType::SessionAccept);
+    assert_eq!(responses[0].leg, FrameLeg::Egress);
+
+    runtime
+        .handle_server_frame(KtpFrame {
+            frame_type: FrameType::SessionData,
+            leg: FrameLeg::Egress,
+            flags: 0,
+            session_id: 77,
+            payload: b"ping".to_vec(),
+        })
+        .expect("handle session data");
+
+    let frame = wait_for_next_runtime_frame(&mut runtime).expect("runtime response frame");
+    assert_eq!(frame.frame_type, FrameType::SessionData);
+    assert_eq!(frame.leg, FrameLeg::Egress);
+    assert_eq!(frame.session_id, 77);
+    assert_eq!(frame.payload, b"pong");
+    echo_thread.join().expect("echo thread should finish");
+}
+
+fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFrame> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if let Some(frame) = runtime
+            .next_client_frame()
+            .expect("poll next runtime frame")
+        {
+            return Some(frame);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    None
 }
 
 fn selected_rule(id: u64, protocol: &str, role: &str, enabled: bool) -> SelectedTunnelRule {
