@@ -7,7 +7,7 @@ use kelicloud_agent_rs::tunnel_runtime::{
 };
 use kelicloud_agent_rs::tunnel_session::encode_session_open_payload;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -140,6 +140,49 @@ fn tcp_runtime_egress_connects_target_and_queues_response_data() {
     echo_thread.join().expect("echo thread should finish");
 }
 
+#[test]
+fn tcp_runtime_ingress_listener_queues_open_data_and_writes_server_response() {
+    let listen_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(17, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = listen_port;
+    rule.source_allowlist = "127.0.0.0/8".to_string();
+    state.update_rules("rev-a", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state);
+    runtime.refresh_listeners().expect("start ingress listener");
+
+    let client_thread = thread::spawn(move || {
+        let mut stream = connect_with_retry(("127.0.0.1", listen_port));
+        stream.write_all(b"hello").expect("write ingress input");
+        let mut buffer = [0u8; 16];
+        let read = stream.read(&mut buffer).expect("read ingress response");
+        assert_eq!(&buffer[..read], b"world");
+    });
+
+    let open = wait_for_next_runtime_frame(&mut runtime).expect("session open frame");
+    assert_eq!(open.frame_type, FrameType::SessionOpen);
+    assert_eq!(open.leg, FrameLeg::Ingress);
+    assert_ne!(open.session_id, 0);
+
+    let data = wait_for_next_runtime_frame(&mut runtime).expect("session data frame");
+    assert_eq!(data.frame_type, FrameType::SessionData);
+    assert_eq!(data.session_id, open.session_id);
+    assert_eq!(data.payload, b"hello");
+
+    runtime
+        .handle_server_frame(KtpFrame {
+            frame_type: FrameType::SessionData,
+            leg: FrameLeg::Ingress,
+            flags: 0,
+            session_id: open.session_id,
+            payload: b"world".to_vec(),
+        })
+        .expect("write server response to ingress client");
+
+    client_thread.join().expect("client thread should finish");
+}
+
 fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFrame> {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
@@ -152,6 +195,25 @@ fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFram
         thread::sleep(Duration::from_millis(10));
     }
     None
+}
+
+fn free_tcp_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind free port");
+    listener.local_addr().expect("local addr").port()
+}
+
+fn connect_with_retry(addr: (&str, u16)) -> TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match TcpStream::connect(addr) {
+            Ok(stream) => return stream,
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("connect ingress listener: {error}"),
+        }
+    }
 }
 
 fn selected_rule(id: u64, protocol: &str, role: &str, enabled: bool) -> SelectedTunnelRule {
