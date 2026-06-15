@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fmt;
 use std::io::ErrorKind;
 use std::net::TcpStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
 use tungstenite::client::IntoClientRequest;
@@ -193,48 +193,141 @@ where
     socket.send_message(&build_hello(agent_version))?;
     let mut latest_revision = String::new();
     let mut accepted_rules = Vec::new();
+    let mut heartbeat_interval = Duration::from_secs(15);
 
     while let Some(bytes) = socket.read_message()? {
-        match parse_server_message(&bytes) {
-            Ok(TunnelControlServerMessage::HelloAck {
-                server_protocol, ..
-            }) => {
-                if server_protocol.trim() != TUNNEL_CONTROL_PROTOCOL_V1 {
-                    return Err(TransportError::RequestFailed(format!(
-                        "unsupported tunnel control protocol: {server_protocol}"
-                    )));
-                }
-            }
-            Ok(TunnelControlServerMessage::RuleSync { revision, rules }) => {
-                latest_revision = revision;
-                accepted_rules = rules;
-                socket.send_message(&build_rule_ack(&latest_revision, &accepted_rules, &[]))?;
-                let statuses = accepted_rules
-                    .iter()
-                    .map(|rule| TunnelRuleStatus {
-                        id: rule.id,
-                        status: "ok".to_string(),
-                        error: String::new(),
-                    })
-                    .collect::<Vec<_>>();
-                socket.send_message(&build_rule_status(&latest_revision, &statuses))?;
-            }
-            Ok(TunnelControlServerMessage::Error { code, message }) => {
-                if code == "feature_disabled" {
-                    return Ok(());
-                }
-                return Err(TransportError::RequestFailed(message));
-            }
-            Err(error) => return Err(TransportError::RequestFailed(error.to_string())),
+        if handle_tunnel_control_message(
+            &mut socket,
+            &bytes,
+            &mut latest_revision,
+            &mut accepted_rules,
+            &mut heartbeat_interval,
+        )? == TunnelControlLoopAction::Stop
+        {
+            return Ok(());
         }
     }
 
+    send_tunnel_control_heartbeat(&mut socket, &latest_revision, &accepted_rules)?;
+    Ok(())
+}
+
+pub fn run_tunnel_control_session<T>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_version: &str,
+    transport: &mut T,
+) -> Result<(), TransportError>
+where
+    T: TunnelControlTransport,
+{
+    let mut socket = match transport.connect_tunnel_control(url, headers) {
+        Ok(socket) => socket,
+        Err(error) if is_non_fatal_tunnel_control_error(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+
+    socket.send_message(&build_hello(agent_version))?;
+    let mut latest_revision = String::new();
+    let mut accepted_rules = Vec::new();
+    let mut heartbeat_interval = Duration::from_secs(15);
+    let mut last_heartbeat = Instant::now();
+
+    loop {
+        match socket.read_message() {
+            Ok(Some(bytes)) => {
+                if handle_tunnel_control_message(
+                    &mut socket,
+                    &bytes,
+                    &mut latest_revision,
+                    &mut accepted_rules,
+                    &mut heartbeat_interval,
+                )? == TunnelControlLoopAction::Stop
+                {
+                    return Ok(());
+                }
+            }
+            Ok(None) => {
+                if last_heartbeat.elapsed() >= heartbeat_interval {
+                    send_tunnel_control_heartbeat(&mut socket, &latest_revision, &accepted_rules)?;
+                    last_heartbeat = Instant::now();
+                }
+            }
+            Err(TransportError::SocketClosed) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TunnelControlLoopAction {
+    Continue,
+    Stop,
+}
+
+fn handle_tunnel_control_message<S>(
+    socket: &mut S,
+    bytes: &[u8],
+    latest_revision: &mut String,
+    accepted_rules: &mut Vec<SelectedTunnelRule>,
+    heartbeat_interval: &mut Duration,
+) -> Result<TunnelControlLoopAction, TransportError>
+where
+    S: TunnelControlSocket,
+{
+    match parse_server_message(bytes) {
+        Ok(TunnelControlServerMessage::HelloAck {
+            server_protocol,
+            heartbeat_interval_seconds,
+        }) => {
+            if server_protocol.trim() != TUNNEL_CONTROL_PROTOCOL_V1 {
+                return Err(TransportError::RequestFailed(format!(
+                    "unsupported tunnel control protocol: {server_protocol}"
+                )));
+            }
+            if heartbeat_interval_seconds > 0 {
+                *heartbeat_interval = Duration::from_secs(heartbeat_interval_seconds);
+            }
+            Ok(TunnelControlLoopAction::Continue)
+        }
+        Ok(TunnelControlServerMessage::RuleSync { revision, rules }) => {
+            *latest_revision = revision;
+            *accepted_rules = rules;
+            socket.send_message(&build_rule_ack(latest_revision, accepted_rules, &[]))?;
+            let statuses = accepted_rules
+                .iter()
+                .map(|rule| TunnelRuleStatus {
+                    id: rule.id,
+                    status: "ok".to_string(),
+                    error: String::new(),
+                })
+                .collect::<Vec<_>>();
+            socket.send_message(&build_rule_status(latest_revision, &statuses))?;
+            Ok(TunnelControlLoopAction::Continue)
+        }
+        Ok(TunnelControlServerMessage::Error { code, message }) => {
+            if code == "feature_disabled" {
+                return Ok(TunnelControlLoopAction::Stop);
+            }
+            Err(TransportError::RequestFailed(message))
+        }
+        Err(error) => Err(TransportError::RequestFailed(error.to_string())),
+    }
+}
+
+fn send_tunnel_control_heartbeat<S>(
+    socket: &mut S,
+    latest_revision: &str,
+    accepted_rules: &[SelectedTunnelRule],
+) -> Result<(), TransportError>
+where
+    S: TunnelControlSocket,
+{
     let active_rules = accepted_rules
         .iter()
         .map(|rule| rule.id)
         .collect::<Vec<_>>();
-    socket.send_message(&build_heartbeat(&latest_revision, &active_rules))?;
-    Ok(())
+    socket.send_message(&build_heartbeat(latest_revision, &active_rules))
 }
 
 #[derive(Debug, Default, Clone)]

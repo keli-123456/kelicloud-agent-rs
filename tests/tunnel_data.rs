@@ -1,7 +1,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use kelicloud_agent_rs::ktp::{decode_frame, FrameType, KTP_MAX_PAYLOAD_LEN};
+use kelicloud_agent_rs::ktp::{
+    decode_frame, encode_frame, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN,
+};
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_once, tunnel_data_startup_line, TungsteniteTunnelDataTransport,
@@ -10,6 +12,7 @@ use kelicloud_agent_rs::tunnel_data::{
 
 struct FakeTunnelDataTransport {
     events: Rc<RefCell<Vec<String>>>,
+    inbound: Vec<Result<Vec<u8>, TransportError>>,
     connect_error: Option<TransportError>,
     send_error_after: usize,
     send_error: Option<TransportError>,
@@ -17,9 +20,22 @@ struct FakeTunnelDataTransport {
 
 struct FakeTunnelDataSocket {
     events: Rc<RefCell<Vec<String>>>,
+    inbound: Vec<Result<Vec<u8>, TransportError>>,
     send_error_after: usize,
     send_error: Option<TransportError>,
     send_count: usize,
+}
+
+impl FakeTunnelDataTransport {
+    fn with_hello_ack(events: Rc<RefCell<Vec<String>>>) -> Self {
+        Self {
+            events,
+            inbound: vec![Ok(hello_ack_frame())],
+            connect_error: None,
+            send_error_after: usize::MAX,
+            send_error: None,
+        }
+    }
 }
 
 impl TunnelDataTransport for FakeTunnelDataTransport {
@@ -37,6 +53,7 @@ impl TunnelDataTransport for FakeTunnelDataTransport {
 
         Ok(FakeTunnelDataSocket {
             events: Rc::clone(&self.events),
+            inbound: self.inbound.drain(..).collect(),
             send_error_after: self.send_error_after,
             send_error: self.send_error.take(),
             send_count: 0,
@@ -57,17 +74,17 @@ impl TunnelDataSocket for FakeTunnelDataSocket {
         self.send_count += 1;
         Ok(())
     }
+
+    fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.events.borrow_mut().push("read".to_string());
+        self.inbound.remove(0).map_err(|error| error.clone())
+    }
 }
 
 #[test]
 fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
     let events = Rc::new(RefCell::new(Vec::new()));
-    let mut transport = FakeTunnelDataTransport {
-        events: Rc::clone(&events),
-        connect_error: None,
-        send_error_after: usize::MAX,
-        send_error: None,
-    };
+    let mut transport = FakeTunnelDataTransport::with_hello_ack(Rc::clone(&events));
     let mut ready = TunnelDataReadyState::empty("rev-a");
     ready.ingress_rule_ids.push(7);
     ready.egress_rule_ids.push(9);
@@ -83,13 +100,14 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
     .expect("tunnel data once should succeed");
 
     let events = events.borrow();
-    assert_eq!(events.len(), 3);
+    assert_eq!(events.len(), 4);
     assert_eq!(
         events[0],
         "connect:wss://panel.example.com/api/clients/tunnel/data?token=secret"
     );
     assert!(events[1].starts_with("frame:"));
-    assert!(events[2].starts_with("frame:"));
+    assert_eq!(events[2], "read");
+    assert!(events[3].starts_with("frame:"));
 
     let hello = decode_frame(
         &hex_to_bytes(events[1].strip_prefix("frame:").expect("frame prefix")),
@@ -97,7 +115,7 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
     )
     .expect("hello frame should decode");
     let ready = decode_frame(
-        &hex_to_bytes(events[2].strip_prefix("frame:").expect("frame prefix")),
+        &hex_to_bytes(events[3].strip_prefix("frame:").expect("frame prefix")),
         KTP_MAX_PAYLOAD_LEN,
     )
     .expect("ready frame should decode");
@@ -122,10 +140,51 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
 }
 
 #[test]
+fn tunnel_data_requires_hello_ack_before_ready() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(encode_frame(&KtpFrame::connection(
+            FrameType::Ping,
+            Vec::new(),
+        ))
+        .expect("ping frame should encode"))],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+    };
+
+    let error = run_tunnel_data_once(
+        "wss://panel.example.com/api/clients/tunnel/data?token=secret",
+        &[],
+        "node-a",
+        "0.1.0",
+        &TunnelDataReadyState::empty("rev-1"),
+        &mut transport,
+    )
+    .expect_err("data tunnel must reject non-hello_ack responses");
+
+    match error {
+        TransportError::RequestFailed(message) => {
+            assert!(message.contains("hello_ack"), "unexpected error: {message}");
+        }
+        other => panic!("expected request failed, got {other:?}"),
+    }
+
+    let sent_frame_count = events
+        .borrow()
+        .iter()
+        .filter(|event| event.starts_with("frame:"))
+        .count();
+    assert_eq!(sent_frame_count, 1, "READY must wait for HELLO_ACK");
+}
+
+#[test]
 fn tunnel_data_unsupported_endpoint_is_non_fatal() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut transport = FakeTunnelDataTransport {
         events,
+        inbound: vec![Ok(hello_ack_frame())],
         connect_error: Some(TransportError::RequestFailed("status=404".to_string())),
         send_error_after: usize::MAX,
         send_error: None,
@@ -149,6 +208,7 @@ fn tunnel_data_send_socket_closed_is_non_fatal() {
         let events = Rc::new(RefCell::new(Vec::new()));
         let mut transport = FakeTunnelDataTransport {
             events,
+            inbound: vec![Ok(hello_ack_frame())],
             connect_error: None,
             send_error_after,
             send_error: Some(TransportError::SocketClosed),
@@ -179,6 +239,7 @@ fn tunnel_data_rejects_oversized_payload_fields_without_truncating() {
         &TunnelDataReadyState::empty("rev-1"),
         &mut FakeTunnelDataTransport {
             events: Rc::new(RefCell::new(Vec::new())),
+            inbound: vec![Ok(hello_ack_frame())],
             connect_error: None,
             send_error_after: usize::MAX,
             send_error: None,
@@ -201,6 +262,7 @@ fn tunnel_data_rejects_oversized_payload_fields_without_truncating() {
         &ready,
         &mut FakeTunnelDataTransport {
             events: Rc::new(RefCell::new(Vec::new())),
+            inbound: vec![Ok(hello_ack_frame())],
             connect_error: None,
             send_error_after: usize::MAX,
             send_error: None,
@@ -215,6 +277,7 @@ fn tunnel_data_send_socket_closed_stops_without_ready() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut transport = FakeTunnelDataTransport {
         events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame())],
         connect_error: None,
         send_error_after: 0,
         send_error: Some(TransportError::SocketClosed),
@@ -242,6 +305,11 @@ fn tunnel_data_send_socket_closed_stops_without_ready() {
     )
     .expect("hello frame should decode");
     assert_eq!(hello.frame_type, FrameType::Hello);
+}
+
+fn hello_ack_frame() -> Vec<u8> {
+    encode_frame(&KtpFrame::connection(FrameType::HelloAck, Vec::new()))
+        .expect("hello_ack frame should encode")
 }
 
 #[test]

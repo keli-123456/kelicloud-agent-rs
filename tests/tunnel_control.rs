@@ -1,8 +1,9 @@
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_control::{
     build_heartbeat, build_hello, build_rule_ack, parse_server_message, run_tunnel_control_once,
-    RejectedTunnelRule, SelectedTunnelRule, TunnelControlClientMessage, TunnelControlServerMessage,
-    TunnelControlSocket, TunnelControlTransport, TUNNEL_CONTROL_PROTOCOL_V1,
+    run_tunnel_control_session, RejectedTunnelRule, SelectedTunnelRule, TunnelControlClientMessage,
+    TunnelControlServerMessage, TunnelControlSocket, TunnelControlTransport,
+    TUNNEL_CONTROL_PROTOCOL_V1,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -134,8 +135,8 @@ fn tunnel_control_once_acks_rule_sync_and_sends_heartbeat() {
     let mut transport = FakeTunnelControlTransport::new(
         events.clone(),
         vec![
-            br#"{"type":"hello_ack","server_protocol":"keli-tunnel-control.v1","heartbeat_interval_seconds":15}"#.to_vec(),
-            br#"{"type":"rule_sync","revision":"rev-a","rules":[{"id":7,"name":"RDP","enabled":true,"protocol":"tcp","role":"ingress","ingress_group":"edge","listen_address":"0.0.0.0","listen_port":10088,"egress_group":"rdp","target_host":"127.0.0.1","target_port":3389,"source_allowlist":"0.0.0.0/0","max_concurrent_sessions":32,"last_revision":1}]}"#.to_vec(),
+            ReadEvent::message(br#"{"type":"hello_ack","server_protocol":"keli-tunnel-control.v1","heartbeat_interval_seconds":15}"#),
+            ReadEvent::message(br#"{"type":"rule_sync","revision":"rev-a","rules":[{"id":7,"name":"RDP","enabled":true,"protocol":"tcp","role":"ingress","ingress_group":"edge","listen_address":"0.0.0.0","listen_port":10088,"egress_group":"rdp","target_host":"127.0.0.1","target_port":3389,"source_allowlist":"0.0.0.0/0","max_concurrent_sessions":32,"last_revision":1}]}"#),
         ],
     );
 
@@ -170,6 +171,42 @@ fn tunnel_control_once_acks_rule_sync_and_sends_heartbeat() {
 }
 
 #[test]
+fn tunnel_control_session_keeps_socket_open_after_idle_read() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelControlTransport::new(
+        events.clone(),
+        vec![
+            ReadEvent::message(br#"{"type":"hello_ack","server_protocol":"keli-tunnel-control.v1","heartbeat_interval_seconds":15}"#),
+            ReadEvent::message(br#"{"type":"rule_sync","revision":"rev-a","rules":[]}"#),
+            ReadEvent::idle(),
+            ReadEvent::closed(),
+        ],
+    );
+
+    run_tunnel_control_session(
+        "wss://panel.example.com/api/clients/tunnel?token=secret",
+        &[],
+        "0.1.0",
+        &mut transport,
+    )
+    .unwrap();
+
+    let events = events.borrow();
+    let idle_index = events
+        .iter()
+        .position(|event| event == "read:idle")
+        .expect("fake socket should expose an idle read");
+    let closed_index = events
+        .iter()
+        .position(|event| event == "read:closed")
+        .expect("session should continue reading until the server closes");
+    assert!(
+        closed_index > idle_index,
+        "persistent control sessions must not close on the first idle read"
+    );
+}
+
+#[test]
 fn tunnel_control_unsupported_endpoint_is_non_fatal() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut transport = FakeTunnelControlTransport::new(events, Vec::new())
@@ -200,12 +237,12 @@ fn tungstenite_tunnel_control_connector_redacts_token_in_startup_line() {
 
 struct FakeTunnelControlTransport {
     events: Rc<RefCell<Vec<String>>>,
-    inbound: Vec<Vec<u8>>,
+    inbound: Vec<ReadEvent>,
     connect_error: Option<TransportError>,
 }
 
 impl FakeTunnelControlTransport {
-    fn new(events: Rc<RefCell<Vec<String>>>, inbound: Vec<Vec<u8>>) -> Self {
+    fn new(events: Rc<RefCell<Vec<String>>>, inbound: Vec<ReadEvent>) -> Self {
         Self {
             events,
             inbound,
@@ -240,7 +277,7 @@ impl TunnelControlTransport for FakeTunnelControlTransport {
 
 struct FakeTunnelControlSocket {
     events: Rc<RefCell<Vec<String>>>,
-    inbound: Vec<Vec<u8>>,
+    inbound: Vec<ReadEvent>,
 }
 
 impl TunnelControlSocket for FakeTunnelControlSocket {
@@ -253,8 +290,42 @@ impl TunnelControlSocket for FakeTunnelControlSocket {
 
     fn read_message(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
         if self.inbound.is_empty() {
+            self.events.borrow_mut().push("read:idle".to_string());
             return Ok(None);
         }
-        Ok(Some(self.inbound.remove(0)))
+        match self.inbound.remove(0) {
+            ReadEvent::Message(bytes) => {
+                self.events.borrow_mut().push("read:message".to_string());
+                Ok(Some(bytes))
+            }
+            ReadEvent::Idle => {
+                self.events.borrow_mut().push("read:idle".to_string());
+                Ok(None)
+            }
+            ReadEvent::Closed => {
+                self.events.borrow_mut().push("read:closed".to_string());
+                Err(TransportError::SocketClosed)
+            }
+        }
+    }
+}
+
+enum ReadEvent {
+    Message(Vec<u8>),
+    Idle,
+    Closed,
+}
+
+impl ReadEvent {
+    fn message(bytes: &[u8]) -> Self {
+        Self::Message(bytes.to_vec())
+    }
+
+    fn idle() -> Self {
+        Self::Idle
+    }
+
+    fn closed() -> Self {
+        Self::Closed
     }
 }

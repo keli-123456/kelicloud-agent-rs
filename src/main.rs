@@ -19,7 +19,8 @@ use kelicloud_agent_rs::transport::{
     access_headers, ReqwestHttpTransport, TungsteniteWebSocketTransport,
 };
 use kelicloud_agent_rs::tunnel_control::{
-    run_tunnel_control_once, tunnel_control_startup_line, TungsteniteTunnelControlTransport,
+    run_tunnel_control_once, run_tunnel_control_session, tunnel_control_startup_line,
+    TungsteniteTunnelControlTransport,
 };
 use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_once, tunnel_data_startup_line, TungsteniteTunnelDataTransport,
@@ -142,7 +143,7 @@ fn main() {
                                 TungsteniteTunnelControlTransport::new_with_custom_dns(
                                     &tunnel_custom_dns,
                                 );
-                            match run_tunnel_control_once(
+                            match run_tunnel_control_session(
                                 &url,
                                 &tunnel_headers,
                                 &tunnel_agent_version,

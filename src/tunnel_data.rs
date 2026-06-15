@@ -1,6 +1,8 @@
-use crate::ktp::{encode_frame, FrameType, KtpFrame};
+use crate::ktp::{decode_frame, encode_frame, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN};
 use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
+use std::io::ErrorKind;
 use std::net::TcpStream;
+use std::time::Duration;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderName, HeaderValue};
 use tungstenite::stream::MaybeTlsStream;
@@ -34,6 +36,7 @@ pub struct TunnelDataRuleFailure {
 
 pub trait TunnelDataSocket {
     fn send_frame(&mut self, frame: &[u8]) -> Result<(), TransportError>;
+    fn read_frame(&mut self) -> Result<Vec<u8>, TransportError>;
 }
 
 pub trait TunnelDataTransport {
@@ -83,12 +86,16 @@ impl TunnelDataTransport for TungsteniteTunnelDataTransport {
         }
 
         let (socket, _response) = connect_websocket_request(request, &self.custom_dns)?;
-        Ok(TungsteniteTunnelDataSocket { socket })
+        Ok(TungsteniteTunnelDataSocket {
+            socket,
+            read_timeout: Duration::from_secs(2),
+        })
     }
 }
 
 pub struct TungsteniteTunnelDataSocket {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
+    read_timeout: Duration,
 }
 
 impl TunnelDataSocket for TungsteniteTunnelDataSocket {
@@ -96,6 +103,37 @@ impl TunnelDataSocket for TungsteniteTunnelDataSocket {
         self.socket
             .send(Message::Binary(frame.to_vec().into()))
             .map_err(|error| TransportError::RequestFailed(error.to_string()))
+    }
+
+    fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.set_read_timeout(Some(self.read_timeout))?;
+        loop {
+            match self.socket.read() {
+                Ok(Message::Binary(bytes)) => return Ok(bytes.to_vec()),
+                Ok(Message::Text(text)) => return Ok(text.to_string().into_bytes()),
+                Ok(Message::Close(_)) => return Err(TransportError::SocketClosed),
+                Ok(_) => continue,
+                Err(tungstenite::Error::Io(error))
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                {
+                    return Err(TransportError::RequestFailed(
+                        "tunnel data hello_ack timeout".to_string(),
+                    ));
+                }
+                Err(error) => return Err(TransportError::RequestFailed(error.to_string())),
+            }
+        }
+    }
+}
+
+impl TungsteniteTunnelDataSocket {
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<(), TransportError> {
+        match self.socket.get_mut() {
+            MaybeTlsStream::Plain(stream) => stream.set_read_timeout(timeout),
+            MaybeTlsStream::Rustls(stream) => stream.sock.set_read_timeout(timeout),
+            _ => Ok(()),
+        }
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))
     }
 }
 
@@ -120,6 +158,10 @@ where
     let hello_frame = encode_frame(&KtpFrame::connection(FrameType::Hello, hello_payload))
         .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
     if send_tunnel_data_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
+        return Ok(());
+    }
+
+    if read_tunnel_data_hello_ack(&mut socket)? == ReadFrameOutcome::Closed {
         return Ok(());
     }
 
@@ -163,6 +205,12 @@ enum SendFrameOutcome {
     Closed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadFrameOutcome {
+    Frame,
+    Closed,
+}
+
 fn send_tunnel_data_frame<S>(
     socket: &mut S,
     frame: &[u8],
@@ -175,6 +223,26 @@ where
         Err(TransportError::SocketClosed) => Ok(SendFrameOutcome::Closed),
         Err(error) => Err(error),
     }
+}
+
+fn read_tunnel_data_hello_ack<S>(socket: &mut S) -> Result<ReadFrameOutcome, TransportError>
+where
+    S: TunnelDataSocket,
+{
+    let bytes = match socket.read_frame() {
+        Ok(bytes) => bytes,
+        Err(TransportError::SocketClosed) => return Ok(ReadFrameOutcome::Closed),
+        Err(error) => return Err(error),
+    };
+    let frame = decode_frame(&bytes, KTP_MAX_PAYLOAD_LEN)
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    if frame.frame_type != FrameType::HelloAck {
+        return Err(TransportError::RequestFailed(format!(
+            "expected tunnel data hello_ack, got {:?}",
+            frame.frame_type
+        )));
+    }
+    Ok(ReadFrameOutcome::Frame)
 }
 
 fn encode_hello_payload(
