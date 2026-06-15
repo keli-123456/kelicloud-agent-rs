@@ -24,7 +24,21 @@ fn config_reads_endpoint_and_token_from_environment() {
     assert_eq!(config.info_report_interval_minutes, 5);
     assert_eq!(config.cf_access_client_id, "");
     assert_eq!(config.cf_access_client_secret, "");
+    assert!(config.tunnel_control_enabled);
     assert!(!config.once);
+}
+
+#[test]
+fn config_can_disable_tunnel_control_from_environment() {
+    let config = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_TUNNEL_CONTROL_ENABLED" => Some("disabled".to_string()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert!(!config.tunnel_control_enabled);
 }
 
 #[test]

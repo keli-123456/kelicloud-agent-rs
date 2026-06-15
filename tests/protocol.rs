@@ -1,5 +1,6 @@
 use kelicloud_agent_rs::protocol::{
-    build_report_ws_url, build_terminal_ws_url, parse_backend_message, BackendMessage,
+    build_report_ws_url, build_terminal_ws_url, build_tunnel_control_ws_url, parse_backend_message,
+    BackendMessage,
 };
 
 #[test]
@@ -49,6 +50,16 @@ fn terminal_ws_url_converts_idn_host_to_ascii_like_go_agent() {
     assert_eq!(
         url,
         "wss://xn--fiq06l2rdsvs.com/base/api/clients/terminal?token=tok&id=term-1"
+    );
+}
+
+#[test]
+fn tunnel_control_ws_url_adds_token() {
+    let url = build_tunnel_control_ws_url("https://panel.example.com/base/", "tok").unwrap();
+
+    assert_eq!(
+        url,
+        "wss://panel.example.com/base/api/clients/tunnel?token=tok"
     );
 }
 
