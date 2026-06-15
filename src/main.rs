@@ -23,7 +23,7 @@ use kelicloud_agent_rs::tunnel_control::{
     TungsteniteTunnelControlTransport,
 };
 use kelicloud_agent_rs::tunnel_data::{
-    run_tunnel_data_once, tunnel_data_startup_line, TungsteniteTunnelDataTransport,
+    run_tunnel_data_session, tunnel_data_startup_line, TungsteniteTunnelDataTransport,
     TunnelDataReadyState,
 };
 
@@ -180,7 +180,7 @@ fn main() {
                         let mut transport = TungsteniteTunnelDataTransport::new_with_custom_dns(
                             &tunnel_data_custom_dns,
                         );
-                        if let Err(error) = run_tunnel_data_once(
+                        if let Err(error) = run_tunnel_data_session(
                             &url,
                             &tunnel_data_headers,
                             "",

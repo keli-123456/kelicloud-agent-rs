@@ -6,8 +6,9 @@ use kelicloud_agent_rs::ktp::{
 };
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_data::{
-    run_tunnel_data_once, tunnel_data_startup_line, TungsteniteTunnelDataTransport,
-    TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
+    run_tunnel_data_once, run_tunnel_data_session, tunnel_data_startup_line,
+    TungsteniteTunnelDataTransport, TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket,
+    TunnelDataTransport,
 };
 
 struct FakeTunnelDataTransport {
@@ -78,6 +79,14 @@ impl TunnelDataSocket for FakeTunnelDataSocket {
     fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
         self.events.borrow_mut().push("read".to_string());
         self.inbound.remove(0).map_err(|error| error.clone())
+    }
+
+    fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        self.events.borrow_mut().push("read_optional".to_string());
+        self.inbound
+            .remove(0)
+            .map(Some)
+            .map_err(|error| error.clone())
     }
 }
 
@@ -177,6 +186,44 @@ fn tunnel_data_requires_hello_ack_before_ready() {
         .filter(|event| event.starts_with("frame:"))
         .count();
     assert_eq!(sent_frame_count, 1, "READY must wait for HELLO_ACK");
+}
+
+#[test]
+fn tunnel_data_session_keeps_socket_open_after_ready() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+    };
+
+    run_tunnel_data_session(
+        "wss://panel.example.com/api/clients/tunnel/data?token=secret",
+        &[],
+        "node-a",
+        "0.1.0",
+        &TunnelDataReadyState::empty("rev-1"),
+        &mut transport,
+    )
+    .expect("data session should treat server close as a clean reconnect boundary");
+
+    let events = events.borrow();
+    let ready_index = events
+        .iter()
+        .position(|event| {
+            event.starts_with("frame:") && frame_type_from_event(event) == FrameType::Ready
+        })
+        .expect("session should send READY");
+    let post_ready_read_index = events
+        .iter()
+        .position(|event| event == "read_optional")
+        .expect("session should keep reading after READY");
+    assert!(
+        post_ready_read_index > ready_index,
+        "persistent data sessions must not close immediately after READY"
+    );
 }
 
 #[test]
@@ -310,6 +357,15 @@ fn tunnel_data_send_socket_closed_stops_without_ready() {
 fn hello_ack_frame() -> Vec<u8> {
     encode_frame(&KtpFrame::connection(FrameType::HelloAck, Vec::new()))
         .expect("hello_ack frame should encode")
+}
+
+fn frame_type_from_event(event: &str) -> FrameType {
+    decode_frame(
+        &hex_to_bytes(event.strip_prefix("frame:").expect("frame prefix")),
+        KTP_MAX_PAYLOAD_LEN,
+    )
+    .expect("frame should decode")
+    .frame_type
 }
 
 #[test]

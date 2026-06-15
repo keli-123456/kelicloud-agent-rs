@@ -37,6 +37,9 @@ pub struct TunnelDataRuleFailure {
 pub trait TunnelDataSocket {
     fn send_frame(&mut self, frame: &[u8]) -> Result<(), TransportError>;
     fn read_frame(&mut self) -> Result<Vec<u8>, TransportError>;
+    fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        self.read_frame().map(Some)
+    }
 }
 
 pub trait TunnelDataTransport {
@@ -106,27 +109,42 @@ impl TunnelDataSocket for TungsteniteTunnelDataSocket {
     }
 
     fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.read_next_frame(false)?
+            .ok_or_else(|| TransportError::RequestFailed("tunnel data frame timeout".to_string()))
+    }
+
+    fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        self.read_next_frame(true)
+    }
+}
+
+impl TungsteniteTunnelDataSocket {
+    fn read_next_frame(
+        &mut self,
+        timeout_as_idle: bool,
+    ) -> Result<Option<Vec<u8>>, TransportError> {
         self.set_read_timeout(Some(self.read_timeout))?;
         loop {
             match self.socket.read() {
-                Ok(Message::Binary(bytes)) => return Ok(bytes.to_vec()),
-                Ok(Message::Text(text)) => return Ok(text.to_string().into_bytes()),
+                Ok(Message::Binary(bytes)) => return Ok(Some(bytes.to_vec())),
+                Ok(Message::Text(text)) => return Ok(Some(text.to_string().into_bytes())),
                 Ok(Message::Close(_)) => return Err(TransportError::SocketClosed),
                 Ok(_) => continue,
                 Err(tungstenite::Error::Io(error))
                     if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
                 {
+                    if timeout_as_idle {
+                        return Ok(None);
+                    }
                     return Err(TransportError::RequestFailed(
-                        "tunnel data hello_ack timeout".to_string(),
+                        "tunnel data frame timeout".to_string(),
                     ));
                 }
                 Err(error) => return Err(TransportError::RequestFailed(error.to_string())),
             }
         }
     }
-}
 
-impl TungsteniteTunnelDataSocket {
     fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<(), TransportError> {
         match self.socket.get_mut() {
             MaybeTlsStream::Plain(stream) => stream.set_read_timeout(timeout),
@@ -173,6 +191,51 @@ where
     }
 
     Ok(())
+}
+
+pub fn run_tunnel_data_session<T>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_id_hint: &str,
+    agent_version: &str,
+    ready: &TunnelDataReadyState,
+    transport: &mut T,
+) -> Result<(), TransportError>
+where
+    T: TunnelDataTransport,
+{
+    let mut socket = match transport.connect_tunnel_data(url, headers) {
+        Ok(socket) => socket,
+        Err(error) if is_nonfatal_connect_error(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+
+    let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &ready.revision)?;
+    let hello_frame = encode_frame(&KtpFrame::connection(FrameType::Hello, hello_payload))
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    if send_tunnel_data_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
+        return Ok(());
+    }
+
+    if read_tunnel_data_hello_ack(&mut socket)? == ReadFrameOutcome::Closed {
+        return Ok(());
+    }
+
+    let ready_payload = encode_ready_payload(ready)?;
+    let ready_frame = encode_frame(&KtpFrame::connection(FrameType::Ready, ready_payload))
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    if send_tunnel_data_frame(&mut socket, &ready_frame)? == SendFrameOutcome::Closed {
+        return Ok(());
+    }
+
+    loop {
+        match socket.read_optional_frame() {
+            Ok(Some(bytes)) => handle_tunnel_data_session_frame(&mut socket, &bytes)?,
+            Ok(None) => continue,
+            Err(TransportError::SocketClosed) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 pub fn tunnel_data_startup_line(url: &str, enabled: bool) -> String {
@@ -243,6 +306,20 @@ where
         )));
     }
     Ok(ReadFrameOutcome::Frame)
+}
+
+fn handle_tunnel_data_session_frame<S>(socket: &mut S, bytes: &[u8]) -> Result<(), TransportError>
+where
+    S: TunnelDataSocket,
+{
+    let frame = decode_frame(bytes, KTP_MAX_PAYLOAD_LEN)
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    if frame.frame_type == FrameType::Ping {
+        let pong = encode_frame(&KtpFrame::connection(FrameType::Pong, frame.payload))
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        let _ = send_tunnel_data_frame(socket, &pong)?;
+    }
+    Ok(())
 }
 
 fn encode_hello_payload(
