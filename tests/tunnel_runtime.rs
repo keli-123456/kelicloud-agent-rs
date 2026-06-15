@@ -183,6 +183,81 @@ fn tcp_runtime_ingress_listener_queues_open_data_and_writes_server_response() {
     client_thread.join().expect("client thread should finish");
 }
 
+#[test]
+fn tcp_runtime_two_agent_relay_simulation_forwards_echo() {
+    let target = TcpListener::bind("127.0.0.1:0").expect("bind target echo listener");
+    let target_addr = target.local_addr().expect("target local addr");
+    let echo_thread = thread::spawn(move || {
+        let (mut stream, _) = target.accept().expect("accept target connection");
+        let mut buffer = [0u8; 16];
+        let read = stream.read(&mut buffer).expect("read target input");
+        assert_eq!(&buffer[..read], b"ping");
+        stream.write_all(b"pong").expect("write target output");
+    });
+
+    let listen_port = free_tcp_port();
+    let ingress_state = SharedTunnelRuleState::new();
+    let mut ingress_rule = selected_rule(31, "tcp", "ingress", true);
+    ingress_rule.listen_address = "127.0.0.1".to_string();
+    ingress_rule.listen_port = listen_port;
+    ingress_rule.source_allowlist = "127.0.0.0/8".to_string();
+    ingress_state.update_rules("rev-a", &[ingress_rule]);
+    let mut ingress_runtime = TunnelTcpRuntime::new(ingress_state);
+    ingress_runtime
+        .refresh_listeners()
+        .expect("start ingress listener");
+
+    let egress_state = SharedTunnelRuleState::new();
+    let mut egress_rule = selected_rule(31, "tcp", "egress", true);
+    egress_rule.target_host = "127.0.0.1".to_string();
+    egress_rule.target_port = target_addr.port();
+    egress_state.update_rules("rev-a", &[egress_rule]);
+    let mut egress_runtime = TunnelTcpRuntime::new(egress_state);
+
+    let client_thread = thread::spawn(move || {
+        let mut stream = connect_with_retry(("127.0.0.1", listen_port));
+        stream.write_all(b"ping").expect("write ingress input");
+        let mut buffer = [0u8; 16];
+        let read = stream.read(&mut buffer).expect("read ingress response");
+        assert_eq!(&buffer[..read], b"pong");
+    });
+
+    let open = wait_for_next_runtime_frame(&mut ingress_runtime).expect("ingress open frame");
+    assert_eq!(open.frame_type, FrameType::SessionOpen);
+    let mut open_to_egress = open.clone();
+    open_to_egress.leg = FrameLeg::Egress;
+    let egress_responses = egress_runtime
+        .handle_server_frame(open_to_egress)
+        .expect("egress handles session open");
+    for mut frame in egress_responses {
+        frame.leg = FrameLeg::Ingress;
+        ingress_runtime
+            .handle_server_frame(frame)
+            .expect("ingress handles egress response");
+    }
+
+    let data = wait_for_next_runtime_frame(&mut ingress_runtime).expect("ingress data frame");
+    assert_eq!(data.frame_type, FrameType::SessionData);
+    assert_eq!(data.payload, b"ping");
+    let mut data_to_egress = data.clone();
+    data_to_egress.leg = FrameLeg::Egress;
+    egress_runtime
+        .handle_server_frame(data_to_egress)
+        .expect("egress handles ingress data");
+
+    let mut target_data =
+        wait_for_next_runtime_frame(&mut egress_runtime).expect("egress target data frame");
+    assert_eq!(target_data.frame_type, FrameType::SessionData);
+    assert_eq!(target_data.payload, b"pong");
+    target_data.leg = FrameLeg::Ingress;
+    ingress_runtime
+        .handle_server_frame(target_data)
+        .expect("ingress writes target response");
+
+    client_thread.join().expect("client thread should finish");
+    echo_thread.join().expect("echo thread should finish");
+}
+
 fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFrame> {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
