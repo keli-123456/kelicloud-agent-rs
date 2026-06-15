@@ -1,0 +1,21 @@
+use std::process::Command;
+
+#[test]
+fn tunnel_relay_smoke_script_runs_runtime_relay_test() {
+    let script = std::fs::read_to_string("scripts/tunnel-relay-local-smoke.sh")
+        .expect("smoke script should be readable");
+    assert!(script.contains("tcp_runtime_two_agent_relay_simulation_forwards_echo"));
+    assert!(script.contains("cargo test --test tunnel_runtime"));
+}
+
+#[test]
+fn tunnel_relay_smoke_script_has_valid_bash_syntax_when_bash_is_available() {
+    if Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+    let status = Command::new("bash")
+        .args(["-n", "scripts/tunnel-relay-local-smoke.sh"])
+        .status()
+        .expect("bash -n should run");
+    assert!(status.success());
+}
