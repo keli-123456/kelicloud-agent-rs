@@ -39,6 +39,11 @@ pub fn build_tunnel_control_ws_url(endpoint: &str, token: &str) -> Result<String
     build_ws_url(endpoint, "/api/clients/tunnel", &[("token", token)])
 }
 
+pub fn build_tunnel_data_ws_url(endpoint: &str, token: &str) -> Result<String, ProtocolError> {
+    let token = require_non_empty(token, ProtocolError::EmptyToken)?;
+    build_ws_url(endpoint, "/api/clients/tunnel/data", &[("token", token)])
+}
+
 pub fn build_terminal_ws_url(
     endpoint: &str,
     token: &str,

@@ -12,6 +12,7 @@ pub struct AgentConfig {
     pub insecure: bool,
     pub disable_web_ssh: bool,
     pub tunnel_control_enabled: bool,
+    pub tunnel_data_enabled: bool,
     pub interval_seconds: f64,
     pub max_retries: u32,
     pub reconnect_interval_seconds: u64,
@@ -87,6 +88,7 @@ impl AgentConfig {
             .as_deref()
             .and_then(parse_tunnel_control_enabled)
             .unwrap_or(true);
+        let mut tunnel_data_enabled = false;
         let mut interval_seconds = parse_env_f64(&env_lookup, "AGENT_INTERVAL", 1.0)?;
         let mut max_retries = parse_env_u32(&env_lookup, "AGENT_MAX_RETRIES", 3)?;
         let mut reconnect_interval_seconds =
@@ -355,6 +357,11 @@ impl AgentConfig {
         apply_bool_true_env(&env_lookup, "AGENT_INSECURE", &mut insecure);
         apply_bool_true_env(&env_lookup, "AGENT_DISABLE_WEB_SSH", &mut disable_web_ssh);
         apply_tunnel_control_enabled_env(&env_lookup, &mut tunnel_control_enabled);
+        apply_bool_env(
+            &env_lookup,
+            "AGENT_TUNNEL_DATA_ENABLED",
+            &mut tunnel_data_enabled,
+        );
         apply_f64_env(&env_lookup, "AGENT_INTERVAL", &mut interval_seconds);
         apply_u32_env(&env_lookup, "AGENT_MAX_RETRIES", &mut max_retries);
         apply_u64_env(
@@ -428,6 +435,9 @@ impl AgentConfig {
             if let Some(value) = file_config.tunnel_control_enabled {
                 tunnel_control_enabled = value;
             }
+            if let Some(value) = file_config.tunnel_data_enabled {
+                tunnel_data_enabled = value;
+            }
             if let Some(value) = file_config.interval {
                 interval_seconds = validate_positive_f64("interval", value)?;
             }
@@ -498,6 +508,7 @@ impl AgentConfig {
             insecure,
             disable_web_ssh,
             tunnel_control_enabled,
+            tunnel_data_enabled,
             interval_seconds,
             max_retries,
             reconnect_interval_seconds,
@@ -529,6 +540,7 @@ struct FileConfig {
     ignore_unsafe_cert: Option<bool>,
     disable_web_ssh: Option<bool>,
     tunnel_control_enabled: Option<bool>,
+    tunnel_data_enabled: Option<bool>,
     interval: Option<f64>,
     max_retries: Option<u32>,
     reconnect_interval: Option<u64>,
@@ -678,6 +690,15 @@ where
 {
     if env_lookup(key).as_deref().is_some_and(parse_bool) {
         *target = true;
+    }
+}
+
+fn apply_bool_env<F>(env_lookup: &F, key: &str, target: &mut bool)
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = env_lookup(key) {
+        *target = parse_bool(&value);
     }
 }
 

@@ -42,6 +42,31 @@ fn config_can_disable_tunnel_control_from_environment() {
 }
 
 #[test]
+fn config_disables_tunnel_data_by_default() {
+    let config = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert!(!config.tunnel_data_enabled);
+}
+
+#[test]
+fn config_can_enable_tunnel_data_from_environment() {
+    let config = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_TUNNEL_DATA_ENABLED" => Some("true".to_string()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert!(config.tunnel_data_enabled);
+}
+
+#[test]
 fn config_environment_overrides_command_line_like_go_agent() {
     let args = [
         "kelicloud-agent-rs",

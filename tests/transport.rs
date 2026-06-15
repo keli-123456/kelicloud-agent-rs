@@ -15,6 +15,7 @@ fn config_with_cf(id: &str, secret: &str) -> AgentConfig {
         insecure: false,
         disable_web_ssh: false,
         tunnel_control_enabled: true,
+        tunnel_data_enabled: false,
         interval_seconds: 1.0,
         max_retries: 3,
         reconnect_interval_seconds: 5,
