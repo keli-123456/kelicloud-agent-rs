@@ -1,5 +1,8 @@
-use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
-use kelicloud_agent_rs::tunnel_runtime::{build_tcp_listener_plan, source_addr_allowed};
+use kelicloud_agent_rs::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
+use kelicloud_agent_rs::tunnel_data::TunnelDataReadySource;
+use kelicloud_agent_rs::tunnel_runtime::{
+    build_tcp_listener_plan, source_addr_allowed, SharedTunnelRuleState,
+};
 
 #[test]
 fn tcp_listener_plan_includes_enabled_ingress_and_both_rules_only() {
@@ -43,6 +46,32 @@ fn source_allowlist_supports_ipv6_cidr() {
         "[2607:f358:1b::1]:50000",
         "2607:f358:1a::/48"
     ));
+}
+
+#[test]
+fn shared_tunnel_rule_state_feeds_ready_source_and_listener_plan() {
+    let state = SharedTunnelRuleState::new();
+    state.update_rules(
+        "rev-a",
+        &[
+            selected_rule(7, "tcp", "ingress", true),
+            selected_rule(8, "tcp", "egress", true),
+            selected_rule(9, "tcp", "both", true),
+        ],
+    );
+
+    let ready = state.current_ready();
+    assert_eq!(ready.revision, "rev-a");
+    assert_eq!(ready.ingress_rule_ids, vec![7, 9]);
+    assert_eq!(ready.egress_rule_ids, vec![8, 9]);
+
+    let plan = state.tcp_listener_plan();
+    assert_eq!(
+        plan.iter()
+            .map(|listener| listener.rule_id)
+            .collect::<Vec<_>>(),
+        vec![7, 9]
+    );
 }
 
 fn selected_rule(id: u64, protocol: &str, role: &str, enabled: bool) -> SelectedTunnelRule {

@@ -1,5 +1,65 @@
-use crate::tunnel_control::SelectedTunnelRule;
+use crate::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
+use crate::tunnel_data::{TunnelDataReadySource, TunnelDataReadyState};
 use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone, Debug)]
+pub struct SharedTunnelRuleState {
+    inner: Arc<Mutex<TunnelRuleSnapshot>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TunnelRuleSnapshot {
+    pub revision: String,
+    pub rules: Vec<SelectedTunnelRule>,
+}
+
+impl SharedTunnelRuleState {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(TunnelRuleSnapshot {
+                revision: String::new(),
+                rules: Vec::new(),
+            })),
+        }
+    }
+
+    pub fn snapshot(&self) -> TunnelRuleSnapshot {
+        self.inner
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or_else(|_| TunnelRuleSnapshot {
+                revision: String::new(),
+                rules: Vec::new(),
+            })
+    }
+
+    pub fn tcp_listener_plan(&self) -> Vec<TunnelTcpListenerSpec> {
+        build_tcp_listener_plan(&self.snapshot().rules)
+    }
+}
+
+impl Default for SharedTunnelRuleState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TunnelRuleStateSink for SharedTunnelRuleState {
+    fn update_rules(&self, revision: &str, rules: &[SelectedTunnelRule]) {
+        if let Ok(mut state) = self.inner.lock() {
+            state.revision = revision.trim().to_string();
+            state.rules = rules.to_vec();
+        }
+    }
+}
+
+impl TunnelDataReadySource for SharedTunnelRuleState {
+    fn current_ready(&self) -> TunnelDataReadyState {
+        let snapshot = self.snapshot();
+        TunnelDataReadyState::from_selected_rules(&snapshot.revision, &snapshot.rules)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TunnelTcpListenerSpec {
