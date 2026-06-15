@@ -393,10 +393,11 @@ fn tunnel_data_session_dispatches_session_frames_to_runtime_and_sends_responses(
 fn main_wires_tunnel_control_state_into_data_ready_source() {
     let source = std::fs::read_to_string("src/main.rs").expect("main source should be readable");
 
-    assert!(source.contains("SharedTunnelDataReadyState::new()"));
+    assert!(source.contains("SharedTunnelRuleState::new()"));
+    assert!(source.contains("TunnelTcpRuntime::new"));
     assert!(source.contains("run_tunnel_control_once_with_rule_sink"));
     assert!(source.contains("run_tunnel_control_session_with_rule_sink"));
-    assert!(source.contains("run_tunnel_data_session_with_ready_source"));
+    assert!(source.contains("run_tunnel_data_session_with_ready_source_and_runtime"));
 }
 
 #[test]
