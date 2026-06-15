@@ -150,6 +150,13 @@ impl TunnelTcpRuntime {
         Ok(())
     }
 
+    pub fn active_session_count(&self) -> usize {
+        self.sessions
+            .lock()
+            .map(|sessions| sessions.len())
+            .unwrap_or(0)
+    }
+
     fn handle_egress_open(&mut self, frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
         let open = match decode_session_open_payload(&frame.payload) {
             Ok(open) => open,
@@ -192,11 +199,19 @@ impl TunnelTcpRuntime {
         let writer = stream;
         let (to_target, from_runtime) = mpsc::channel::<Vec<u8>>();
         let outbound = Arc::clone(&self.outbound);
+        let sessions = Arc::clone(&self.sessions);
         let session_id = frame.session_id;
         let rule_id = rule.id;
         thread::spawn(move || write_tcp_session(writer, from_runtime));
         thread::spawn(move || {
-            read_tcp_session(reader, outbound, session_id, rule_id, FrameLeg::Egress)
+            read_tcp_session(
+                reader,
+                outbound,
+                sessions,
+                session_id,
+                rule_id,
+                FrameLeg::Egress,
+            )
         });
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.insert(frame.session_id, TcpTunnelSession { to_target });
@@ -302,6 +317,9 @@ fn start_tcp_listener(
         while !stop.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, _)) => {
+                    if stream.set_nonblocking(false).is_err() {
+                        continue;
+                    }
                     handle_ingress_stream(
                         spec.clone(),
                         stream,
@@ -376,6 +394,7 @@ fn handle_ingress_stream(
         read_tcp_session(
             reader,
             reader_outbound,
+            sessions,
             session_id,
             rule_id,
             FrameLeg::Ingress,
@@ -386,6 +405,7 @@ fn handle_ingress_stream(
 fn read_tcp_session(
     mut stream: TcpStream,
     outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
+    sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
     session_id: u64,
     rule_id: u64,
     leg: FrameLeg,
@@ -404,6 +424,7 @@ fn read_tcp_session(
                         payload: Vec::new(),
                     },
                 );
+                remove_tcp_session(&sessions, session_id);
                 return;
             }
             Ok(read) => push_outbound_frame(
@@ -427,9 +448,16 @@ fn read_tcp_session(
                 ) {
                     push_outbound_frame(&outbound, frame);
                 }
+                remove_tcp_session(&sessions, session_id);
                 return;
             }
         }
+    }
+}
+
+fn remove_tcp_session(sessions: &Arc<Mutex<HashMap<u64, TcpTunnelSession>>>, session_id: u64) {
+    if let Ok(mut sessions) = sessions.lock() {
+        sessions.remove(&session_id);
     }
 }
 

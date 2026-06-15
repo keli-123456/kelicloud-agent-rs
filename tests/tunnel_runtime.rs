@@ -223,6 +223,29 @@ fn tcp_runtime_restarts_listener_when_listen_port_changes() {
 }
 
 #[test]
+fn tcp_runtime_removes_session_after_local_close() {
+    let listen_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(43, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = listen_port;
+    state.update_rules("rev-a", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state);
+    runtime.refresh_listeners().expect("start ingress listener");
+
+    let stream = connect_with_retry(("127.0.0.1", listen_port));
+    let open = wait_for_next_runtime_frame(&mut runtime).expect("session open frame");
+    assert_ne!(open.session_id, 0);
+    assert_session_count_eventually(&runtime, 1);
+
+    drop(stream);
+    let close = wait_for_next_runtime_frame(&mut runtime).expect("session close frame");
+    assert_eq!(close.frame_type, FrameType::SessionClose);
+    assert_eq!(close.session_id, open.session_id);
+    assert_session_count_eventually(&runtime, 0);
+}
+
+#[test]
 fn tcp_runtime_two_agent_relay_simulation_forwards_echo() {
     let target = TcpListener::bind("127.0.0.1:0").expect("bind target echo listener");
     let target_addr = target.local_addr().expect("target local addr");
@@ -339,6 +362,17 @@ fn assert_port_eventually_closed(port: u16) {
         thread::sleep(Duration::from_millis(10));
     }
     panic!("port {port} remained open");
+}
+
+fn assert_session_count_eventually(runtime: &TunnelTcpRuntime, expected: usize) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if runtime.active_session_count() == expected {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(runtime.active_session_count(), expected);
 }
 
 fn selected_rule(id: u64, protocol: &str, role: &str, enabled: bool) -> SelectedTunnelRule {
