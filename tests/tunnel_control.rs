@@ -1,10 +1,11 @@
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_control::{
     build_heartbeat, build_hello, build_rule_ack, parse_server_message, run_tunnel_control_once,
-    run_tunnel_control_session, RejectedTunnelRule, SelectedTunnelRule, TunnelControlClientMessage,
-    TunnelControlServerMessage, TunnelControlSocket, TunnelControlTransport,
-    TUNNEL_CONTROL_PROTOCOL_V1,
+    run_tunnel_control_once_with_rule_sink, run_tunnel_control_session, RejectedTunnelRule,
+    SelectedTunnelRule, TunnelControlClientMessage, TunnelControlServerMessage,
+    TunnelControlSocket, TunnelControlTransport, TUNNEL_CONTROL_PROTOCOL_V1,
 };
+use kelicloud_agent_rs::tunnel_data::SharedTunnelDataReadyState;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -168,6 +169,33 @@ fn tunnel_control_once_acks_rule_sync_and_sends_heartbeat() {
         .borrow()
         .iter()
         .any(|event| event.contains(r#""type":"heartbeat""#)));
+}
+
+#[test]
+fn tunnel_control_rule_sync_updates_shared_ready_state() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelControlTransport::new(
+        events,
+        vec![
+            ReadEvent::message(br#"{"type":"hello_ack","server_protocol":"keli-tunnel-control.v1","heartbeat_interval_seconds":15}"#),
+            ReadEvent::message(br#"{"type":"rule_sync","revision":"rev-a","rules":[{"id":7,"name":"RDP","enabled":true,"protocol":"tcp","role":"both","ingress_group":"edge","listen_address":"0.0.0.0","listen_port":10088,"egress_group":"edge","target_host":"127.0.0.1","target_port":3389,"source_allowlist":"0.0.0.0/0","max_concurrent_sessions":32,"last_revision":1}]}"#),
+        ],
+    );
+    let shared = SharedTunnelDataReadyState::new();
+
+    run_tunnel_control_once_with_rule_sink(
+        "wss://panel.example.com/api/clients/tunnel?token=secret",
+        &[],
+        "0.1.0",
+        &mut transport,
+        &shared,
+    )
+    .unwrap();
+
+    let snapshot = shared.snapshot();
+    assert_eq!(snapshot.revision, "rev-a");
+    assert_eq!(snapshot.ingress_rule_ids, vec![7]);
+    assert_eq!(snapshot.egress_rule_ids, vec![7]);
 }
 
 #[test]

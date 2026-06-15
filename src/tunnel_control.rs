@@ -161,6 +161,22 @@ pub trait TunnelControlTransport {
     ) -> Result<Self::Socket, TransportError>;
 }
 
+pub trait TunnelRuleStateSink {
+    fn update_rules(&self, revision: &str, rules: &[SelectedTunnelRule]);
+}
+
+impl TunnelRuleStateSink for crate::tunnel_data::SharedTunnelDataReadyState {
+    fn update_rules(&self, revision: &str, rules: &[SelectedTunnelRule]) {
+        self.update_from_selected_rules(revision, rules);
+    }
+}
+
+struct NoopTunnelRuleStateSink;
+
+impl TunnelRuleStateSink for NoopTunnelRuleStateSink {
+    fn update_rules(&self, _revision: &str, _rules: &[SelectedTunnelRule]) {}
+}
+
 pub fn is_non_fatal_tunnel_control_error(error: &TransportError) -> bool {
     match error {
         TransportError::InvalidClientToken { .. } => false,
@@ -184,6 +200,26 @@ pub fn run_tunnel_control_once<T>(
 where
     T: TunnelControlTransport,
 {
+    run_tunnel_control_once_with_rule_sink(
+        url,
+        headers,
+        agent_version,
+        transport,
+        &NoopTunnelRuleStateSink,
+    )
+}
+
+pub fn run_tunnel_control_once_with_rule_sink<T, S>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_version: &str,
+    transport: &mut T,
+    rule_sink: &S,
+) -> Result<(), TransportError>
+where
+    T: TunnelControlTransport,
+    S: TunnelRuleStateSink,
+{
     let mut socket = match transport.connect_tunnel_control(url, headers) {
         Ok(socket) => socket,
         Err(error) if is_non_fatal_tunnel_control_error(&error) => return Ok(()),
@@ -202,6 +238,7 @@ where
             &mut latest_revision,
             &mut accepted_rules,
             &mut heartbeat_interval,
+            rule_sink,
         )? == TunnelControlLoopAction::Stop
         {
             return Ok(());
@@ -220,6 +257,26 @@ pub fn run_tunnel_control_session<T>(
 ) -> Result<(), TransportError>
 where
     T: TunnelControlTransport,
+{
+    run_tunnel_control_session_with_rule_sink(
+        url,
+        headers,
+        agent_version,
+        transport,
+        &NoopTunnelRuleStateSink,
+    )
+}
+
+pub fn run_tunnel_control_session_with_rule_sink<T, S>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_version: &str,
+    transport: &mut T,
+    rule_sink: &S,
+) -> Result<(), TransportError>
+where
+    T: TunnelControlTransport,
+    S: TunnelRuleStateSink,
 {
     let mut socket = match transport.connect_tunnel_control(url, headers) {
         Ok(socket) => socket,
@@ -242,6 +299,7 @@ where
                     &mut latest_revision,
                     &mut accepted_rules,
                     &mut heartbeat_interval,
+                    rule_sink,
                 )? == TunnelControlLoopAction::Stop
                 {
                     return Ok(());
@@ -271,6 +329,7 @@ fn handle_tunnel_control_message<S>(
     latest_revision: &mut String,
     accepted_rules: &mut Vec<SelectedTunnelRule>,
     heartbeat_interval: &mut Duration,
+    rule_sink: &impl TunnelRuleStateSink,
 ) -> Result<TunnelControlLoopAction, TransportError>
 where
     S: TunnelControlSocket,
@@ -293,6 +352,7 @@ where
         Ok(TunnelControlServerMessage::RuleSync { revision, rules }) => {
             *latest_revision = revision;
             *accepted_rules = rules;
+            rule_sink.update_rules(latest_revision, accepted_rules);
             socket.send_message(&build_rule_ack(latest_revision, accepted_rules, &[]))?;
             let statuses = accepted_rules
                 .iter()

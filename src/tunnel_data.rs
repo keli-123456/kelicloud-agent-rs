@@ -1,7 +1,9 @@
 use crate::ktp::{decode_frame, encode_frame, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN};
 use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
+use crate::tunnel_control::SelectedTunnelRule;
 use std::io::ErrorKind;
 use std::net::TcpStream;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderName, HeaderValue};
@@ -24,6 +26,74 @@ impl TunnelDataReadyState {
             egress_rule_ids: Vec::new(),
             failed_rules: Vec::new(),
         }
+    }
+
+    pub fn from_selected_rules(revision: &str, rules: &[SelectedTunnelRule]) -> Self {
+        let mut ready = Self::empty(revision);
+        for rule in rules {
+            match rule.role.as_str() {
+                "ingress" => ready.ingress_rule_ids.push(rule.id),
+                "egress" => ready.egress_rule_ids.push(rule.id),
+                "both" => {
+                    ready.ingress_rule_ids.push(rule.id);
+                    ready.egress_rule_ids.push(rule.id);
+                }
+                _ => {}
+            }
+        }
+        ready.ingress_rule_ids.sort_unstable();
+        ready.ingress_rule_ids.dedup();
+        ready.egress_rule_ids.sort_unstable();
+        ready.egress_rule_ids.dedup();
+        ready
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SharedTunnelDataReadyState {
+    inner: Arc<Mutex<TunnelDataReadyState>>,
+}
+
+impl SharedTunnelDataReadyState {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(TunnelDataReadyState::empty(""))),
+        }
+    }
+
+    pub fn snapshot(&self) -> TunnelDataReadyState {
+        self.inner
+            .lock()
+            .map(|ready| ready.clone())
+            .unwrap_or_else(|_| TunnelDataReadyState::empty(""))
+    }
+
+    pub fn update_from_selected_rules(&self, revision: &str, rules: &[SelectedTunnelRule]) {
+        if let Ok(mut ready) = self.inner.lock() {
+            *ready = TunnelDataReadyState::from_selected_rules(revision, rules);
+        }
+    }
+}
+
+impl Default for SharedTunnelDataReadyState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub trait TunnelDataReadySource {
+    fn current_ready(&self) -> TunnelDataReadyState;
+}
+
+impl TunnelDataReadySource for TunnelDataReadyState {
+    fn current_ready(&self) -> TunnelDataReadyState {
+        self.clone()
+    }
+}
+
+impl TunnelDataReadySource for SharedTunnelDataReadyState {
+    fn current_ready(&self) -> TunnelDataReadyState {
+        self.snapshot()
     }
 }
 
@@ -204,13 +274,36 @@ pub fn run_tunnel_data_session<T>(
 where
     T: TunnelDataTransport,
 {
+    run_tunnel_data_session_with_ready_source(
+        url,
+        headers,
+        agent_id_hint,
+        agent_version,
+        ready,
+        transport,
+    )
+}
+
+pub fn run_tunnel_data_session_with_ready_source<T, S>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_id_hint: &str,
+    agent_version: &str,
+    ready_source: &S,
+    transport: &mut T,
+) -> Result<(), TransportError>
+where
+    T: TunnelDataTransport,
+    S: TunnelDataReadySource,
+{
     let mut socket = match transport.connect_tunnel_data(url, headers) {
         Ok(socket) => socket,
         Err(error) if is_nonfatal_connect_error(&error) => return Ok(()),
         Err(error) => return Err(error),
     };
 
-    let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &ready.revision)?;
+    let mut last_ready = ready_source.current_ready();
+    let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &last_ready.revision)?;
     let hello_frame = encode_frame(&KtpFrame::connection(FrameType::Hello, hello_payload))
         .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
     if send_tunnel_data_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
@@ -221,14 +314,18 @@ where
         return Ok(());
     }
 
-    let ready_payload = encode_ready_payload(ready)?;
-    let ready_frame = encode_frame(&KtpFrame::connection(FrameType::Ready, ready_payload))
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    if send_tunnel_data_frame(&mut socket, &ready_frame)? == SendFrameOutcome::Closed {
+    if send_ready_frame(&mut socket, &last_ready)? == SendFrameOutcome::Closed {
         return Ok(());
     }
 
     loop {
+        let current_ready = ready_source.current_ready();
+        if current_ready != last_ready {
+            if send_ready_frame(&mut socket, &current_ready)? == SendFrameOutcome::Closed {
+                return Ok(());
+            }
+            last_ready = current_ready;
+        }
         match socket.read_optional_frame() {
             Ok(Some(bytes)) => handle_tunnel_data_session_frame(&mut socket, &bytes)?,
             Ok(None) => continue,
@@ -236,6 +333,19 @@ where
             Err(error) => return Err(error),
         }
     }
+}
+
+fn send_ready_frame<S>(
+    socket: &mut S,
+    ready: &TunnelDataReadyState,
+) -> Result<SendFrameOutcome, TransportError>
+where
+    S: TunnelDataSocket,
+{
+    let ready_payload = encode_ready_payload(ready)?;
+    let ready_frame = encode_frame(&KtpFrame::connection(FrameType::Ready, ready_payload))
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    send_tunnel_data_frame(socket, &ready_frame)
 }
 
 pub fn tunnel_data_startup_line(url: &str, enabled: bool) -> String {

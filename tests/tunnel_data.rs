@@ -5,11 +5,14 @@ use kelicloud_agent_rs::ktp::{
     decode_frame, encode_frame, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN,
 };
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
+use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
 use kelicloud_agent_rs::tunnel_data::{
-    run_tunnel_data_once, run_tunnel_data_session, tunnel_data_startup_line,
-    TungsteniteTunnelDataTransport, TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket,
-    TunnelDataTransport,
+    run_tunnel_data_once, run_tunnel_data_session, run_tunnel_data_session_with_ready_source,
+    tunnel_data_startup_line, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
+    TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
 };
+
+type OptionalReadHook = Rc<RefCell<dyn FnMut(usize)>>;
 
 struct FakeTunnelDataTransport {
     events: Rc<RefCell<Vec<String>>>,
@@ -17,6 +20,7 @@ struct FakeTunnelDataTransport {
     connect_error: Option<TransportError>,
     send_error_after: usize,
     send_error: Option<TransportError>,
+    optional_read_hook: Option<OptionalReadHook>,
 }
 
 struct FakeTunnelDataSocket {
@@ -25,6 +29,8 @@ struct FakeTunnelDataSocket {
     send_error_after: usize,
     send_error: Option<TransportError>,
     send_count: usize,
+    optional_read_hook: Option<OptionalReadHook>,
+    optional_read_count: usize,
 }
 
 impl FakeTunnelDataTransport {
@@ -35,6 +41,7 @@ impl FakeTunnelDataTransport {
             connect_error: None,
             send_error_after: usize::MAX,
             send_error: None,
+            optional_read_hook: None,
         }
     }
 }
@@ -58,6 +65,8 @@ impl TunnelDataTransport for FakeTunnelDataTransport {
             send_error_after: self.send_error_after,
             send_error: self.send_error.take(),
             send_count: 0,
+            optional_read_hook: self.optional_read_hook.take(),
+            optional_read_count: 0,
         })
     }
 }
@@ -83,6 +92,10 @@ impl TunnelDataSocket for FakeTunnelDataSocket {
 
     fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
         self.events.borrow_mut().push("read_optional".to_string());
+        self.optional_read_count += 1;
+        if let Some(hook) = &self.optional_read_hook {
+            (hook.borrow_mut())(self.optional_read_count);
+        }
         self.inbound
             .remove(0)
             .map(Some)
@@ -149,6 +162,41 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
 }
 
 #[test]
+fn tunnel_data_ready_state_derives_rule_ids_from_selected_roles() {
+    let rules = vec![
+        selected_rule(7, "ingress"),
+        selected_rule(8, "egress"),
+        selected_rule(9, "both"),
+    ];
+
+    let ready = TunnelDataReadyState::from_selected_rules("rev-a", &rules);
+
+    assert_eq!(ready.revision, "rev-a");
+    assert_eq!(ready.ingress_rule_ids, vec![7, 9]);
+    assert_eq!(ready.egress_rule_ids, vec![8, 9]);
+    assert!(ready.failed_rules.is_empty());
+}
+
+fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
+    SelectedTunnelRule {
+        id,
+        name: format!("rule-{id}"),
+        enabled: true,
+        protocol: "tcp".to_string(),
+        role: role.to_string(),
+        ingress_group: "edge".to_string(),
+        listen_address: "0.0.0.0".to_string(),
+        listen_port: 10000 + id as u16,
+        egress_group: "rdp".to_string(),
+        target_host: "127.0.0.1".to_string(),
+        target_port: 3389,
+        source_allowlist: "0.0.0.0/0".to_string(),
+        max_concurrent_sessions: 32,
+        last_revision: 1,
+    }
+}
+
+#[test]
 fn tunnel_data_requires_hello_ack_before_ready() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut transport = FakeTunnelDataTransport {
@@ -161,6 +209,7 @@ fn tunnel_data_requires_hello_ack_before_ready() {
         connect_error: None,
         send_error_after: usize::MAX,
         send_error: None,
+        optional_read_hook: None,
     };
 
     let error = run_tunnel_data_once(
@@ -197,6 +246,7 @@ fn tunnel_data_session_keeps_socket_open_after_ready() {
         connect_error: None,
         send_error_after: usize::MAX,
         send_error: None,
+        optional_read_hook: None,
     };
 
     run_tunnel_data_session(
@@ -227,6 +277,70 @@ fn tunnel_data_session_keeps_socket_open_after_ready() {
 }
 
 #[test]
+fn tunnel_data_session_resends_ready_when_shared_state_changes() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let shared = SharedTunnelDataReadyState::new();
+    let update_shared = shared.clone();
+    let hook: OptionalReadHook = Rc::new(RefCell::new(move |count| {
+        if count == 1 {
+            update_shared.update_from_selected_rules("rev-a", &[selected_rule(7, "both")]);
+        }
+    }));
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![
+            Ok(hello_ack_frame()),
+            Ok(encode_frame(&KtpFrame::connection(FrameType::Ping, Vec::new())).unwrap()),
+            Err(TransportError::SocketClosed),
+        ],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: Some(hook),
+    };
+
+    run_tunnel_data_session_with_ready_source(
+        "wss://panel.example.com/api/clients/tunnel/data?token=secret",
+        &[],
+        "node-a",
+        "0.1.0",
+        &shared,
+        &mut transport,
+    )
+    .expect("data session should finish at reconnect boundary");
+
+    let ready_payloads = events
+        .borrow()
+        .iter()
+        .filter(|event| event.starts_with("frame:"))
+        .filter_map(|event| {
+            let frame = decode_frame(
+                &hex_to_bytes(event.strip_prefix("frame:").expect("frame prefix")),
+                KTP_MAX_PAYLOAD_LEN,
+            )
+            .expect("frame should decode");
+            (frame.frame_type == FrameType::Ready).then(|| parse_ready_payload(&frame.payload))
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(ready_payloads.len(), 2);
+    assert!(ready_payloads[0].ingress_rule_ids.is_empty());
+    assert_eq!(ready_payloads[1].revision, "rev-a");
+    assert_eq!(ready_payloads[1].ingress_rule_ids, vec![7]);
+    assert_eq!(ready_payloads[1].egress_rule_ids, vec![7]);
+}
+
+#[test]
+fn main_wires_tunnel_control_state_into_data_ready_source() {
+    let source = std::fs::read_to_string("src/main.rs").expect("main source should be readable");
+
+    assert!(source.contains("SharedTunnelDataReadyState::new()"));
+    assert!(source.contains("run_tunnel_control_once_with_rule_sink"));
+    assert!(source.contains("run_tunnel_control_session_with_rule_sink"));
+    assert!(source.contains("run_tunnel_data_session_with_ready_source"));
+}
+
+#[test]
 fn tunnel_data_unsupported_endpoint_is_non_fatal() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut transport = FakeTunnelDataTransport {
@@ -235,6 +349,7 @@ fn tunnel_data_unsupported_endpoint_is_non_fatal() {
         connect_error: Some(TransportError::RequestFailed("status=404".to_string())),
         send_error_after: usize::MAX,
         send_error: None,
+        optional_read_hook: None,
     };
     let ready = TunnelDataReadyState::empty("rev-1");
 
@@ -259,6 +374,7 @@ fn tunnel_data_send_socket_closed_is_non_fatal() {
             connect_error: None,
             send_error_after,
             send_error: Some(TransportError::SocketClosed),
+            optional_read_hook: None,
         };
         let ready = TunnelDataReadyState::empty("rev-1");
 
@@ -290,6 +406,7 @@ fn tunnel_data_rejects_oversized_payload_fields_without_truncating() {
             connect_error: None,
             send_error_after: usize::MAX,
             send_error: None,
+            optional_read_hook: None,
         },
     )
     .expect_err("oversized agent id should be rejected");
@@ -313,6 +430,7 @@ fn tunnel_data_rejects_oversized_payload_fields_without_truncating() {
             connect_error: None,
             send_error_after: usize::MAX,
             send_error: None,
+            optional_read_hook: None,
         },
     )
     .expect_err("oversized failed rule status should be rejected");
@@ -328,6 +446,7 @@ fn tunnel_data_send_socket_closed_stops_without_ready() {
         connect_error: None,
         send_error_after: 0,
         send_error: Some(TransportError::SocketClosed),
+        optional_read_hook: None,
     };
 
     run_tunnel_data_once(
