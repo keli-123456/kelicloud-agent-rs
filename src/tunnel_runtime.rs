@@ -4,7 +4,7 @@ use crate::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
 use crate::tunnel_data::{TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure};
 use crate::tunnel_preflight::{
     tunnel_preflight_status, validate_tunnel_tcp_rule_for_side, TunnelPreflightIssue,
-    TunnelPreflightSide, TunnelTcpRulePreflightInput,
+    TunnelPreflightIssueCode, TunnelPreflightSide, TunnelTcpRulePreflightInput,
 };
 use crate::tunnel_session::{
     decode_session_open_payload, encode_session_accept_payload, encode_session_error_payload,
@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug)]
 pub struct SharedTunnelRuleState {
-    inner: Arc<Mutex<TunnelRuleSnapshot>>,
+    inner: Arc<Mutex<TunnelRuleSharedState>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,12 +29,20 @@ pub struct TunnelRuleSnapshot {
     pub rules: Vec<SelectedTunnelRule>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TunnelRuleSharedState {
+    revision: String,
+    rules: Vec<SelectedTunnelRule>,
+    active_listeners: Vec<TunnelTcpListenerSpec>,
+}
+
 impl SharedTunnelRuleState {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(TunnelRuleSnapshot {
+            inner: Arc::new(Mutex::new(TunnelRuleSharedState {
                 revision: String::new(),
                 rules: Vec::new(),
+                active_listeners: Vec::new(),
             })),
         }
     }
@@ -42,15 +50,44 @@ impl SharedTunnelRuleState {
     pub fn snapshot(&self) -> TunnelRuleSnapshot {
         self.inner
             .lock()
-            .map(|state| state.clone())
-            .unwrap_or_else(|_| TunnelRuleSnapshot {
-                revision: String::new(),
-                rules: Vec::new(),
+            .map(|state| TunnelRuleSnapshot {
+                revision: state.revision.clone(),
+                rules: state.rules.clone(),
             })
+            .unwrap_or_else(|_| empty_tunnel_rule_snapshot())
     }
 
     pub fn tcp_listener_plan(&self) -> Vec<TunnelTcpListenerSpec> {
         build_tcp_listener_plan(&self.snapshot().rules)
+    }
+
+    fn ready_snapshot(&self) -> (TunnelRuleSnapshot, Vec<TunnelTcpListenerSpec>) {
+        self.inner
+            .lock()
+            .map(|state| {
+                (
+                    TunnelRuleSnapshot {
+                        revision: state.revision.clone(),
+                        rules: state.rules.clone(),
+                    },
+                    state.active_listeners.clone(),
+                )
+            })
+            .unwrap_or_else(|_| (empty_tunnel_rule_snapshot(), Vec::new()))
+    }
+
+    fn set_active_tcp_listeners(&self, mut listeners: Vec<TunnelTcpListenerSpec>) {
+        listeners.sort_by_key(|listener| listener.rule_id);
+        if let Ok(mut state) = self.inner.lock() {
+            state.active_listeners = listeners;
+        }
+    }
+}
+
+fn empty_tunnel_rule_snapshot() -> TunnelRuleSnapshot {
+    TunnelRuleSnapshot {
+        revision: String::new(),
+        rules: Vec::new(),
     }
 }
 
@@ -71,8 +108,12 @@ impl TunnelRuleStateSink for SharedTunnelRuleState {
 
 impl TunnelDataReadySource for SharedTunnelRuleState {
     fn current_ready(&self) -> TunnelDataReadyState {
-        let snapshot = self.snapshot();
-        build_tunnel_ready_state(&snapshot.revision, &snapshot.rules)
+        let (snapshot, active_listeners) = self.ready_snapshot();
+        build_tunnel_ready_state_with_active_listeners(
+            &snapshot.revision,
+            &snapshot.rules,
+            &active_listeners,
+        )
     }
 }
 
@@ -135,22 +176,27 @@ impl TunnelTcpRuntime {
             }
             should_keep
         });
+        self.sync_active_listener_snapshot();
 
         for spec in plan {
             if self.listeners.contains_key(&spec.rule_id) {
                 continue;
             }
             let stop = Arc::new(AtomicBool::new(false));
-            start_tcp_listener(
+            if let Err(error) = start_tcp_listener(
                 spec.clone(),
                 Arc::clone(&self.outbound),
                 Arc::clone(&self.sessions),
                 Arc::clone(&self.next_session_id),
                 Arc::clone(&stop),
-            )?;
+            ) {
+                self.sync_active_listener_snapshot();
+                return Err(error);
+            }
             self.listeners
                 .insert(spec.rule_id, TcpListenerHandle { spec, stop });
         }
+        self.sync_active_listener_snapshot();
         Ok(())
     }
 
@@ -159,6 +205,15 @@ impl TunnelTcpRuntime {
             .lock()
             .map(|sessions| sessions.len())
             .unwrap_or(0)
+    }
+
+    fn sync_active_listener_snapshot(&self) {
+        self.rule_state.set_active_tcp_listeners(
+            self.listeners
+                .values()
+                .map(|handle| handle.spec.clone())
+                .collect(),
+        );
     }
 
     fn handle_egress_open(&mut self, frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
@@ -509,17 +564,45 @@ pub fn build_tunnel_ready_state(
     revision: &str,
     rules: &[SelectedTunnelRule],
 ) -> TunnelDataReadyState {
+    build_tunnel_ready_state_with_active_listeners(revision, rules, &[])
+}
+
+fn build_tunnel_ready_state_with_active_listeners(
+    revision: &str,
+    rules: &[SelectedTunnelRule],
+    active_listeners: &[TunnelTcpListenerSpec],
+) -> TunnelDataReadyState {
     let mut ready = TunnelDataReadyState::empty(revision);
     for rule in rules {
         if !rule.enabled || rule.protocol.trim().to_ascii_lowercase() != "tcp" {
             continue;
         }
         match rule.role.trim().to_ascii_lowercase().as_str() {
-            "ingress" => apply_ready_side(rule, TunnelPreflightSide::Ingress, &mut ready),
-            "egress" => apply_ready_side(rule, TunnelPreflightSide::Egress, &mut ready),
+            "ingress" => apply_ready_side(
+                rule,
+                TunnelPreflightSide::Ingress,
+                active_listeners,
+                &mut ready,
+            ),
+            "egress" => apply_ready_side(
+                rule,
+                TunnelPreflightSide::Egress,
+                active_listeners,
+                &mut ready,
+            ),
             "both" => {
-                apply_ready_side(rule, TunnelPreflightSide::Ingress, &mut ready);
-                apply_ready_side(rule, TunnelPreflightSide::Egress, &mut ready);
+                apply_ready_side(
+                    rule,
+                    TunnelPreflightSide::Ingress,
+                    active_listeners,
+                    &mut ready,
+                );
+                apply_ready_side(
+                    rule,
+                    TunnelPreflightSide::Egress,
+                    active_listeners,
+                    &mut ready,
+                );
             }
             _ => {}
         }
@@ -534,6 +617,7 @@ pub fn build_tunnel_ready_state(
 fn apply_ready_side(
     rule: &SelectedTunnelRule,
     side: TunnelPreflightSide,
+    active_listeners: &[TunnelTcpListenerSpec],
     ready: &mut TunnelDataReadyState,
 ) {
     let input = TunnelTcpRulePreflightInput {
@@ -544,7 +628,12 @@ fn apply_ready_side(
         target_port: rule.target_port,
         source_allowlist: rule.source_allowlist.clone(),
     };
-    let issues = validate_tunnel_tcp_rule_for_side(&input, side);
+    let issues = filter_runtime_owned_listener_bind_failure(
+        rule,
+        side,
+        validate_tunnel_tcp_rule_for_side(&input, side),
+        active_listeners,
+    );
     if issues.is_empty() {
         match side {
             TunnelPreflightSide::Ingress => ready.ingress_rule_ids.push(rule.id),
@@ -555,6 +644,28 @@ fn apply_ready_side(
     for issue in issues {
         push_preflight_failure_once(ready, issue);
     }
+}
+
+fn filter_runtime_owned_listener_bind_failure(
+    rule: &SelectedTunnelRule,
+    side: TunnelPreflightSide,
+    issues: Vec<TunnelPreflightIssue>,
+    active_listeners: &[TunnelTcpListenerSpec],
+) -> Vec<TunnelPreflightIssue> {
+    if side != TunnelPreflightSide::Ingress
+        || !active_listeners.iter().any(|listener| {
+            listener.rule_id == rule.id
+                && listener.listen_address.trim() == rule.listen_address.trim()
+                && listener.listen_port == rule.listen_port
+                && listener.source_allowlist.trim() == rule.source_allowlist.trim()
+        })
+    {
+        return issues;
+    }
+    issues
+        .into_iter()
+        .filter(|issue| issue.code != TunnelPreflightIssueCode::ListenBindFailed)
+        .collect()
 }
 
 fn push_preflight_failure_once(ready: &mut TunnelDataReadyState, issue: TunnelPreflightIssue) {

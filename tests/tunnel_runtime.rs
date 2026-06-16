@@ -482,6 +482,42 @@ fn shared_tunnel_rule_state_blocks_ingress_when_listener_bind_fails() {
     }
 }
 
+#[test]
+fn shared_tunnel_rule_state_keeps_runtime_owned_listener_ready_after_refresh() {
+    let listen_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(64, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = listen_port;
+    rule.source_allowlist = "127.0.0.0/8".to_string();
+    state.update_rules("rev-runtime-listener", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state.clone());
+    runtime.refresh_listeners().expect("start ingress listener");
+
+    let ready = state.current_ready();
+
+    assert!(
+        !ready
+            .failed_rules
+            .iter()
+            .any(|failure| { failure.rule_id == 64 && failure.status == "listen_bind_failed" }),
+        "runtime-owned listener must not be reported as bind failure: {:?}",
+        ready.failed_rules
+    );
+    if cfg!(target_os = "linux") {
+        assert!(ready.ingress_rule_ids.contains(&64));
+    } else {
+        assert!(
+            ready
+                .failed_rules
+                .iter()
+                .any(|failure| { failure.rule_id == 64 && failure.status == "unsupported_os" }),
+            "unsupported_os must still be reported on non-Linux: {:?}",
+            ready.failed_rules
+        );
+    }
+}
+
 fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFrame> {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
