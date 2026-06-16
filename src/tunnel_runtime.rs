@@ -1,7 +1,11 @@
 use crate::ktp::{FrameLeg, FrameType, KtpFrame};
 use crate::transport::TransportError;
 use crate::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
-use crate::tunnel_data::{TunnelDataReadySource, TunnelDataReadyState};
+use crate::tunnel_data::{TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure};
+use crate::tunnel_preflight::{
+    tunnel_preflight_status, validate_tunnel_tcp_rule_for_side, TunnelPreflightIssue,
+    TunnelPreflightSide, TunnelTcpRulePreflightInput,
+};
 use crate::tunnel_session::{
     decode_session_open_payload, encode_session_accept_payload, encode_session_error_payload,
     encode_session_open_payload, TunnelSessionErrorPayload, TunnelSessionOpenPayload,
@@ -68,7 +72,7 @@ impl TunnelRuleStateSink for SharedTunnelRuleState {
 impl TunnelDataReadySource for SharedTunnelRuleState {
     fn current_ready(&self) -> TunnelDataReadyState {
         let snapshot = self.snapshot();
-        TunnelDataReadyState::from_selected_rules(&snapshot.revision, &snapshot.rules)
+        build_tunnel_ready_state(&snapshot.revision, &snapshot.rules)
     }
 }
 
@@ -499,6 +503,74 @@ pub struct TunnelTcpListenerSpec {
     pub target_port: u16,
     pub source_allowlist: String,
     pub max_concurrent_sessions: u32,
+}
+
+pub fn build_tunnel_ready_state(
+    revision: &str,
+    rules: &[SelectedTunnelRule],
+) -> TunnelDataReadyState {
+    let mut ready = TunnelDataReadyState::empty(revision);
+    for rule in rules {
+        if !rule.enabled || rule.protocol.trim().to_ascii_lowercase() != "tcp" {
+            continue;
+        }
+        match rule.role.trim().to_ascii_lowercase().as_str() {
+            "ingress" => apply_ready_side(rule, TunnelPreflightSide::Ingress, &mut ready),
+            "egress" => apply_ready_side(rule, TunnelPreflightSide::Egress, &mut ready),
+            "both" => {
+                apply_ready_side(rule, TunnelPreflightSide::Ingress, &mut ready);
+                apply_ready_side(rule, TunnelPreflightSide::Egress, &mut ready);
+            }
+            _ => {}
+        }
+    }
+    ready.ingress_rule_ids.sort_unstable();
+    ready.ingress_rule_ids.dedup();
+    ready.egress_rule_ids.sort_unstable();
+    ready.egress_rule_ids.dedup();
+    ready
+}
+
+fn apply_ready_side(
+    rule: &SelectedTunnelRule,
+    side: TunnelPreflightSide,
+    ready: &mut TunnelDataReadyState,
+) {
+    let input = TunnelTcpRulePreflightInput {
+        rule_id: rule.id,
+        listen_address: rule.listen_address.clone(),
+        listen_port: rule.listen_port,
+        target_host: rule.target_host.clone(),
+        target_port: rule.target_port,
+        source_allowlist: rule.source_allowlist.clone(),
+    };
+    let issues = validate_tunnel_tcp_rule_for_side(&input, side);
+    if issues.is_empty() {
+        match side {
+            TunnelPreflightSide::Ingress => ready.ingress_rule_ids.push(rule.id),
+            TunnelPreflightSide::Egress => ready.egress_rule_ids.push(rule.id),
+        }
+        return;
+    }
+    for issue in issues {
+        push_preflight_failure_once(ready, issue);
+    }
+}
+
+fn push_preflight_failure_once(ready: &mut TunnelDataReadyState, issue: TunnelPreflightIssue) {
+    let status = tunnel_preflight_status(issue.code).to_string();
+    if ready.failed_rules.iter().any(|failure| {
+        failure.rule_id == issue.rule_id
+            && failure.status == status
+            && failure.error == issue.message
+    }) {
+        return;
+    }
+    ready.failed_rules.push(TunnelDataRuleFailure {
+        rule_id: issue.rule_id,
+        status,
+        error: issue.message,
+    });
 }
 
 pub fn build_tcp_listener_plan(rules: &[SelectedTunnelRule]) -> Vec<TunnelTcpListenerSpec> {

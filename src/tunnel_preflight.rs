@@ -25,6 +25,12 @@ pub enum TunnelPreflightIssueCode {
     InvalidAllowlist,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TunnelPreflightSide {
+    Ingress,
+    Egress,
+}
+
 pub fn tunnel_supported_on_this_os() -> bool {
     cfg!(target_os = "linux")
 }
@@ -59,6 +65,65 @@ pub fn validate_tunnel_tcp_rule(input: &TunnelTcpRulePreflightInput) -> Vec<Tunn
         });
     }
     issues
+}
+
+pub fn validate_tunnel_tcp_rule_for_side(
+    input: &TunnelTcpRulePreflightInput,
+    side: TunnelPreflightSide,
+) -> Vec<TunnelPreflightIssue> {
+    validate_tunnel_tcp_rule_for_side_with_os(input, side, tunnel_supported_on_this_os())
+}
+
+pub fn validate_tunnel_tcp_rule_for_side_with_os(
+    input: &TunnelTcpRulePreflightInput,
+    side: TunnelPreflightSide,
+    os_supported: bool,
+) -> Vec<TunnelPreflightIssue> {
+    let mut issues = Vec::new();
+    if !os_supported {
+        issues.push(TunnelPreflightIssue {
+            rule_id: input.rule_id,
+            code: TunnelPreflightIssueCode::UnsupportedOs,
+            message: "tunnel forwarding is only supported on Linux".to_string(),
+        });
+    }
+
+    match side {
+        TunnelPreflightSide::Ingress => {
+            if !allowlist_is_valid(&input.source_allowlist) {
+                issues.push(TunnelPreflightIssue {
+                    rule_id: input.rule_id,
+                    code: TunnelPreflightIssueCode::InvalidAllowlist,
+                    message: "source allowlist contains an invalid IP or CIDR entry".to_string(),
+                });
+            }
+            if let Some(issue) = check_listener_bindable(&input.listen_address, input.listen_port) {
+                issues.push(TunnelPreflightIssue {
+                    rule_id: input.rule_id,
+                    ..issue
+                });
+            }
+        }
+        TunnelPreflightSide::Egress => {
+            if input.target_host.trim().is_empty() || input.target_port == 0 {
+                issues.push(TunnelPreflightIssue {
+                    rule_id: input.rule_id,
+                    code: TunnelPreflightIssueCode::InvalidTarget,
+                    message: "target host and port are required".to_string(),
+                });
+            }
+        }
+    }
+    issues
+}
+
+pub fn tunnel_preflight_status(code: TunnelPreflightIssueCode) -> &'static str {
+    match code {
+        TunnelPreflightIssueCode::UnsupportedOs => "unsupported_os",
+        TunnelPreflightIssueCode::ListenBindFailed => "listen_bind_failed",
+        TunnelPreflightIssueCode::InvalidTarget => "invalid_target",
+        TunnelPreflightIssueCode::InvalidAllowlist => "invalid_allowlist",
+    }
 }
 
 pub fn check_listener_bindable(

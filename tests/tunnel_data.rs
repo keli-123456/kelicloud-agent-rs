@@ -112,6 +112,11 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
     let mut ready = TunnelDataReadyState::empty("rev-a");
     ready.ingress_rule_ids.push(7);
     ready.egress_rule_ids.push(9);
+    ready.failed_rules.push(TunnelDataRuleFailure {
+        rule_id: 7,
+        status: "listen_bind_failed".to_string(),
+        error: "cannot bind listener 127.0.0.1:10088".to_string(),
+    });
 
     run_tunnel_data_once(
         "wss://panel.example.com/api/clients/tunnel/data?token=secret",
@@ -160,7 +165,14 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
     assert_eq!(ready_payload.revision, "rev-a");
     assert_eq!(ready_payload.ingress_rule_ids, [7]);
     assert_eq!(ready_payload.egress_rule_ids, [9]);
-    assert!(ready_payload.failed_rules.is_empty());
+    assert_eq!(
+        ready_payload.failed_rules,
+        [(
+            7,
+            "listen_bind_failed".to_string(),
+            "cannot bind listener 127.0.0.1:10088".to_string(),
+        )]
+    );
 }
 
 #[test]

@@ -60,19 +60,32 @@ fn source_allowlist_supports_ipv6_cidr() {
 #[test]
 fn shared_tunnel_rule_state_feeds_ready_source_and_listener_plan() {
     let state = SharedTunnelRuleState::new();
-    state.update_rules(
-        "rev-a",
-        &[
-            selected_rule(7, "tcp", "ingress", true),
-            selected_rule(8, "tcp", "egress", true),
-            selected_rule(9, "tcp", "both", true),
-        ],
-    );
+    let mut ingress_rule = selected_rule(7, "tcp", "ingress", true);
+    ingress_rule.listen_port = free_tcp_port();
+    let egress_rule = selected_rule(8, "tcp", "egress", true);
+    let mut both_rule = selected_rule(9, "tcp", "both", true);
+    both_rule.listen_port = free_tcp_port();
+    state.update_rules("rev-a", &[ingress_rule, egress_rule, both_rule]);
 
     let ready = state.current_ready();
     assert_eq!(ready.revision, "rev-a");
-    assert_eq!(ready.ingress_rule_ids, vec![7, 9]);
-    assert_eq!(ready.egress_rule_ids, vec![8, 9]);
+    if cfg!(target_os = "linux") {
+        assert_eq!(ready.ingress_rule_ids, vec![7, 9]);
+        assert_eq!(ready.egress_rule_ids, vec![8, 9]);
+        assert!(ready.failed_rules.is_empty());
+    } else {
+        assert!(ready.ingress_rule_ids.is_empty());
+        assert!(ready.egress_rule_ids.is_empty());
+        for rule_id in [7, 8, 9] {
+            assert!(
+                ready.failed_rules.iter().any(|failure| {
+                    failure.rule_id == rule_id && failure.status == "unsupported_os"
+                }),
+                "expected unsupported_os failure for {rule_id}, got {:?}",
+                ready.failed_rules
+            );
+        }
+    }
 
     let plan = state.tcp_listener_plan();
     assert_eq!(
@@ -390,6 +403,83 @@ fn tcp_runtime_missing_egress_rule_returns_runtime_unavailable() {
     assert_eq!(error.rule_id, 88);
     assert_eq!(error.code, "runtime_unavailable");
     assert_eq!(runtime.active_session_count(), 0);
+}
+
+#[test]
+fn shared_tunnel_rule_state_reports_invalid_target_as_egress_failure() {
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(61, "tcp", "egress", true);
+    rule.target_host = "".to_string();
+    rule.target_port = 0;
+    state.update_rules("rev-preflight", &[rule]);
+
+    let ready = state.current_ready();
+
+    assert_eq!(ready.revision, "rev-preflight");
+    assert!(ready.egress_rule_ids.is_empty());
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .any(|failure| { failure.rule_id == 61 && failure.status == "invalid_target" }),
+        "expected invalid_target failure, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_reports_invalid_allowlist_as_ingress_failure() {
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(62, "tcp", "ingress", true);
+    rule.source_allowlist = "bad-cidr/999".to_string();
+    state.update_rules("rev-preflight", &[rule]);
+
+    let ready = state.current_ready();
+
+    assert!(ready.ingress_rule_ids.is_empty());
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .any(|failure| { failure.rule_id == 62 && failure.status == "invalid_allowlist" }),
+        "expected invalid_allowlist failure, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_blocks_ingress_when_listener_bind_fails() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind occupied listener");
+    let port = listener.local_addr().expect("listener addr").port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(63, "tcp", "both", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = port;
+    state.update_rules("rev-preflight", &[rule]);
+
+    let ready = state.current_ready();
+
+    assert!(!ready.ingress_rule_ids.contains(&63));
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .any(|failure| { failure.rule_id == 63 && failure.status == "listen_bind_failed" }),
+        "expected listen_bind_failed failure, got {:?}",
+        ready.failed_rules
+    );
+    if cfg!(target_os = "linux") {
+        assert!(ready.egress_rule_ids.contains(&63));
+    } else {
+        assert!(
+            ready
+                .failed_rules
+                .iter()
+                .any(|failure| { failure.rule_id == 63 && failure.status == "unsupported_os" }),
+            "expected unsupported_os failure on non-Linux, got {:?}",
+            ready.failed_rules
+        );
+    }
 }
 
 fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFrame> {
