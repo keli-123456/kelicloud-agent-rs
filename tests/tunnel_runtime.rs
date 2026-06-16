@@ -70,9 +70,17 @@ fn shared_tunnel_rule_state_feeds_ready_source_and_listener_plan() {
     let ready = state.current_ready();
     assert_eq!(ready.revision, "rev-a");
     if cfg!(target_os = "linux") {
-        assert_eq!(ready.ingress_rule_ids, vec![7, 9]);
+        assert!(ready.ingress_rule_ids.is_empty());
         assert_eq!(ready.egress_rule_ids, vec![8, 9]);
-        assert!(ready.failed_rules.is_empty());
+        for rule_id in [7, 9] {
+            assert!(
+                ready.failed_rules.iter().any(|failure| {
+                    failure.rule_id == rule_id && failure.status == "listener_stopped"
+                }),
+                "expected listener_stopped failure for {rule_id}, got {:?}",
+                ready.failed_rules
+            );
+        }
     } else {
         assert!(ready.ingress_rule_ids.is_empty());
         assert!(ready.egress_rule_ids.is_empty());
@@ -448,6 +456,42 @@ fn shared_tunnel_rule_state_reports_invalid_allowlist_as_ingress_failure() {
 }
 
 #[test]
+fn shared_tunnel_rule_state_combines_preflight_and_listener_health_failures() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(68, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = free_tcp_port();
+    rule.source_allowlist = "bad-cidr/999".to_string();
+    state.update_rules("rev-combined-failure", &[rule.clone()]);
+    let spec = build_tcp_listener_plan(&[rule]).remove(0);
+    state.set_listener_runtime_error(spec, "accept failed: socket closed");
+
+    let ready = state.current_ready();
+
+    assert!(!ready.ingress_rule_ids.contains(&68));
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .any(|failure| failure.rule_id == 68 && failure.status == "invalid_allowlist"),
+        "expected invalid_allowlist failure, got {:?}",
+        ready.failed_rules
+    );
+    assert!(
+        ready.failed_rules.iter().any(|failure| {
+            failure.rule_id == 68
+                && failure.status == "listener_runtime_error"
+                && failure.error.contains("accept failed")
+        }),
+        "expected listener_runtime_error failure, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
 fn shared_tunnel_rule_state_blocks_ingress_when_listener_bind_fails() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind occupied listener");
     let port = listener.local_addr().expect("listener addr").port();
@@ -516,6 +560,213 @@ fn shared_tunnel_rule_state_keeps_runtime_owned_listener_ready_after_refresh() {
             ready.failed_rules
         );
     }
+}
+
+#[test]
+fn shared_tunnel_rule_state_blocks_ingress_when_listener_health_is_missing() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(65, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = free_tcp_port();
+    state.update_rules("rev-runtime-health", &[rule]);
+
+    let ready = state.current_ready();
+
+    assert!(!ready.ingress_rule_ids.contains(&65));
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .any(|failure| failure.rule_id == 65 && failure.status == "listener_stopped"),
+        "expected listener_stopped failure, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_requires_active_listener_for_running_health() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(72, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = free_tcp_port();
+    state.update_rules("rev-running-without-active", &[rule.clone()]);
+    let spec = build_tcp_listener_plan(&[rule]).remove(0);
+    state.set_listener_running(spec);
+
+    let ready = state.current_ready();
+
+    assert!(!ready.ingress_rule_ids.contains(&72));
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .any(|failure| failure.rule_id == 72 && failure.status == "listener_stopped"),
+        "running health without active listener must report listener_stopped, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_reports_runtime_listener_error() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(66, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = free_tcp_port();
+    rule.source_allowlist = "127.0.0.0/8".to_string();
+    state.update_rules("rev-runtime-error", &[rule.clone()]);
+    let spec = build_tcp_listener_plan(&[rule]).remove(0);
+    let mut runtime = TunnelTcpRuntime::new(state.clone());
+    runtime.refresh_listeners().expect("start ingress listener");
+    state.set_listener_running(spec.clone());
+
+    let running = state.current_ready();
+    assert!(
+        running.ingress_rule_ids.contains(&66),
+        "expected listener-running rule to be ready, got {:?}",
+        running
+    );
+
+    state.set_listener_runtime_error(spec, "accept failed: socket closed");
+    let failed = state.current_ready();
+
+    assert!(!failed.ingress_rule_ids.contains(&66));
+    assert!(
+        failed.failed_rules.iter().any(|failure| {
+            failure.rule_id == 66
+                && failure.status == "listener_runtime_error"
+                && failure.error.contains("accept failed")
+        }),
+        "expected listener_runtime_error failure, got {:?}",
+        failed.failed_rules
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_reports_listener_start_failed_health() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(69, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = free_tcp_port();
+    state.update_rules("rev-start-failed", &[rule.clone()]);
+    let spec = build_tcp_listener_plan(&[rule]).remove(0);
+    state.set_listener_start_failed(spec, "bind failed: address in use");
+
+    let ready = state.current_ready();
+
+    assert!(!ready.ingress_rule_ids.contains(&69));
+    assert!(
+        ready.failed_rules.iter().any(|failure| {
+            failure.rule_id == 69
+                && failure.status == "listener_start_failed"
+                && failure.error.contains("address in use")
+        }),
+        "expected listener_start_failed failure, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_reports_explicit_listener_stopped_health() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(70, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = free_tcp_port();
+    state.update_rules("rev-stopped", &[rule.clone()]);
+    let spec = build_tcp_listener_plan(&[rule]).remove(0);
+    state.set_listener_stopped(spec, "listener stopped unexpectedly");
+
+    let ready = state.current_ready();
+
+    assert!(!ready.ingress_rule_ids.contains(&70));
+    assert!(
+        ready.failed_rules.iter().any(|failure| {
+            failure.rule_id == 70
+                && failure.status == "listener_stopped"
+                && failure.error.contains("stopped unexpectedly")
+        }),
+        "expected listener_stopped failure, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_skips_listener_health_when_os_is_unsupported() {
+    if cfg!(target_os = "linux") {
+        return;
+    }
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(71, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = free_tcp_port();
+    state.update_rules("rev-unsupported-listener-health", &[rule.clone()]);
+    let spec = build_tcp_listener_plan(&[rule]).remove(0);
+    state.set_listener_runtime_error(spec, "accept failed: socket closed");
+
+    let ready = state.current_ready();
+
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .any(|failure| failure.rule_id == 71 && failure.status == "unsupported_os"),
+        "expected unsupported_os failure, got {:?}",
+        ready.failed_rules
+    );
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .all(|failure| !failure.status.starts_with("listener_")),
+        "listener health must be skipped when unsupported_os is present: {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_clears_stale_listener_health_when_rule_changes() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let state = SharedTunnelRuleState::new();
+    let mut old_rule = selected_rule(67, "tcp", "ingress", true);
+    old_rule.listen_address = "127.0.0.1".to_string();
+    old_rule.listen_port = free_tcp_port();
+    let old_listen_port = old_rule.listen_port;
+    state.update_rules("rev-old", &[old_rule.clone()]);
+    let old_spec = build_tcp_listener_plan(&[old_rule]).remove(0);
+    state.set_listener_runtime_error(old_spec, "old listener failed");
+
+    let mut new_rule = selected_rule(67, "tcp", "ingress", true);
+    new_rule.listen_address = "127.0.0.1".to_string();
+    new_rule.listen_port = old_listen_port;
+    new_rule.source_allowlist = "127.0.0.1".to_string();
+    state.update_rules("rev-new", &[new_rule]);
+
+    let ready = state.current_ready();
+
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .all(|failure| !failure.error.contains("old listener failed")),
+        "stale listener health must be removed after rule change: {:?}",
+        ready.failed_rules
+    );
 }
 
 fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFrame> {

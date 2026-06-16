@@ -29,11 +29,60 @@ pub struct TunnelRuleSnapshot {
     pub rules: Vec<SelectedTunnelRule>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TunnelListenerHealthStatus {
+    Running,
+    StartFailed,
+    Stopped,
+    RuntimeError,
+}
+
+impl TunnelListenerHealthStatus {
+    fn ready_status(&self) -> &'static str {
+        match self {
+            Self::Running => "listener_running",
+            Self::StartFailed => "listener_start_failed",
+            Self::Stopped => "listener_stopped",
+            Self::RuntimeError => "listener_runtime_error",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TunnelListenerHealth {
+    pub spec: TunnelTcpListenerSpec,
+    pub status: TunnelListenerHealthStatus,
+    pub error: String,
+}
+
+impl TunnelListenerHealth {
+    fn running(spec: TunnelTcpListenerSpec) -> Self {
+        Self {
+            spec,
+            status: TunnelListenerHealthStatus::Running,
+            error: String::new(),
+        }
+    }
+
+    fn failure(
+        spec: TunnelTcpListenerSpec,
+        status: TunnelListenerHealthStatus,
+        error: &str,
+    ) -> Self {
+        Self {
+            spec,
+            status,
+            error: error.trim().to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TunnelRuleSharedState {
     revision: String,
     rules: Vec<SelectedTunnelRule>,
     active_listeners: Vec<TunnelTcpListenerSpec>,
+    listener_health: Vec<TunnelListenerHealth>,
 }
 
 impl SharedTunnelRuleState {
@@ -43,6 +92,7 @@ impl SharedTunnelRuleState {
                 revision: String::new(),
                 rules: Vec::new(),
                 active_listeners: Vec::new(),
+                listener_health: Vec::new(),
             })),
         }
     }
@@ -61,7 +111,13 @@ impl SharedTunnelRuleState {
         build_tcp_listener_plan(&self.snapshot().rules)
     }
 
-    fn ready_snapshot(&self) -> (TunnelRuleSnapshot, Vec<TunnelTcpListenerSpec>) {
+    fn ready_snapshot(
+        &self,
+    ) -> (
+        TunnelRuleSnapshot,
+        Vec<TunnelTcpListenerSpec>,
+        Vec<TunnelListenerHealth>,
+    ) {
         self.inner
             .lock()
             .map(|state| {
@@ -71,15 +127,78 @@ impl SharedTunnelRuleState {
                         rules: state.rules.clone(),
                     },
                     state.active_listeners.clone(),
+                    state.listener_health.clone(),
                 )
             })
-            .unwrap_or_else(|_| (empty_tunnel_rule_snapshot(), Vec::new()))
+            .unwrap_or_else(|_| (empty_tunnel_rule_snapshot(), Vec::new(), Vec::new()))
+    }
+
+    pub fn set_listener_running(&self, spec: TunnelTcpListenerSpec) {
+        self.set_listener_health(TunnelListenerHealth::running(spec));
+    }
+
+    pub fn set_listener_start_failed(&self, spec: TunnelTcpListenerSpec, error: &str) {
+        self.set_listener_health(TunnelListenerHealth::failure(
+            spec,
+            TunnelListenerHealthStatus::StartFailed,
+            error,
+        ));
+    }
+
+    pub fn set_listener_stopped(&self, spec: TunnelTcpListenerSpec, error: &str) {
+        self.set_listener_health(TunnelListenerHealth::failure(
+            spec,
+            TunnelListenerHealthStatus::Stopped,
+            error,
+        ));
+    }
+
+    pub fn set_listener_runtime_error(&self, spec: TunnelTcpListenerSpec, error: &str) {
+        self.set_listener_health(TunnelListenerHealth::failure(
+            spec,
+            TunnelListenerHealthStatus::RuntimeError,
+            error,
+        ));
+    }
+
+    fn set_listener_health(&self, health: TunnelListenerHealth) {
+        if let Ok(mut state) = self.inner.lock() {
+            state
+                .listener_health
+                .retain(|existing| !same_listener_identity(&existing.spec, &health.spec));
+            state.listener_health.push(health);
+            sort_listener_health(&mut state.listener_health);
+        }
+    }
+
+    pub fn retain_listener_health_for_specs(&self, specs: &[TunnelTcpListenerSpec]) {
+        if let Ok(mut state) = self.inner.lock() {
+            retain_listener_health_for_specs(&mut state.listener_health, specs);
+        }
     }
 
     fn set_active_tcp_listeners(&self, mut listeners: Vec<TunnelTcpListenerSpec>) {
         listeners.sort_by_key(|listener| listener.rule_id);
         if let Ok(mut state) = self.inner.lock() {
-            state.active_listeners = listeners;
+            state.active_listeners = listeners.clone();
+            state.listener_health.retain(|health| {
+                health.status != TunnelListenerHealthStatus::Running
+                    || listeners
+                        .iter()
+                        .any(|listener| same_listener_identity(&health.spec, listener))
+            });
+            for listener in listeners {
+                if !state
+                    .listener_health
+                    .iter()
+                    .any(|health| same_listener_identity(&health.spec, &listener))
+                {
+                    state
+                        .listener_health
+                        .push(TunnelListenerHealth::running(listener));
+                }
+            }
+            sort_listener_health(&mut state.listener_health);
         }
     }
 }
@@ -99,20 +218,28 @@ impl Default for SharedTunnelRuleState {
 
 impl TunnelRuleStateSink for SharedTunnelRuleState {
     fn update_rules(&self, revision: &str, rules: &[SelectedTunnelRule]) {
+        let listener_plan = build_tcp_listener_plan(rules);
         if let Ok(mut state) = self.inner.lock() {
             state.revision = revision.trim().to_string();
             state.rules = rules.to_vec();
+            retain_listener_health_for_specs(&mut state.listener_health, &listener_plan);
+            state.active_listeners.retain(|listener| {
+                listener_plan
+                    .iter()
+                    .any(|spec| same_listener_identity(listener, spec))
+            });
         }
     }
 }
 
 impl TunnelDataReadySource for SharedTunnelRuleState {
     fn current_ready(&self) -> TunnelDataReadyState {
-        let (snapshot, active_listeners) = self.ready_snapshot();
-        build_tunnel_ready_state_with_active_listeners(
+        let (snapshot, active_listeners, listener_health) = self.ready_snapshot();
+        build_tunnel_ready_state_with_listener_health(
             &snapshot.revision,
             &snapshot.rules,
             &active_listeners,
+            &listener_health,
         )
     }
 }
@@ -344,6 +471,32 @@ fn same_listener_endpoint(left: &TunnelTcpListenerSpec, right: &TunnelTcpListene
         && left.source_allowlist.trim() == right.source_allowlist.trim()
 }
 
+fn same_listener_identity(left: &TunnelTcpListenerSpec, right: &TunnelTcpListenerSpec) -> bool {
+    left.rule_id == right.rule_id && same_listener_endpoint(left, right)
+}
+
+fn retain_listener_health_for_specs(
+    listener_health: &mut Vec<TunnelListenerHealth>,
+    specs: &[TunnelTcpListenerSpec],
+) {
+    listener_health.retain(|health| {
+        specs
+            .iter()
+            .any(|spec| same_listener_identity(&health.spec, spec))
+    });
+}
+
+fn sort_listener_health(listener_health: &mut [TunnelListenerHealth]) {
+    listener_health.sort_by(|left, right| {
+        left.spec
+            .rule_id
+            .cmp(&right.spec.rule_id)
+            .then_with(|| left.spec.listen_address.cmp(&right.spec.listen_address))
+            .then_with(|| left.spec.listen_port.cmp(&right.spec.listen_port))
+            .then_with(|| left.spec.source_allowlist.cmp(&right.spec.source_allowlist))
+    });
+}
+
 fn initial_session_id() -> u64 {
     let seed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -564,13 +717,14 @@ pub fn build_tunnel_ready_state(
     revision: &str,
     rules: &[SelectedTunnelRule],
 ) -> TunnelDataReadyState {
-    build_tunnel_ready_state_with_active_listeners(revision, rules, &[])
+    build_tunnel_ready_state_with_listener_health(revision, rules, &[], &[])
 }
 
-fn build_tunnel_ready_state_with_active_listeners(
+fn build_tunnel_ready_state_with_listener_health(
     revision: &str,
     rules: &[SelectedTunnelRule],
     active_listeners: &[TunnelTcpListenerSpec],
+    listener_health: &[TunnelListenerHealth],
 ) -> TunnelDataReadyState {
     let mut ready = TunnelDataReadyState::empty(revision);
     for rule in rules {
@@ -582,12 +736,14 @@ fn build_tunnel_ready_state_with_active_listeners(
                 rule,
                 TunnelPreflightSide::Ingress,
                 active_listeners,
+                listener_health,
                 &mut ready,
             ),
             "egress" => apply_ready_side(
                 rule,
                 TunnelPreflightSide::Egress,
                 active_listeners,
+                listener_health,
                 &mut ready,
             ),
             "both" => {
@@ -595,12 +751,14 @@ fn build_tunnel_ready_state_with_active_listeners(
                     rule,
                     TunnelPreflightSide::Ingress,
                     active_listeners,
+                    listener_health,
                     &mut ready,
                 );
                 apply_ready_side(
                     rule,
                     TunnelPreflightSide::Egress,
                     active_listeners,
+                    listener_health,
                     &mut ready,
                 );
             }
@@ -618,6 +776,7 @@ fn apply_ready_side(
     rule: &SelectedTunnelRule,
     side: TunnelPreflightSide,
     active_listeners: &[TunnelTcpListenerSpec],
+    listener_health: &[TunnelListenerHealth],
     ready: &mut TunnelDataReadyState,
 ) {
     let input = TunnelTcpRulePreflightInput {
@@ -634,15 +793,28 @@ fn apply_ready_side(
         validate_tunnel_tcp_rule_for_side(&input, side),
         active_listeners,
     );
-    if issues.is_empty() {
-        match side {
-            TunnelPreflightSide::Ingress => ready.ingress_rule_ids.push(rule.id),
-            TunnelPreflightSide::Egress => ready.egress_rule_ids.push(rule.id),
-        }
-        return;
+    let has_unsupported_os = issues
+        .iter()
+        .any(|issue| issue.code == TunnelPreflightIssueCode::UnsupportedOs);
+    let mut blocked = false;
+
+    if side == TunnelPreflightSide::Ingress
+        && !has_unsupported_os
+        && push_listener_health_failure(rule, active_listeners, listener_health, ready)
+    {
+        blocked = true;
     }
     for issue in issues {
+        blocked = true;
         push_preflight_failure_once(ready, issue);
+    }
+    if blocked {
+        return;
+    }
+
+    match side {
+        TunnelPreflightSide::Ingress => ready.ingress_rule_ids.push(rule.id),
+        TunnelPreflightSide::Egress => ready.egress_rule_ids.push(rule.id),
     }
 }
 
@@ -652,13 +824,11 @@ fn filter_runtime_owned_listener_bind_failure(
     issues: Vec<TunnelPreflightIssue>,
     active_listeners: &[TunnelTcpListenerSpec],
 ) -> Vec<TunnelPreflightIssue> {
+    let expected = listener_spec_for_rule(rule);
     if side != TunnelPreflightSide::Ingress
-        || !active_listeners.iter().any(|listener| {
-            listener.rule_id == rule.id
-                && listener.listen_address.trim() == rule.listen_address.trim()
-                && listener.listen_port == rule.listen_port
-                && listener.source_allowlist.trim() == rule.source_allowlist.trim()
-        })
+        || !active_listeners
+            .iter()
+            .any(|listener| same_listener_identity(listener, &expected))
     {
         return issues;
     }
@@ -666,6 +836,81 @@ fn filter_runtime_owned_listener_bind_failure(
         .into_iter()
         .filter(|issue| issue.code != TunnelPreflightIssueCode::ListenBindFailed)
         .collect()
+}
+
+fn push_listener_health_failure(
+    rule: &SelectedTunnelRule,
+    active_listeners: &[TunnelTcpListenerSpec],
+    listener_health: &[TunnelListenerHealth],
+    ready: &mut TunnelDataReadyState,
+) -> bool {
+    let expected = listener_spec_for_rule(rule);
+    let active = active_listeners
+        .iter()
+        .any(|listener| same_listener_identity(listener, &expected));
+    let health = listener_health
+        .iter()
+        .find(|health| same_listener_identity(&health.spec, &expected));
+    match health {
+        Some(health) if health.status == TunnelListenerHealthStatus::Running && active => false,
+        Some(health) if health.status == TunnelListenerHealthStatus::Running => {
+            push_listener_failure_once(
+                ready,
+                rule.id,
+                TunnelListenerHealthStatus::Stopped.ready_status(),
+                &format!(
+                    "listener is not running on {}",
+                    tcp_target_addr(&expected.listen_address, expected.listen_port)
+                ),
+            );
+            true
+        }
+        Some(health) => {
+            let error = health.error.trim();
+            push_listener_failure_once(
+                ready,
+                rule.id,
+                health.status.ready_status(),
+                if error.is_empty() {
+                    "listener is not running"
+                } else {
+                    error
+                },
+            );
+            true
+        }
+        None => {
+            push_listener_failure_once(
+                ready,
+                rule.id,
+                TunnelListenerHealthStatus::Stopped.ready_status(),
+                &format!(
+                    "listener is not running on {}",
+                    tcp_target_addr(&expected.listen_address, expected.listen_port)
+                ),
+            );
+            true
+        }
+    }
+}
+
+fn push_listener_failure_once(
+    ready: &mut TunnelDataReadyState,
+    rule_id: u64,
+    status: &str,
+    error: &str,
+) {
+    let error = error.trim().to_string();
+    if ready.failed_rules.iter().any(|failure| {
+        failure.rule_id == rule_id && failure.status == status && failure.error == error
+    }) {
+        return;
+    }
+    ready.failed_rules.push(TunnelDataRuleFailure {
+        rule_id,
+        status: status.to_string(),
+        error,
+    });
 }
 
 fn push_preflight_failure_once(ready: &mut TunnelDataReadyState, issue: TunnelPreflightIssue) {
@@ -684,22 +929,26 @@ fn push_preflight_failure_once(ready: &mut TunnelDataReadyState, issue: TunnelPr
     });
 }
 
+fn listener_spec_for_rule(rule: &SelectedTunnelRule) -> TunnelTcpListenerSpec {
+    TunnelTcpListenerSpec {
+        rule_id: rule.id,
+        name: rule.name.trim().to_string(),
+        listen_address: rule.listen_address.trim().to_string(),
+        listen_port: rule.listen_port,
+        target_host: rule.target_host.trim().to_string(),
+        target_port: rule.target_port,
+        source_allowlist: rule.source_allowlist.trim().to_string(),
+        max_concurrent_sessions: rule.max_concurrent_sessions,
+    }
+}
+
 pub fn build_tcp_listener_plan(rules: &[SelectedTunnelRule]) -> Vec<TunnelTcpListenerSpec> {
     let mut listeners = rules
         .iter()
         .filter(|rule| rule.enabled)
         .filter(|rule| rule.protocol.trim().eq_ignore_ascii_case("tcp"))
         .filter(|rule| matches!(rule.role.trim(), "ingress" | "both"))
-        .map(|rule| TunnelTcpListenerSpec {
-            rule_id: rule.id,
-            name: rule.name.trim().to_string(),
-            listen_address: rule.listen_address.trim().to_string(),
-            listen_port: rule.listen_port,
-            target_host: rule.target_host.trim().to_string(),
-            target_port: rule.target_port,
-            source_allowlist: rule.source_allowlist.trim().to_string(),
-            max_concurrent_sessions: rule.max_concurrent_sessions,
-        })
+        .map(listener_spec_for_rule)
         .collect::<Vec<_>>();
     listeners.sort_by_key(|listener| listener.rule_id);
     listeners
