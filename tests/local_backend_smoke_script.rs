@@ -88,6 +88,11 @@ fn local_backend_smoke_script_retries_admin_login_until_database_is_ready() {
 fn local_backend_smoke_script_surfaces_backend_startup_logs() {
     let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
 
+    assert!(script.contains("BACKEND_START_TIMEOUT_SECONDS"));
+    assert!(script.contains("BACKEND_START_TIMEOUT_SECONDS:-240"));
+    assert!(script.contains(
+        "wait_for_http \"${BACKEND_ENDPOINT}/ping\" \"${BACKEND_START_TIMEOUT_SECONDS}\""
+    ));
     assert!(script.contains("timed out waiting for ${url}$(log_tail_for_error)"));
 }
 

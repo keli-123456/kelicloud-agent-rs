@@ -9,6 +9,7 @@ KOMARI_FRONTEND_REF="${KOMARI_FRONTEND_REF:-main}"
 
 BACKEND_LISTEN="${BACKEND_LISTEN:-127.0.0.1:25775}"
 BACKEND_ENDPOINT="${BACKEND_ENDPOINT:-http://${BACKEND_LISTEN}}"
+BACKEND_START_TIMEOUT_SECONDS="${BACKEND_START_TIMEOUT_SECONDS:-240}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin-smoke-password}"
 
@@ -340,7 +341,7 @@ start_backend() {
             "${WORK_DIR}/kelicloud-backend" server
     ) >"${BACKEND_LOG}" 2>&1 &
     BACKEND_PID="$!"
-    wait_for_http "${BACKEND_ENDPOINT}/ping" 90
+    wait_for_http "${BACKEND_ENDPOINT}/ping" "${BACKEND_START_TIMEOUT_SECONDS}"
 }
 
 login_admin() {
