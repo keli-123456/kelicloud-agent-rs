@@ -9,6 +9,17 @@ fn tunnel_relay_smoke_script_runs_runtime_relay_test() {
 }
 
 #[test]
+fn tunnel_relay_smoke_script_covers_preflight_and_failure_diagnostics() {
+    let script = std::fs::read_to_string("scripts/tunnel-relay-local-smoke.sh")
+        .expect("smoke script should be readable");
+    assert!(script.contains("cargo test --test tunnel_preflight"));
+    assert!(
+        script.contains("tcp_runtime_target_connect_failure_returns_stable_error_code_and_no_session")
+    );
+    assert!(script.contains("target_connect_failed"));
+}
+
+#[test]
 fn tunnel_relay_smoke_script_has_valid_bash_syntax_when_bash_is_available() {
     if Command::new("bash").arg("--version").output().is_err() {
         return;
