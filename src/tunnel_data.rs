@@ -348,8 +348,8 @@ where
         Err(error) => return Err(error),
     };
 
-    let mut last_ready = ready_source.current_ready();
-    let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &last_ready.revision)?;
+    let hello_ready = ready_source.current_ready();
+    let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &hello_ready.revision)?;
     let hello_frame = encode_frame(&KtpFrame::connection(FrameType::Hello, hello_payload))
         .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
     if send_tunnel_data_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
@@ -360,11 +360,14 @@ where
         return Ok(());
     }
 
+    runtime.tick()?;
+    let mut last_ready = ready_source.current_ready();
     if send_ready_frame(&mut socket, &last_ready)? == SendFrameOutcome::Closed {
         return Ok(());
     }
 
     loop {
+        runtime.tick()?;
         let current_ready = ready_source.current_ready();
         if current_ready != last_ready {
             if send_ready_frame(&mut socket, &current_ready)? == SendFrameOutcome::Closed {

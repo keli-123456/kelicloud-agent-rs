@@ -563,6 +563,29 @@ fn shared_tunnel_rule_state_keeps_runtime_owned_listener_ready_after_refresh() {
 }
 
 #[test]
+fn tcp_runtime_next_client_frame_does_not_refresh_listeners() {
+    let listen_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(73, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = listen_port;
+    state.update_rules("rev-next-frame-no-refresh", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state);
+
+    assert!(runtime
+        .next_client_frame()
+        .expect("polling client frames should not fail")
+        .is_none());
+    assert!(
+        TcpStream::connect(("127.0.0.1", listen_port)).is_err(),
+        "next_client_frame must not start listeners"
+    );
+
+    runtime.tick().expect("tick should refresh listeners");
+    connect_with_retry(("127.0.0.1", listen_port));
+}
+
+#[test]
 fn shared_tunnel_rule_state_blocks_ingress_when_listener_health_is_missing() {
     if !cfg!(target_os = "linux") {
         return;
@@ -674,6 +697,90 @@ fn shared_tunnel_rule_state_reports_listener_start_failed_health() {
         }),
         "expected listener_start_failed failure, got {:?}",
         ready.failed_rules
+    );
+}
+
+#[test]
+fn tcp_runtime_start_failure_reports_listener_start_failed() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let occupied = TcpListener::bind("127.0.0.1:0").expect("bind occupied listener");
+    let port = occupied
+        .local_addr()
+        .expect("occupied listener addr")
+        .port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(68, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = port;
+    state.update_rules("rev-start-failed", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state.clone());
+
+    runtime
+        .refresh_listeners()
+        .expect("listener start failure is reported through READY");
+    let ready = state.current_ready();
+
+    assert!(!ready.ingress_rule_ids.contains(&68));
+    assert!(
+        ready
+            .failed_rules
+            .iter()
+            .any(|failure| failure.rule_id == 68 && failure.status == "listener_start_failed"),
+        "expected listener_start_failed failure, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
+fn tcp_runtime_recovers_listener_health_after_start_failure_is_cleared() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let occupied = TcpListener::bind("127.0.0.1:0").expect("bind occupied listener");
+    let port = occupied
+        .local_addr()
+        .expect("occupied listener addr")
+        .port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(69, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = port;
+    state.update_rules("rev-recovery", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state.clone());
+
+    runtime
+        .refresh_listeners()
+        .expect("listener start failure is reported through READY");
+    let failed = state.current_ready();
+    assert!(
+        failed
+            .failed_rules
+            .iter()
+            .any(|failure| failure.rule_id == 69 && failure.status == "listener_start_failed"),
+        "expected listener_start_failed before recovery, got {:?}",
+        failed.failed_rules
+    );
+
+    drop(occupied);
+    runtime
+        .refresh_listeners()
+        .expect("listener should recover after the port is released");
+    let recovered = state.current_ready();
+
+    assert!(
+        recovered.ingress_rule_ids.contains(&69),
+        "expected recovered listener to become ready, got {:?}",
+        recovered
+    );
+    assert!(
+        recovered
+            .failed_rules
+            .iter()
+            .all(|failure| failure.rule_id != 69 || failure.status != "listener_start_failed"),
+        "start failure must clear after recovery, got {:?}",
+        recovered.failed_rules
     );
 }
 

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use kelicloud_agent_rs::ktp::{
@@ -9,8 +10,8 @@ use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
 use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_once, run_tunnel_data_session, run_tunnel_data_session_with_ready_source,
     run_tunnel_data_session_with_ready_source_and_runtime, tunnel_data_startup_line,
-    SharedTunnelDataReadyState, TungsteniteTunnelDataTransport, TunnelDataReadyState,
-    TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
+    SharedTunnelDataReadyState, TungsteniteTunnelDataTransport, TunnelDataReadySource,
+    TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::TunnelSessionRuntime;
 
@@ -399,6 +400,168 @@ fn tunnel_data_session_dispatches_session_frames_to_runtime_and_sends_responses(
         .collect::<Vec<_>>();
     assert_eq!(sent_session_frames.len(), 1);
     assert_eq!(sent_session_frames[0].payload, b"ok");
+}
+
+struct MutableReadySource {
+    ready: Rc<RefCell<TunnelDataReadyState>>,
+}
+
+impl TunnelDataReadySource for MutableReadySource {
+    fn current_ready(&self) -> TunnelDataReadyState {
+        self.ready.borrow().clone()
+    }
+}
+
+struct TickReadyRuntime {
+    ready: Rc<RefCell<TunnelDataReadyState>>,
+    ticks: usize,
+}
+
+impl TunnelSessionRuntime for TickReadyRuntime {
+    fn tick(&mut self) -> Result<(), TransportError> {
+        self.ticks += 1;
+        let mut ready = TunnelDataReadyState::empty("rev-after-tick");
+        ready.ingress_rule_ids.push(7);
+        *self.ready.borrow_mut() = ready;
+        Ok(())
+    }
+}
+
+#[test]
+fn tunnel_data_session_ticks_runtime_before_first_ready() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let ready = Rc::new(RefCell::new(TunnelDataReadyState::empty("rev-before-tick")));
+    let source = MutableReadySource {
+        ready: Rc::clone(&ready),
+    };
+    let mut runtime = TickReadyRuntime {
+        ready: Rc::clone(&ready),
+        ticks: 0,
+    };
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: None,
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "wss://panel.example.com/api/clients/tunnel/data?token=secret",
+        &[],
+        "node-a",
+        "0.1.0",
+        &source,
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should tick runtime before READY");
+
+    assert!(runtime.ticks >= 1);
+    let ready_payloads = sent_frames(&events)
+        .into_iter()
+        .filter(|frame| frame.frame_type == FrameType::Ready)
+        .map(|frame| parse_ready_payload(&frame.payload))
+        .collect::<Vec<_>>();
+    assert_eq!(ready_payloads.len(), 1);
+    assert_eq!(ready_payloads[0].revision, "rev-after-tick");
+    assert_eq!(ready_payloads[0].ingress_rule_ids, vec![7]);
+}
+
+struct LoopReadyOrderingRuntime {
+    ready: Rc<RefCell<TunnelDataReadyState>>,
+    ticks: usize,
+    client_frames: VecDeque<KtpFrame>,
+}
+
+impl TunnelSessionRuntime for LoopReadyOrderingRuntime {
+    fn tick(&mut self) -> Result<(), TransportError> {
+        self.ticks += 1;
+        let revision = if self.ticks == 1 {
+            "rev-first-ready"
+        } else {
+            "rev-loop-ready"
+        };
+        let mut ready = TunnelDataReadyState::empty(revision);
+        if self.ticks > 1 {
+            ready.ingress_rule_ids.push(7);
+        }
+        *self.ready.borrow_mut() = ready;
+        Ok(())
+    }
+
+    fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
+        Ok(self.client_frames.pop_front())
+    }
+}
+
+#[test]
+fn tunnel_data_session_sends_later_ready_before_runtime_frames() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let ready = Rc::new(RefCell::new(TunnelDataReadyState::empty("rev-before-tick")));
+    let source = MutableReadySource {
+        ready: Rc::clone(&ready),
+    };
+    let mut runtime = LoopReadyOrderingRuntime {
+        ready: Rc::clone(&ready),
+        ticks: 0,
+        client_frames: VecDeque::from([KtpFrame {
+            frame_type: FrameType::SessionData,
+            leg: FrameLeg::Ingress,
+            flags: 0,
+            session_id: 77,
+            payload: b"queued".to_vec(),
+        }]),
+    };
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![
+            Ok(hello_ack_frame()),
+            Ok(
+                encode_frame(&KtpFrame::connection(FrameType::Ping, Vec::new()))
+                    .expect("ping frame should encode"),
+            ),
+            Err(TransportError::SocketClosed),
+        ],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: None,
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "wss://panel.example.com/api/clients/tunnel/data?token=secret",
+        &[],
+        "node-a",
+        "0.1.0",
+        &source,
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should send READY updates before runtime frames");
+
+    let frames = sent_frames(&events);
+    let loop_ready_index = frames
+        .iter()
+        .position(|frame| {
+            frame.frame_type == FrameType::Ready
+                && parse_ready_payload(&frame.payload).revision == "rev-loop-ready"
+        })
+        .expect("later READY frame should be sent");
+    let runtime_frame_index = frames
+        .iter()
+        .position(|frame| frame.frame_type == FrameType::SessionData)
+        .expect("queued runtime frame should be sent");
+
+    assert!(
+        loop_ready_index < runtime_frame_index,
+        "READY update must be sent before runtime frames, got {:?}",
+        frames
+            .iter()
+            .map(|frame| frame.frame_type)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]

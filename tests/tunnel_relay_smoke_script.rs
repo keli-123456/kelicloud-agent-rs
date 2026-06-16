@@ -15,7 +15,9 @@ fn tunnel_relay_smoke_script_covers_preflight_and_failure_diagnostics() {
     assert!(script.contains("cargo test --test tunnel_preflight"));
     assert!(script
         .contains("tcp_runtime_target_connect_failure_returns_stable_error_code_and_no_session"));
+    assert!(script.contains("tcp_runtime_start_failure_reports_listener_start_failed"));
     assert!(script.contains("target_connect_failed"));
+    assert!(script.contains("listener_start_failed"));
 }
 
 #[test]

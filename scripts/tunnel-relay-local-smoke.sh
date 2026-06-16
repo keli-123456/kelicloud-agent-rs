@@ -15,3 +15,5 @@ cargo test --test tunnel_runtime tcp_runtime_removes_session_after_local_close -
 echo "== tunnel runtime failure diagnostics =="
 cargo test --test tunnel_runtime tcp_runtime_target_connect_failure_returns_stable_error_code_and_no_session -- --nocapture
 echo "expected diagnostic: target_connect_failed"
+cargo test --test tunnel_runtime tcp_runtime_start_failure_reports_listener_start_failed -- --nocapture
+echo "expected diagnostic: listener_start_failed"

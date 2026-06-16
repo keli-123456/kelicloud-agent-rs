@@ -171,7 +171,7 @@ impl SharedTunnelRuleState {
         }
     }
 
-    pub fn retain_listener_health_for_specs(&self, specs: &[TunnelTcpListenerSpec]) {
+    fn retain_listener_health_for_specs(&self, specs: &[TunnelTcpListenerSpec]) {
         if let Ok(mut state) = self.inner.lock() {
             retain_listener_health_for_specs(&mut state.listener_health, specs);
         }
@@ -245,6 +245,10 @@ impl TunnelDataReadySource for SharedTunnelRuleState {
 }
 
 pub trait TunnelSessionRuntime {
+    fn tick(&mut self) -> Result<(), TransportError> {
+        Ok(())
+    }
+
     fn handle_server_frame(&mut self, _frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
         Ok(Vec::new())
     }
@@ -264,6 +268,8 @@ pub struct TunnelTcpRuntime {
     outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
     sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
     listeners: HashMap<u64, TcpListenerHandle>,
+    listener_event_tx: mpsc::Sender<TcpListenerRuntimeEvent>,
+    listener_event_rx: mpsc::Receiver<TcpListenerRuntimeEvent>,
     next_session_id: Arc<AtomicU64>,
 }
 
@@ -276,19 +282,29 @@ struct TcpListenerHandle {
     stop: Arc<AtomicBool>,
 }
 
+#[derive(Clone, Debug)]
+struct TcpListenerRuntimeEvent {
+    spec: TunnelTcpListenerSpec,
+}
+
 impl TunnelTcpRuntime {
     pub fn new(rule_state: SharedTunnelRuleState) -> Self {
+        let (listener_event_tx, listener_event_rx) = mpsc::channel();
         Self {
             rule_state,
             outbound: Arc::new(Mutex::new(VecDeque::new())),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             listeners: HashMap::new(),
+            listener_event_tx,
+            listener_event_rx,
             next_session_id: Arc::new(AtomicU64::new(initial_session_id())),
         }
     }
 
     pub fn refresh_listeners(&mut self) -> Result<(), TransportError> {
+        let terminal_specs = self.drain_listener_runtime_events();
         let plan = self.rule_state.tcp_listener_plan();
+        self.rule_state.retain_listener_health_for_specs(&plan);
         let desired_rule_ids = plan.iter().map(|spec| spec.rule_id).collect::<HashSet<_>>();
 
         self.listeners.retain(|rule_id, handle| {
@@ -309,19 +325,32 @@ impl TunnelTcpRuntime {
             if self.listeners.contains_key(&spec.rule_id) {
                 continue;
             }
+            if terminal_specs
+                .iter()
+                .any(|terminal| same_listener_identity(terminal, &spec))
+            {
+                continue;
+            }
             let stop = Arc::new(AtomicBool::new(false));
-            if let Err(error) = start_tcp_listener(
+            match start_tcp_listener(
                 spec.clone(),
+                self.rule_state.clone(),
+                self.listener_event_tx.clone(),
                 Arc::clone(&self.outbound),
                 Arc::clone(&self.sessions),
                 Arc::clone(&self.next_session_id),
                 Arc::clone(&stop),
             ) {
-                self.sync_active_listener_snapshot();
-                return Err(error);
+                Ok(()) => {
+                    self.rule_state.set_listener_running(spec.clone());
+                    self.listeners
+                        .insert(spec.rule_id, TcpListenerHandle { spec, stop });
+                }
+                Err(error) => {
+                    self.rule_state
+                        .set_listener_start_failed(spec.clone(), &error.to_string());
+                }
             }
-            self.listeners
-                .insert(spec.rule_id, TcpListenerHandle { spec, stop });
         }
         self.sync_active_listener_snapshot();
         Ok(())
@@ -341,6 +370,28 @@ impl TunnelTcpRuntime {
                 .map(|handle| handle.spec.clone())
                 .collect(),
         );
+    }
+
+    fn drain_listener_runtime_events(&mut self) -> Vec<TunnelTcpListenerSpec> {
+        let mut terminal_specs = Vec::new();
+        while let Ok(event) = self.listener_event_rx.try_recv() {
+            let should_remove = self
+                .listeners
+                .get(&event.spec.rule_id)
+                .map(|handle| same_listener_identity(&handle.spec, &event.spec))
+                .unwrap_or(false);
+            if !should_remove {
+                continue;
+            }
+            if let Some(handle) = self.listeners.remove(&event.spec.rule_id) {
+                handle.stop.store(true, Ordering::SeqCst);
+            }
+            terminal_specs.push(event.spec);
+        }
+        if !terminal_specs.is_empty() {
+            self.sync_active_listener_snapshot();
+        }
+        terminal_specs
     }
 
     fn handle_egress_open(&mut self, frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
@@ -423,6 +474,10 @@ impl TunnelTcpRuntime {
 }
 
 impl TunnelSessionRuntime for TunnelTcpRuntime {
+    fn tick(&mut self) -> Result<(), TransportError> {
+        self.refresh_listeners()
+    }
+
     fn handle_server_frame(&mut self, frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
         match frame.frame_type {
             FrameType::SessionOpen if frame.leg == FrameLeg::Egress => {
@@ -447,7 +502,6 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
     }
 
     fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
-        self.refresh_listeners()?;
         Ok(self
             .outbound
             .lock()
@@ -515,6 +569,8 @@ fn write_tcp_session(mut stream: TcpStream, incoming: mpsc::Receiver<Vec<u8>>) {
 
 fn start_tcp_listener(
     spec: TunnelTcpListenerSpec,
+    rule_state: SharedTunnelRuleState,
+    listener_events: mpsc::Sender<TcpListenerRuntimeEvent>,
     outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
     sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
     next_session_id: Arc<AtomicU64>,
@@ -526,6 +582,7 @@ fn start_tcp_listener(
         .set_nonblocking(true)
         .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
     thread::spawn(move || {
+        let mut terminal_error = String::new();
         while !stop.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, _)) => {
@@ -544,8 +601,23 @@ fn start_tcp_listener(
                     thread::sleep(std::time::Duration::from_millis(25));
                 }
                 Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-                Err(_) => break,
+                Err(error) => {
+                    terminal_error = error.to_string();
+                    break;
+                }
             }
+        }
+        if !stop.load(Ordering::SeqCst) {
+            let terminal_spec = spec.clone();
+            if terminal_error.trim().is_empty() {
+                rule_state
+                    .set_listener_stopped(terminal_spec.clone(), "listener stopped unexpectedly");
+            } else {
+                rule_state.set_listener_runtime_error(terminal_spec.clone(), &terminal_error);
+            }
+            let _ = listener_events.send(TcpListenerRuntimeEvent {
+                spec: terminal_spec,
+            });
         }
     });
     Ok(())
@@ -1023,5 +1095,145 @@ fn prefix_mask_u128(prefix_len: u8) -> u128 {
         0
     } else {
         u128::MAX << (128 - prefix_len)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tcp_runtime_terminal_event_removes_handle_and_delays_restart_for_ready_visibility() {
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        let listen_port = free_tcp_port();
+        let state = SharedTunnelRuleState::new();
+        let mut rule = selected_rule(501);
+        rule.listen_port = listen_port;
+        state.update_rules("rev-terminal", &[rule.clone()]);
+        let spec = listener_spec_for_rule(&rule);
+        let mut runtime = TunnelTcpRuntime::new(state.clone());
+        runtime.listeners.insert(
+            spec.rule_id,
+            TcpListenerHandle {
+                spec: spec.clone(),
+                stop: Arc::new(AtomicBool::new(false)),
+            },
+        );
+        runtime.sync_active_listener_snapshot();
+        state.set_listener_runtime_error(spec.clone(), "accept failed: socket closed");
+        runtime
+            .listener_event_tx
+            .send(TcpListenerRuntimeEvent { spec: spec.clone() })
+            .expect("terminal event should send");
+
+        runtime
+            .refresh_listeners()
+            .expect("terminal event should be drained");
+        let failed = state.current_ready();
+
+        assert!(
+            !runtime.listeners.contains_key(&spec.rule_id),
+            "matching terminal event must remove stale listener handle"
+        );
+        assert!(
+            !failed.ingress_rule_ids.contains(&spec.rule_id),
+            "terminal listener must not stay active in READY: {:?}",
+            failed
+        );
+        assert!(
+            failed.failed_rules.iter().any(|failure| {
+                failure.rule_id == spec.rule_id && failure.status == "listener_runtime_error"
+            }),
+            "runtime failure should stay visible for one READY cycle: {:?}",
+            failed.failed_rules
+        );
+        assert!(
+            TcpStream::connect(("127.0.0.1", listen_port)).is_err(),
+            "same refresh cycle must not restart the terminal listener"
+        );
+
+        runtime
+            .refresh_listeners()
+            .expect("next refresh should restart listener");
+        let recovered = state.current_ready();
+
+        assert!(
+            runtime.listeners.contains_key(&spec.rule_id),
+            "later refresh should recreate listener handle"
+        );
+        assert!(
+            recovered.ingress_rule_ids.contains(&spec.rule_id),
+            "later refresh should recover READY: {:?}",
+            recovered
+        );
+        assert!(
+            recovered.failed_rules.iter().all(|failure| {
+                failure.rule_id != spec.rule_id || failure.status != "listener_runtime_error"
+            }),
+            "runtime failure should clear after restart: {:?}",
+            recovered.failed_rules
+        );
+    }
+
+    #[test]
+    fn tcp_runtime_terminal_event_for_old_identity_keeps_newer_handle() {
+        let state = SharedTunnelRuleState::new();
+        let mut old_rule = selected_rule(502);
+        old_rule.listen_port = 15020;
+        let old_spec = listener_spec_for_rule(&old_rule);
+        let mut new_rule = selected_rule(502);
+        new_rule.listen_port = 15021;
+        new_rule.source_allowlist = "127.0.0.1".to_string();
+        state.update_rules("rev-new-listener", &[new_rule.clone()]);
+        let new_spec = listener_spec_for_rule(&new_rule);
+        let mut runtime = TunnelTcpRuntime::new(state);
+        runtime.listeners.insert(
+            new_spec.rule_id,
+            TcpListenerHandle {
+                spec: new_spec.clone(),
+                stop: Arc::new(AtomicBool::new(false)),
+            },
+        );
+        runtime.sync_active_listener_snapshot();
+        runtime
+            .listener_event_tx
+            .send(TcpListenerRuntimeEvent { spec: old_spec })
+            .expect("terminal event should send");
+
+        runtime
+            .refresh_listeners()
+            .expect("old terminal event should be ignored");
+
+        let kept = runtime
+            .listeners
+            .get(&new_spec.rule_id)
+            .expect("newer listener handle should remain");
+        assert_eq!(kept.spec, new_spec);
+    }
+
+    fn selected_rule(id: u64) -> SelectedTunnelRule {
+        SelectedTunnelRule {
+            id,
+            name: format!("rule-{id}"),
+            enabled: true,
+            protocol: "tcp".to_string(),
+            role: "ingress".to_string(),
+            ingress_group: "edge".to_string(),
+            listen_address: "127.0.0.1".to_string(),
+            listen_port: 10000 + id as u16,
+            egress_group: "rdp".to_string(),
+            target_host: "127.0.0.1".to_string(),
+            target_port: 3389,
+            source_allowlist: "127.0.0.0/8".to_string(),
+            max_concurrent_sessions: 32,
+            last_revision: 1,
+        }
+    }
+
+    fn free_tcp_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind free port");
+        listener.local_addr().expect("local addr").port()
     }
 }
