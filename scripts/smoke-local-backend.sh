@@ -22,16 +22,22 @@ SMOKE_LOG_DIR="${SMOKE_LOG_DIR:-smoke-logs}"
 SMOKE_WORK_DIR="${SMOKE_WORK_DIR:-}"
 AGENT_PID=""
 BACKEND_PID=""
+ECHO_PID=""
 BACKEND_DIR=""
 WORK_DIR=""
 COOKIE_JAR=""
 BACKEND_LOG=""
 AGENT_LOG=""
 HELPER_LOG=""
+TUNNEL_ECHO_LOG=""
 AUTO_DISCOVERY_KEY=""
 SMOKE_AGENT_HOSTNAME="${SMOKE_AGENT_HOSTNAME:-agent-rs-smoke}"
 SMOKE_AGENT_CLIENT_NAME="Auto-${SMOKE_AGENT_HOSTNAME}"
+SMOKE_TUNNEL_GROUP="${SMOKE_TUNNEL_GROUP:-agent-rs-smoke}"
 ROTATED_AGENT_TOKEN=""
+TUNNEL_TARGET_PORT=""
+TUNNEL_LISTEN_PORT=""
+TUNNEL_RULE_ID=""
 CURRENT_STAGE="startup"
 
 log() {
@@ -104,6 +110,10 @@ cleanup() {
         kill "${BACKEND_PID}" >/dev/null 2>&1 || true
         wait "${BACKEND_PID}" >/dev/null 2>&1 || true
     fi
+    if [[ -n "${ECHO_PID}" ]] && kill -0 "${ECHO_PID}" >/dev/null 2>&1; then
+        kill "${ECHO_PID}" >/dev/null 2>&1 || true
+        wait "${ECHO_PID}" >/dev/null 2>&1 || true
+    fi
     if [[ -n "${SMOKE_WORK_DIR}" && "${SMOKE_WORK_DIR}" == /tmp/* && -d "${SMOKE_WORK_DIR}" ]]; then
         rm -rf "${SMOKE_WORK_DIR}"
     fi
@@ -170,9 +180,34 @@ elif kind == "cn":
     }))
 elif kind == "client-token":
     print(json.dumps({"token": sys.argv[2]}))
+elif kind == "client-group":
+    print(json.dumps({"group": sys.argv[2]}))
+elif kind == "tunnel-rule":
+    print(json.dumps({
+        "name": "agent-rs-smoke-tunnel",
+        "enabled": True,
+        "protocol": "tcp",
+        "ingress_group": sys.argv[2],
+        "listen_address": "127.0.0.1",
+        "listen_port": int(sys.argv[3]),
+        "egress_group": sys.argv[2],
+        "target_host": "127.0.0.1",
+        "target_port": int(sys.argv[4]),
+        "source_allowlist": "127.0.0.1/32",
+        "max_concurrent_sessions": 4,
+        "remark": "local backend smoke tunnel relay",
+    }))
 else:
     raise SystemExit(f"unknown payload kind: {kind}")
 PY
+}
+
+pick_free_tcp_port() {
+    python3 -c 'import socket
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()'
 }
 
 wait_for_http() {
@@ -317,13 +352,19 @@ import sys
 print(json.dumps({"username": sys.argv[1], "password": sys.argv[2]}))
 ' "${ADMIN_USERNAME}" "${ADMIN_PASSWORD}")"
 
-    local response
-    response="$(curl -fsS -c "${COOKIE_JAR}" \
+    local response deadline
+    deadline=$((SECONDS + 90))
+    until response="$(curl -fsS -c "${COOKIE_JAR}" \
         -H "Content-Type: application/json" \
         --data "${login_payload}" \
-        "${BACKEND_ENDPOINT}/api/login")"
-    SESSION_TOKEN="$(printf '%s' "${response}" | json_value "data.set-cookie.session_token")"
-    [[ -n "${SESSION_TOKEN}" ]] || die "login response did not include session token"
+        "${BACKEND_ENDPOINT}/api/login" 2>/dev/null)" &&
+        SESSION_TOKEN="$(printf '%s' "${response}" | json_value "data.set-cookie.session_token")" &&
+        [[ -n "${SESSION_TOKEN}" ]]; do
+        if (( SECONDS >= deadline )); then
+            die "timed out waiting for admin login"
+        fi
+        sleep 1
+    done
 }
 
 load_auto_discovery_key() {
@@ -395,7 +436,7 @@ start_agent() {
     rm -f "${root}/target/release/auto-discovery.json"
 
     log "Starting kelicloud-agent-rs"
-    HOSTNAME="${SMOKE_AGENT_HOSTNAME}" "${root}/target/release/kelicloud-agent-rs" \
+    AGENT_TUNNEL_DATA_ENABLED=true HOSTNAME="${SMOKE_AGENT_HOSTNAME}" "${root}/target/release/kelicloud-agent-rs" \
         --endpoint "${BACKEND_ENDPOINT}" \
         --auto-discovery "${AUTO_DISCOVERY_KEY}" \
         --interval 1 \
@@ -422,6 +463,43 @@ wait_for_auto_discovery_recovery() {
     wait_for_log_count "${AGENT_LOG}" "smoke: report_websocket_connected" 2 120
     wait_for_log_count "${AGENT_LOG}" "smoke: report_sent" 2 120
     bind_auto_discovery_client "$(latest_auto_discovery_registered_uuid)"
+}
+
+stop_agent_process() {
+    if [[ -n "${AGENT_PID}" ]] && kill -0 "${AGENT_PID}" >/dev/null 2>&1; then
+        kill "${AGENT_PID}" >/dev/null 2>&1 || true
+        wait "${AGENT_PID}" >/dev/null 2>&1 || true
+    fi
+    AGENT_PID=""
+}
+
+restart_agent_after_token_recovery() {
+    local root="$1"
+    local connected_count sent_count
+    connected_count="$({ grep -F "smoke: report_websocket_connected" "${AGENT_LOG}" || true; } | wc -l | tr -d '[:space:]')"
+    sent_count="$({ grep -F "smoke: report_sent" "${AGENT_LOG}" || true; } | wc -l | tr -d '[:space:]')"
+
+    stop_agent_process
+    printf '%s\n' "smoke: restarting_agent_after_token_recovery" >>"${AGENT_LOG}"
+    log "Restarting kelicloud-agent-rs after token recovery so tunnel sockets use the recovered token"
+    AGENT_TUNNEL_DATA_ENABLED=true HOSTNAME="${SMOKE_AGENT_HOSTNAME}" "${root}/target/release/kelicloud-agent-rs" \
+        --endpoint "${BACKEND_ENDPOINT}" \
+        --auto-discovery "${AUTO_DISCOVERY_KEY}" \
+        --interval 1 \
+        --max-retries 3 \
+        --reconnect-interval 1 \
+        --info-report-interval 0 >>"${AGENT_LOG}" 2>&1 &
+    AGENT_PID="$!"
+
+    wait_for_log_count "${AGENT_LOG}" "smoke: report_websocket_connected" "$((connected_count + 1))" 90
+    wait_for_log_count "${AGENT_LOG}" "smoke: report_sent" "$((sent_count + 1))" 90
+}
+
+set_client_tunnel_group() {
+    local payload
+    payload="$(json_payload client-group "${SMOKE_TUNNEL_GROUP}")"
+    curl_api POST "/api/admin/client/${CLIENT_UUID}/edit" "${payload}" >/dev/null
+    log "Assigned smoke client ${CLIENT_UUID} to tunnel group ${SMOKE_TUNNEL_GROUP}"
 }
 
 enable_cn_connectivity_probe() {
@@ -485,6 +563,115 @@ trigger_terminal() {
     fi
 }
 
+start_tunnel_echo_server() {
+    TUNNEL_ECHO_LOG="${SMOKE_LOG_DIR}/tunnel-echo.log"
+    local port_file="${WORK_DIR}/tunnel-echo-port"
+    rm -f "${port_file}"
+    python3 -u - "${port_file}" <<'PY' >"${TUNNEL_ECHO_LOG}" 2>&1 &
+import socket
+import sys
+
+port_file = sys.argv[1]
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("127.0.0.1", 0))
+server.listen(16)
+port = server.getsockname()[1]
+with open(port_file, "w", encoding="utf-8") as fh:
+    fh.write(str(port))
+print(f"smoke tunnel echo listening port={port}", flush=True)
+while True:
+    conn, _addr = server.accept()
+    with conn:
+        data = conn.recv(65536)
+        if data:
+            conn.sendall(b"echo:" + data)
+PY
+    ECHO_PID="$!"
+    wait_for_log "${TUNNEL_ECHO_LOG}" "smoke tunnel echo listening" 10
+    TUNNEL_TARGET_PORT="$(cat "${port_file}")"
+    [[ -n "${TUNNEL_TARGET_PORT}" ]] || die "tunnel echo server did not publish a port"
+    log "Tunnel echo target is 127.0.0.1:${TUNNEL_TARGET_PORT}"
+}
+
+create_tunnel_rule() {
+    TUNNEL_LISTEN_PORT="$(pick_free_tcp_port)"
+    local payload response
+    payload="$(json_payload tunnel-rule "${SMOKE_TUNNEL_GROUP}" "${TUNNEL_LISTEN_PORT}" "${TUNNEL_TARGET_PORT}")"
+    response="$(curl_api POST "/api/admin/tunnels" "${payload}")"
+    TUNNEL_RULE_ID="$(printf '%s' "${response}" | json_value "data.id")"
+    [[ -n "${TUNNEL_RULE_ID}" ]] || die "tunnel rule response did not include id"
+    log "Created tunnel rule ${TUNNEL_RULE_ID}: 127.0.0.1:${TUNNEL_LISTEN_PORT} -> 127.0.0.1:${TUNNEL_TARGET_PORT}"
+    wait_for_tunnel_rule_ready
+}
+
+wait_for_tunnel_rule_ready() {
+    local response ready deadline
+    deadline=$((SECONDS + 60))
+    until response="$(curl_api GET "/api/admin/tunnels" 2>/dev/null)" &&
+        ready="$(printf '%s' "${response}" | python3 -c '
+import json
+import sys
+
+rule_id = int(sys.argv[1])
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("invalid")
+    raise SystemExit(0)
+rules = data.get("data", {}).get("rules", []) if isinstance(data, dict) else []
+for rule in rules:
+    if isinstance(rule, dict) and int(rule.get("id", 0)) == rule_id:
+        if rule.get("ingress_ready") and rule.get("egress_ready"):
+            print("ready")
+        else:
+            print(str(rule.get("status", "not_ready")))
+        break
+else:
+    print("missing")
+' "${TUNNEL_RULE_ID}")" && [[ "${ready}" == "ready" ]]; do
+        if (( SECONDS >= deadline )); then
+            die "timed out waiting for tunnel rule ${TUNNEL_RULE_ID} to become ready (last status: ${ready:-unknown})$(log_tail_for_error)"
+        fi
+        sleep 1
+    done
+}
+
+verify_tunnel_relay_echo() {
+    local mark="kelicloud-tunnel-smoke-${TUNNEL_RULE_ID}"
+    if ! python3 - "${TUNNEL_LISTEN_PORT}" "${mark}" <<'PY'
+import socket
+import sys
+import time
+
+port = int(sys.argv[1])
+payload = sys.argv[2].encode("utf-8")
+expected = b"echo:" + payload
+deadline = time.time() + 45
+last_error = None
+while time.time() < deadline:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+            sock.settimeout(5)
+            sock.sendall(payload)
+            data = sock.recv(65536)
+            if data == expected:
+                print("tunnel relay echo succeeded")
+                raise SystemExit(0)
+            last_error = f"unexpected echo response: {data!r}"
+    except Exception as exc:
+        last_error = str(exc)
+    time.sleep(1)
+print(f"tunnel relay echo failed: {last_error}", file=sys.stderr)
+raise SystemExit(1)
+PY
+    then
+        die "tunnel relay echo verification failed$(log_tail_for_error)"
+    fi
+    printf '%s\n' "smoke: tunnel_relay_echo_succeeded rule_id=${TUNNEL_RULE_ID} listen_port=${TUNNEL_LISTEN_PORT}" >>"${AGENT_LOG}"
+    log "Tunnel relay echo succeeded through 127.0.0.1:${TUNNEL_LISTEN_PORT}"
+}
+
 print_summary() {
     local root="$1"
     local summary_file="${SMOKE_LOG_DIR}/agent.summary.md"
@@ -500,11 +687,13 @@ record_agent_stayed_alive() {
 main() {
     require_command git
     require_command go
-    require_command node
-    require_command npm
     require_command cargo
     require_command curl
     require_command python3
+    if [[ "${KELICLOUD_PREPARE_FRONTEND}" == "true" ]]; then
+        require_command node
+        require_command npm
+    fi
 
     local root
     root="$(repo_root)"
@@ -534,6 +723,10 @@ main() {
     rotate_auto_discovery_token
     set_stage "wait for auto-discovery recovery"
     wait_for_auto_discovery_recovery
+    set_stage "restart agent after token recovery"
+    restart_agent_after_token_recovery "${root}"
+    set_stage "set tunnel smoke group"
+    set_client_tunnel_group
     set_stage "enable CN connectivity probe"
     enable_cn_connectivity_probe
     set_stage "trigger exec"
@@ -542,6 +735,12 @@ main() {
     trigger_ping
     set_stage "trigger terminal"
     trigger_terminal "${root}"
+    set_stage "start tunnel echo server"
+    start_tunnel_echo_server
+    set_stage "create tunnel rule"
+    create_tunnel_rule
+    set_stage "verify tunnel relay echo"
+    verify_tunnel_relay_echo
     record_agent_stayed_alive
     set_stage "print smoke summary"
     print_summary "${root}"

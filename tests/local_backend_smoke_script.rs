@@ -21,9 +21,15 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
     assert!(script.contains("/api/admin/task/exec"));
     assert!(script.contains("/api/admin/ping/add"));
     assert!(script.contains("/api/admin/settings/system"));
+    assert!(script.contains("/api/admin/tunnels"));
     assert!(script.contains("rotate_auto_discovery_token"));
     assert!(script.contains("wait_for_auto_discovery_recovery"));
+    assert!(script.contains("restart_agent_after_token_recovery"));
     assert!(script.contains("resolve_auto_discovery_client"));
+    assert!(script.contains("AGENT_TUNNEL_DATA_ENABLED=true"));
+    assert!(script.contains("create_tunnel_rule"));
+    assert!(script.contains("verify_tunnel_relay_echo"));
+    assert!(script.contains("smoke: tunnel_relay_echo_succeeded"));
     assert!(script.contains("wait_for_log_count"));
     assert!(script.contains("\"smoke: auto_discovery_registered\" 2"));
     assert!(script.contains("\"smoke: token_recovered\" 1"));
@@ -59,6 +65,39 @@ fn local_backend_smoke_script_surfaces_terminal_helper_failures() {
     assert!(script.contains("admin-terminal-smoke failed"));
     assert!(script.contains("tail -n 80 \"${HELPER_LOG}\""));
     assert!(script.contains("admin-terminal-smoke failed${details}$(log_tail_for_error)"));
+}
+
+#[test]
+fn local_backend_smoke_script_requires_node_only_when_preparing_frontend() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+
+    assert!(script.contains(
+        "if [[ \"${KELICLOUD_PREPARE_FRONTEND}\" == \"true\" ]]; then\n        require_command node\n        require_command npm\n    fi"
+    ));
+}
+
+#[test]
+fn local_backend_smoke_script_retries_admin_login_until_database_is_ready() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+
+    assert!(script.contains("timed out waiting for admin login"));
+    assert!(script.contains("sleep 1"));
+}
+
+#[test]
+fn local_backend_smoke_script_keeps_recovered_client_after_agent_restart() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+    let start = script
+        .find("restart_agent_after_token_recovery()")
+        .expect("restart helper should exist");
+    let tail = &script[start..];
+    let end = tail
+        .find("\n}\n\nset_client_tunnel_group")
+        .expect("restart helper should end before tunnel group helper");
+    let body = &tail[..end];
+
+    assert!(body.contains("wait_for_log_count"));
+    assert!(!body.contains("resolve_auto_discovery_client"));
 }
 
 #[test]
