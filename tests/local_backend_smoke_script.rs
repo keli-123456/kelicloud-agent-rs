@@ -85,6 +85,13 @@ fn local_backend_smoke_script_retries_admin_login_until_database_is_ready() {
 }
 
 #[test]
+fn local_backend_smoke_script_surfaces_backend_startup_logs() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+
+    assert!(script.contains("timed out waiting for ${url}$(log_tail_for_error)"));
+}
+
+#[test]
 fn local_backend_smoke_script_keeps_recovered_client_after_agent_restart() {
     let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
     let start = script

@@ -216,7 +216,7 @@ wait_for_http() {
     local deadline=$((SECONDS + timeout_seconds))
     until curl -fsS "${url}" >/dev/null 2>&1; do
         if (( SECONDS >= deadline )); then
-            die "timed out waiting for ${url}"
+            die "timed out waiting for ${url}$(log_tail_for_error)"
         fi
         sleep 1
     done
