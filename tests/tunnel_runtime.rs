@@ -5,7 +5,9 @@ use kelicloud_agent_rs::tunnel_runtime::{
     build_tcp_listener_plan, source_addr_allowed, SharedTunnelRuleState, TunnelSessionRuntime,
     TunnelTcpRuntime,
 };
-use kelicloud_agent_rs::tunnel_session::encode_session_open_payload;
+use kelicloud_agent_rs::tunnel_session::{
+    decode_session_error_payload, encode_session_open_payload,
+};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
@@ -318,6 +320,76 @@ fn tcp_runtime_two_agent_relay_simulation_forwards_echo() {
 
     client_thread.join().expect("client thread should finish");
     echo_thread.join().expect("echo thread should finish");
+}
+
+#[test]
+fn tcp_runtime_target_connect_failure_returns_stable_error_code_and_no_session() {
+    let closed_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(51, "tcp", "egress", true);
+    rule.target_host = "127.0.0.1".to_string();
+    rule.target_port = closed_port;
+    state.update_rules("rev-a", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state);
+
+    let payload = encode_session_open_payload(
+        &kelicloud_agent_rs::tunnel_session::TunnelSessionOpenPayload {
+            rule_id: 51,
+            listen_host: "127.0.0.1".to_string(),
+            listen_port: 10088,
+            source_addr: "127.0.0.1:50123".to_string(),
+        },
+    )
+    .expect("encode open payload");
+
+    let responses = runtime
+        .handle_server_frame(KtpFrame {
+            frame_type: FrameType::SessionOpen,
+            leg: FrameLeg::Egress,
+            flags: 0,
+            session_id: 510,
+            payload,
+        })
+        .expect("handle open failure");
+
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].frame_type, FrameType::SessionError);
+    let error = decode_session_error_payload(&responses[0].payload).expect("decode session error");
+    assert_eq!(error.rule_id, 51);
+    assert_eq!(error.code, "target_connect_failed");
+    assert_eq!(runtime.active_session_count(), 0);
+}
+
+#[test]
+fn tcp_runtime_missing_egress_rule_returns_runtime_unavailable() {
+    let state = SharedTunnelRuleState::new();
+    let mut runtime = TunnelTcpRuntime::new(state);
+    let payload = encode_session_open_payload(
+        &kelicloud_agent_rs::tunnel_session::TunnelSessionOpenPayload {
+            rule_id: 88,
+            listen_host: "127.0.0.1".to_string(),
+            listen_port: 10088,
+            source_addr: "127.0.0.1:50123".to_string(),
+        },
+    )
+    .expect("encode open payload");
+
+    let responses = runtime
+        .handle_server_frame(KtpFrame {
+            frame_type: FrameType::SessionOpen,
+            leg: FrameLeg::Egress,
+            flags: 0,
+            session_id: 880,
+            payload,
+        })
+        .expect("handle missing rule");
+
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].frame_type, FrameType::SessionError);
+    let error = decode_session_error_payload(&responses[0].payload).expect("decode session error");
+    assert_eq!(error.rule_id, 88);
+    assert_eq!(error.code, "runtime_unavailable");
+    assert_eq!(runtime.active_session_count(), 0);
 }
 
 fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFrame> {

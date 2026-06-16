@@ -175,7 +175,7 @@ impl TunnelTcpRuntime {
                 frame.session_id,
                 FrameLeg::Egress,
                 open.rule_id,
-                "rule_not_ready",
+                "runtime_unavailable",
                 "egress rule is not ready",
             )?]);
         };
@@ -188,7 +188,7 @@ impl TunnelTcpRuntime {
                     frame.session_id,
                     FrameLeg::Egress,
                     rule.id,
-                    "connect_failed",
+                    "target_connect_failed",
                     &error.to_string(),
                 )?]);
             }
