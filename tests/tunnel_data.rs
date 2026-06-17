@@ -833,6 +833,49 @@ impl TunnelSessionRuntime for RuntimeWaitOrderingRuntime {
     }
 }
 
+struct RuntimeWaitDrainRuntime {
+    events: Rc<RefCell<Vec<String>>>,
+    waited: bool,
+    ready_after_wait: VecDeque<KtpFrame>,
+}
+
+impl TunnelSessionRuntime for RuntimeWaitDrainRuntime {
+    fn tick(&mut self) -> Result<(), TransportError> {
+        self.events.borrow_mut().push("runtime_tick".to_string());
+        Ok(())
+    }
+
+    fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
+        if !self.waited {
+            return Ok(None);
+        }
+        Ok(self.ready_after_wait.pop_front())
+    }
+
+    fn next_client_frames_after_wait(
+        &mut self,
+        _max_frames: usize,
+        timeout: Duration,
+    ) -> Result<Vec<KtpFrame>, TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("runtime_wait:{}us", timeout.as_micros()));
+        if self.waited {
+            return Ok(Vec::new());
+        }
+        self.waited = true;
+        Ok(vec![session_data_frame(88, b"waited")])
+    }
+
+    fn tunnel_data_client_frame_wait_timeout(&self) -> Option<Duration> {
+        Some(Duration::from_micros(100))
+    }
+
+    fn tunnel_data_socket_idle_timeout(&self) -> Option<Duration> {
+        Some(Duration::from_millis(10))
+    }
+}
+
 #[test]
 fn tunnel_data_session_waits_for_runtime_frames_before_idle_socket_read() {
     let events = Rc::new(RefCell::new(Vec::new()));
@@ -884,6 +927,71 @@ fn tunnel_data_session_waits_for_runtime_frames_before_idle_socket_read() {
 }
 
 #[test]
+fn tunnel_data_session_drains_ready_runtime_frames_after_wait_before_socket_read() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: None,
+    };
+    let mut runtime = RuntimeWaitDrainRuntime {
+        events: Rc::clone(&events),
+        waited: false,
+        ready_after_wait: VecDeque::from([
+            session_data_frame(89, b"ready-a"),
+            session_data_frame(90, b"ready-b"),
+        ]),
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-ktp"),
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should drain ready runtime frames after wait");
+
+    let events = events.borrow();
+    let wait_index = events
+        .iter()
+        .position(|event| event == "runtime_wait:100us")
+        .expect("runtime wait should be called");
+    let socket_read_index = events
+        .iter()
+        .position(|event| event == "read_optional_timeout:10000us")
+        .expect("socket idle read should happen after runtime drain");
+    let first_tick_after_wait = events
+        .iter()
+        .enumerate()
+        .skip(wait_index + 1)
+        .find_map(|(index, event)| (event == "runtime_tick").then_some(index));
+    let session_frames_between_wait_and_read = events
+        .iter()
+        .enumerate()
+        .skip(wait_index + 1)
+        .take_while(|(index, _)| *index < socket_read_index)
+        .filter(|(_, event)| {
+            event.starts_with("frame:") && frame_type_from_event(event) == FrameType::SessionData
+        })
+        .count();
+
+    assert_eq!(
+        session_frames_between_wait_and_read, 3,
+        "waited frame plus already-ready frames should be sent before socket read: {events:?}"
+    );
+    assert!(
+        first_tick_after_wait.map_or(true, |index| index > socket_read_index),
+        "ready runtime frames should drain before the next loop tick: {events:?}"
+    );
+}
+
+#[test]
 fn tunnel_data_session_records_local_diagnostics_for_runtime_wait_and_idle_read() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut transport = FakeTunnelDataTransport {
@@ -913,7 +1021,7 @@ fn tunnel_data_session_records_local_diagnostics_for_runtime_wait_and_idle_read(
     .expect("data session should record local diagnostics");
 
     let snapshot = diagnostics.snapshot();
-    assert_eq!(snapshot.runtime_wait_attempts, 2);
+    assert_eq!(snapshot.runtime_wait_attempts, 1);
     assert_eq!(snapshot.runtime_wait_hits, 1);
     assert_eq!(snapshot.outbound_runtime_frames, 1);
     assert_eq!(snapshot.outbound_queue_dwell_frames, 1);
@@ -1167,6 +1275,16 @@ impl TunnelSessionRuntime for FakeSessionRuntime {
     fn handle_server_frame(&mut self, frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
         self.handled.push(frame);
         Ok(self.response.take().into_iter().collect())
+    }
+}
+
+fn session_data_frame(session_id: u64, payload: &[u8]) -> KtpFrame {
+    KtpFrame {
+        frame_type: FrameType::SessionData,
+        leg: FrameLeg::Ingress,
+        flags: 0,
+        session_id,
+        payload: payload.to_vec(),
     }
 }
 

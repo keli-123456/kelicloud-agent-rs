@@ -959,7 +959,6 @@ where
                         diagnostics_report_interval,
                         &mut report_diagnostics,
                     );
-                    continue;
                 }
             }
         }
@@ -1121,7 +1120,7 @@ where
     }
     let frame_count = frames.len();
     send_tunnel_session_runtime_frame_batch(socket, frames)?;
-    Ok(frame_count)
+    Ok(frame_count + drain_tunnel_session_runtime_frames(socket, runtime)?)
 }
 
 fn send_tunnel_session_runtime_frame_batch<S>(
