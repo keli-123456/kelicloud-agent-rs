@@ -87,7 +87,7 @@ struct BenchSample {
     elapsed_ms: f64,
     throughput_mib_s: f64,
     relay_stats: RelayStats,
-    latency_micros: Vec<u64>,
+    client_latency_micros: Vec<Vec<u64>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -314,12 +314,12 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
         config.relay_wait_timeout,
         frame_ready_notifier,
     )?;
-    let mut latency_micros = Vec::new();
+    let mut client_latency_micros = Vec::with_capacity(config.clients);
     for client_thread in client_threads {
         let client_latencies = client_thread
             .join()
             .map_err(|_| "client thread panicked")??;
-        latency_micros.extend(client_latencies);
+        client_latency_micros.push(client_latencies);
     }
     echo_thread.join().map_err(|_| "echo thread panicked")??;
     let elapsed = started.elapsed();
@@ -330,7 +330,7 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
         elapsed_ms: elapsed.as_secs_f64() * 1000.0,
         throughput_mib_s,
         relay_stats,
-        latency_micros,
+        client_latency_micros,
     })
 }
 
@@ -387,18 +387,37 @@ fn latency_suffix(config: BenchConfig, samples: &[BenchSample]) -> String {
     }
     let mut values = samples
         .iter()
-        .flat_map(|sample| sample.latency_micros.iter().copied())
+        .flat_map(|sample| {
+            sample
+                .client_latency_micros
+                .iter()
+                .flat_map(|client_samples| client_samples.iter().copied())
+        })
         .collect::<Vec<_>>();
     let Some(stats) = LatencyStats::from_samples(&mut values) else {
         return " rtt_micros_samples=0".to_string();
     };
+    let Some(fairness) = ClientLatencyFairness::from_samples(config.clients, samples) else {
+        return format!(
+            " rtt_micros_samples={} rtt_micros_p50={} rtt_micros_p95={} rtt_micros_p99={} rtt_micros_max={}",
+            values.len(),
+            stats.p50,
+            stats.p95,
+            stats.p99,
+            stats.max
+        );
+    };
     format!(
-        " rtt_micros_samples={} rtt_micros_p50={} rtt_micros_p95={} rtt_micros_p99={} rtt_micros_max={}",
+        " rtt_micros_samples={} rtt_micros_p50={} rtt_micros_p95={} rtt_micros_p99={} rtt_micros_max={} rtt_client_p95_micros_min={} rtt_client_p95_micros_max={} rtt_client_p95_spread_micros={} rtt_client_max_micros_max={}",
         values.len(),
         stats.p50,
         stats.p95,
         stats.p99,
-        stats.max
+        stats.max,
+        fairness.p95_min,
+        fairness.p95_max,
+        fairness.p95_spread,
+        fairness.max_max
     )
 }
 
@@ -458,6 +477,47 @@ struct LatencyStats {
     p95: u64,
     p99: u64,
     max: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ClientLatencyFairness {
+    p95_min: u64,
+    p95_max: u64,
+    p95_spread: u64,
+    max_max: u64,
+}
+
+impl ClientLatencyFairness {
+    fn from_samples(clients: usize, samples: &[BenchSample]) -> Option<Self> {
+        if clients == 0 {
+            return None;
+        }
+        let mut by_client = vec![Vec::<u64>::new(); clients];
+        for sample in samples {
+            for (index, client_samples) in sample.client_latency_micros.iter().enumerate() {
+                if let Some(target) = by_client.get_mut(index) {
+                    target.extend(client_samples.iter().copied());
+                }
+            }
+        }
+
+        let mut p95_values = Vec::with_capacity(clients);
+        let mut max_values = Vec::with_capacity(clients);
+        for client_samples in &mut by_client {
+            let stats = LatencyStats::from_samples(client_samples)?;
+            p95_values.push(stats.p95);
+            max_values.push(stats.max);
+        }
+        let p95_min = *p95_values.iter().min()?;
+        let p95_max = *p95_values.iter().max()?;
+        let max_max = *max_values.iter().max()?;
+        Some(Self {
+            p95_min,
+            p95_max,
+            p95_spread: p95_max.saturating_sub(p95_min),
+            max_max,
+        })
+    }
 }
 
 impl LatencyStats {

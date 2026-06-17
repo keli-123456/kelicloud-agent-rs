@@ -517,6 +517,48 @@ Notes:
   dwell diagnostics, then test an adaptive policy that avoids reordering the
   entire outbound queue under high batch caps.
 
+## 2026-06-18 Per-Client RTT Fairness Diagnostics
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Base runtime commit: `d865b66`
+- Change: `ktp-e2e-bench --latency` now reports per-client RTT fairness fields,
+  and `scripts/ktp-relay-batch-matrix.sh` writes them into CSV output.
+
+New fields:
+
+- `rtt_client_p95_micros_min`
+- `rtt_client_p95_micros_max`
+- `rtt_client_p95_spread_micros`
+- `rtt_client_max_micros_max`
+
+Smoke command:
+
+```bash
+KTP_BATCH_MATRIX_CLIENTS="2" \
+KTP_BATCH_MATRIX_BATCHES="64" \
+KTP_BATCH_MATRIX_RUNS=2 \
+KTP_BATCH_MATRIX_FRAMES=16 \
+KTP_BATCH_MATRIX_PAYLOAD_BYTES=1024 \
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-client-fairness-smoke.csv \
+  bash scripts/ktp-relay-batch-matrix.sh
+```
+
+Smoke result:
+
+| Clients | Batch | RTT p95 | Client p95 Min | Client p95 Max | Client p95 Spread | Client Max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 64 | 966 us | 966 us | 2944 us | 1978 us | 6952 us |
+
+Notes:
+
+- Global p95 alone can hide a slow client. In the smoke sample, global p95 was
+  966 us while the slowest client's p95 reached 2944 us.
+- Future relay scheduling experiments should compare both aggregate throughput
+  and `rtt_client_p95_spread_micros`. A candidate that raises client spread
+  materially is not a clear win even if global p95 looks acceptable.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
@@ -579,7 +621,8 @@ Notes:
 Next evidence to collect:
 
 - Higher sample-count multi-client runs, including at least one 8+ client
-  release-host matrix after the next relay scheduling change.
+  release-host matrix after the next relay scheduling change, with
+  `rtt_client_p95_spread_micros` included in the comparison.
 - Longer release-host and live-canary samples for
   `ktp-e2e-bench --profile rdp-like` so tunnel tuning compares interactive
   mixed-payload traffic instead of fixed-size frames only.

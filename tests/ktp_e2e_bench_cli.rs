@@ -258,6 +258,37 @@ fn ktp_e2e_bench_cli_reports_latency_percentiles_when_requested() {
 }
 
 #[test]
+fn ktp_e2e_bench_cli_reports_client_latency_fairness_when_requested() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--latency",
+            "--clients",
+            "2",
+            "--frames",
+            "3",
+            "--payload-bytes",
+            "128",
+        ])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-e2e-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("rtt_client_p95_micros_min="));
+    assert!(stdout.contains("rtt_client_p95_micros_max="));
+    assert!(stdout.contains("rtt_client_p95_spread_micros="));
+    assert!(stdout.contains("rtt_client_max_micros_max="));
+}
+
+#[test]
 fn ktp_e2e_bench_cli_reports_rdp_like_profile_metrics() {
     let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
         .expect("ktp-e2e-bench binary should be built by cargo");
