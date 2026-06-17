@@ -521,7 +521,7 @@ impl KtpEncryptedTcpStream {
         }
     }
 
-    async fn next_frames(
+    pub async fn next_frames(
         &mut self,
         max_frames: usize,
     ) -> Result<Vec<KtpFrame>, KtpTcpTransportError> {

@@ -793,6 +793,17 @@ Encrypted carrier repeated-run statistics:
 - Single-run output still keeps the compact `elapsed_ms` and
   `throughput_mib_s` fields for quick developer checks.
 
+Tunnel-data receive batch foundation:
+
+- The tunnel-data socket trait now has an optional KTP-frame batch read path.
+  Default transports decode one frame at a time, preserving WebSocket
+  compatibility.
+- The encrypted TCP tunnel-data socket overrides that path and can deliver
+  multiple already-buffered KTP frames to the session loop in one read step.
+- This does not change the KTP frame format or backend schema. It reduces
+  per-frame loop overhead on the dedicated KTP TCP carrier and should be paired
+  with future before/after benchmark evidence before claiming throughput gains.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:

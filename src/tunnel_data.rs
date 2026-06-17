@@ -135,6 +135,7 @@ const RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS: [u64; 17] = [
     1_000_000,
     u64::MAX,
 ];
+const TUNNEL_DATA_FRAME_BATCH_LIMIT: usize = 64;
 
 #[derive(Clone, Debug, Default)]
 pub struct SharedTunnelDataDiagnostics {
@@ -407,6 +408,33 @@ pub trait TunnelDataSocket {
         let _ = timeout;
         self.read_optional_frame()
     }
+    fn read_optional_ktp_frame_batch(
+        &mut self,
+        max_frames: usize,
+    ) -> Result<Option<Vec<KtpFrame>>, TransportError> {
+        let _ = max_frames;
+        self.read_optional_frame()?
+            .map(|bytes| {
+                decode_frame(&bytes, KTP_MAX_PAYLOAD_LEN)
+                    .map(|frame| vec![frame])
+                    .map_err(|error| TransportError::RequestFailed(error.to_string()))
+            })
+            .transpose()
+    }
+    fn read_optional_ktp_frame_batch_with_timeout(
+        &mut self,
+        timeout: Duration,
+        max_frames: usize,
+    ) -> Result<Option<Vec<KtpFrame>>, TransportError> {
+        let _ = max_frames;
+        self.read_optional_frame_with_timeout(timeout)?
+            .map(|bytes| {
+                decode_frame(&bytes, KTP_MAX_PAYLOAD_LEN)
+                    .map(|frame| vec![frame])
+                    .map_err(|error| TransportError::RequestFailed(error.to_string()))
+            })
+            .transpose()
+    }
 }
 
 pub trait TunnelDataTransport {
@@ -593,6 +621,28 @@ impl TunnelDataSocket for KtpEncryptedTcpTunnelDataSocket {
             Ok(Ok(frame)) => encode_frame(&frame)
                 .map(Some)
                 .map_err(|error| TransportError::RequestFailed(error.to_string())),
+            Ok(Err(error)) => Err(ktp_tcp_transport_error_to_transport(error)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn read_optional_ktp_frame_batch(
+        &mut self,
+        max_frames: usize,
+    ) -> Result<Option<Vec<KtpFrame>>, TransportError> {
+        self.read_optional_ktp_frame_batch_with_timeout(self.read_timeout, max_frames)
+    }
+
+    fn read_optional_ktp_frame_batch_with_timeout(
+        &mut self,
+        timeout_duration: Duration,
+        max_frames: usize,
+    ) -> Result<Option<Vec<KtpFrame>>, TransportError> {
+        let result = self.runtime.block_on(async {
+            timeout(timeout_duration, self.stream.next_frames(max_frames.max(1))).await
+        });
+        match result {
+            Ok(Ok(frames)) => Ok(Some(frames)),
             Ok(Err(error)) => Err(ktp_tcp_transport_error_to_transport(error)),
             Err(_) => Ok(None),
         }
@@ -990,11 +1040,12 @@ where
         );
         diagnostics.record_socket_idle_read();
         let read_result = match runtime.tunnel_data_socket_idle_timeout() {
-            Some(timeout) => socket.read_optional_frame_with_timeout(timeout),
-            None => socket.read_optional_frame(),
+            Some(timeout) => socket
+                .read_optional_ktp_frame_batch_with_timeout(timeout, TUNNEL_DATA_FRAME_BATCH_LIMIT),
+            None => socket.read_optional_ktp_frame_batch(TUNNEL_DATA_FRAME_BATCH_LIMIT),
         };
         match read_result {
-            Ok(Some(bytes)) => handle_tunnel_data_session_frame(&mut socket, &bytes, runtime)?,
+            Ok(Some(frames)) => handle_tunnel_data_session_frames(&mut socket, frames, runtime)?,
             Ok(None) => {
                 diagnostics.record_socket_idle_empty_read();
                 continue;
@@ -1171,15 +1222,13 @@ where
 
 fn handle_tunnel_data_session_frame<S, R>(
     socket: &mut S,
-    bytes: &[u8],
+    frame: KtpFrame,
     runtime: &mut R,
 ) -> Result<(), TransportError>
 where
     S: TunnelDataSocket,
     R: TunnelSessionRuntime,
 {
-    let frame = decode_frame(bytes, KTP_MAX_PAYLOAD_LEN)
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
     match frame.frame_type {
         FrameType::Ping => {
             let pong = KtpFrame::connection(FrameType::Pong, frame.payload);
@@ -1196,6 +1245,21 @@ where
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn handle_tunnel_data_session_frames<S, R>(
+    socket: &mut S,
+    frames: Vec<KtpFrame>,
+    runtime: &mut R,
+) -> Result<(), TransportError>
+where
+    S: TunnelDataSocket,
+    R: TunnelSessionRuntime,
+{
+    for frame in frames {
+        handle_tunnel_data_session_frame(socket, frame, runtime)?;
     }
     Ok(())
 }

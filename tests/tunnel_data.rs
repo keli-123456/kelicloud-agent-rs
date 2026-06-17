@@ -67,6 +67,17 @@ struct BatchOnlyTunnelDataSocket {
     inbound: Vec<Result<Vec<u8>, TransportError>>,
 }
 
+struct BatchReadOnlyTunnelDataTransport {
+    events: Rc<RefCell<Vec<String>>>,
+    batch_frames: Vec<KtpFrame>,
+}
+
+struct BatchReadOnlyTunnelDataSocket {
+    events: Rc<RefCell<Vec<String>>>,
+    batch_frames: Option<Vec<KtpFrame>>,
+    hello_ack_read: bool,
+}
+
 impl FakeTunnelDataTransport {
     fn with_hello_ack(events: Rc<RefCell<Vec<String>>>) -> Self {
         Self {
@@ -134,6 +145,23 @@ impl TunnelDataTransport for BatchOnlyTunnelDataTransport {
         Ok(BatchOnlyTunnelDataSocket {
             events: Rc::clone(&self.events),
             inbound: self.inbound.drain(..).collect(),
+        })
+    }
+}
+
+impl TunnelDataTransport for BatchReadOnlyTunnelDataTransport {
+    type Socket = BatchReadOnlyTunnelDataSocket;
+
+    fn connect_tunnel_data(
+        &mut self,
+        url: &str,
+        _headers: &[HeaderPair],
+    ) -> Result<Self::Socket, TransportError> {
+        self.events.borrow_mut().push(format!("connect:{url}"));
+        Ok(BatchReadOnlyTunnelDataSocket {
+            events: Rc::clone(&self.events),
+            batch_frames: Some(std::mem::take(&mut self.batch_frames)),
+            hello_ack_read: false,
         })
     }
 }
@@ -277,6 +305,50 @@ impl TunnelDataSocket for BatchOnlyTunnelDataSocket {
     }
 }
 
+impl TunnelDataSocket for BatchReadOnlyTunnelDataSocket {
+    fn send_frame(&mut self, frame: &[u8]) -> Result<(), TransportError> {
+        let frame = decode_frame(frame, KTP_MAX_PAYLOAD_LEN)
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        self.events
+            .borrow_mut()
+            .push(format!("send:{:?}", frame.frame_type));
+        Ok(())
+    }
+
+    fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.events.borrow_mut().push("read_hello".to_string());
+        if self.hello_ack_read {
+            return Err(TransportError::RequestFailed(
+                "single-frame read should not be used after hello".to_string(),
+            ));
+        }
+        self.hello_ack_read = true;
+        Ok(hello_ack_frame())
+    }
+
+    fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        self.events
+            .borrow_mut()
+            .push("single_optional_read".to_string());
+        Err(TransportError::RequestFailed(
+            "single optional read should not be used for batch-capable sockets".to_string(),
+        ))
+    }
+
+    fn read_optional_ktp_frame_batch(
+        &mut self,
+        max_frames: usize,
+    ) -> Result<Option<Vec<KtpFrame>>, TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("batch_read:{max_frames}"));
+        match self.batch_frames.take() {
+            Some(frames) => Ok(Some(frames)),
+            None => Err(TransportError::SocketClosed),
+        }
+    }
+}
+
 struct OneClientFrameRuntime {
     frame: Option<KtpFrame>,
 }
@@ -294,6 +366,17 @@ struct MultiClientFrameRuntime {
 impl TunnelSessionRuntime for MultiClientFrameRuntime {
     fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
         Ok(self.frames.pop_front())
+    }
+}
+
+struct RecordingServerFrameRuntime {
+    handled: Rc<RefCell<Vec<KtpFrame>>>,
+}
+
+impl TunnelSessionRuntime for RecordingServerFrameRuntime {
+    fn handle_server_frame(&mut self, frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
+        self.handled.borrow_mut().push(frame);
+        Ok(Vec::new())
     }
 }
 
@@ -457,6 +540,50 @@ fn tunnel_data_session_batches_runtime_frames_when_socket_supports_it() {
 }
 
 #[test]
+fn tunnel_data_session_reads_server_frames_in_batch_when_socket_supports_it() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let handled = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = BatchReadOnlyTunnelDataTransport {
+        events: Rc::clone(&events),
+        batch_frames: vec![
+            session_data_frame(181, b"server-a"),
+            session_data_frame(182, b"server-b"),
+        ],
+    };
+    let mut runtime = RecordingServerFrameRuntime {
+        handled: Rc::clone(&handled),
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-batch-read"),
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should batch-read server frames");
+
+    let events = events.borrow();
+    assert!(
+        events.iter().any(|event| event == "batch_read:64"),
+        "batch-capable socket should be asked for a 64-frame read: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|event| event == "single_optional_read"),
+        "batch-capable socket should not fall back to single optional reads: {events:?}"
+    );
+
+    let handled = handled.borrow();
+    let handled_ids = handled
+        .iter()
+        .map(|frame| frame.session_id)
+        .collect::<Vec<_>>();
+    assert_eq!(handled_ids, vec![181, 182]);
+}
+
+#[test]
 fn ktp_encrypted_tcp_tunnel_data_transport_runs_hello_ready_flow() {
     let key = test_tunnel_data_crypto_key();
     let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ktp tcp listener");
@@ -521,6 +648,61 @@ fn ktp_encrypted_tcp_tunnel_data_transport_runs_hello_ready_flow() {
     assert_eq!(ready_payload.revision, "rev-ktp");
     assert_eq!(ready_payload.ingress_rule_ids, [7]);
     assert_eq!(ready_payload.egress_rule_ids, [9]);
+    server.join().expect("server thread should finish");
+}
+
+#[test]
+fn ktp_tcp_tunnel_data_socket_batch_reads_multiple_frames() {
+    let key = test_tunnel_data_crypto_key();
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ktp tcp listener");
+    std_listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    let addr = std_listener.local_addr().expect("listener addr");
+    let server_key = key.clone();
+    let server = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("build ktp tcp server runtime");
+        runtime.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).expect("tokio listener");
+            let (stream, _) = listener.accept().await.expect("accept ktp tcp client");
+            let mut server = KtpEncryptedTcpStream::from_stream(
+                stream,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            server
+                .send_frames(&[
+                    session_data_frame(281, b"server-a"),
+                    session_data_frame(282, b"server-b"),
+                ])
+                .await
+                .expect("send batched frames");
+        });
+    });
+
+    let mut transport = KtpEncryptedTcpTunnelDataTransport::new(key);
+    let mut socket = transport
+        .connect_tunnel_data(&format!("ktp+tcp://{addr}"), &[])
+        .expect("connect ktp tcp tunnel data");
+    let frames = socket
+        .read_optional_ktp_frame_batch(64)
+        .expect("batch read should succeed")
+        .expect("batch read should return frames");
+
+    assert_eq!(
+        frames
+            .iter()
+            .map(|frame| frame.session_id)
+            .collect::<Vec<_>>(),
+        vec![281, 282]
+    );
     server.join().expect("server thread should finish");
 }
 
