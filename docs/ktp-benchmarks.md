@@ -338,6 +338,65 @@ Notes:
   traffic; it should be expanded with longer live forwarding windows before
   setting performance gates.
 
+## 2026-06-18 Relay Batch Matrix Baseline
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Commit: `9c4ff73`
+- End-to-end binary: `ktp-e2e-bench`
+- Build mode: release builds created by `scripts/ktp-relay-batch-matrix.sh`
+
+Host:
+
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- CPU: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+- CPU cores: 4
+- Memory: 3.8 GiB
+
+Command:
+
+```bash
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-batch-matrix-default.csv \
+  bash scripts/ktp-relay-batch-matrix.sh
+```
+
+Workload:
+
+- Profile: `rdp-like`
+- Runs: 3
+- Clients: 2
+- Frames per client: 64
+- Max payload: 8192 B
+- Relay wait timeout: 100 us
+- Relay batch sweep: 1, 2, 4, 8, 16, 32, 64
+
+Relay batch sweep:
+
+| Relay Batch Frames | Elapsed Median | Throughput Median | RTT p50 | RTT p95 | RTT p99 | RTT Max | Relay Turns | Wait Turns | Max Batch In/Eg |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 23.160 ms | 5.092 MiB/s | 254 us | 915 us | 2201 us | 3015 us | 864 | 640 | 1 / 1 |
+| 2 | 33.687 ms | 3.500 MiB/s | 359 us | 1254 us | 2606 us | 3764 us | 808 | 746 | 2 / 2 |
+| 4 | 34.425 ms | 3.425 MiB/s | 201 us | 1313 us | 5316 us | 9489 us | 926 | 862 | 3 / 3 |
+| 8 | 26.386 ms | 4.469 MiB/s | 233 us | 1481 us | 2478 us | 3293 us | 785 | 721 | 3 / 2 |
+| 16 | 29.393 ms | 4.012 MiB/s | 214 us | 1581 us | 5135 us | 6984 us | 809 | 753 | 3 / 2 |
+| 32 | 21.824 ms | 5.403 MiB/s | 199 us | 761 us | 2726 us | 2866 us | 731 | 619 | 3 / 2 |
+| 64 | 24.272 ms | 4.858 MiB/s | 216 us | 876 us | 1930 us | 4348 us | 730 | 668 | 3 / 2 |
+
+Notes:
+
+- Batch 32 was the best sample for median elapsed time, median throughput, p95
+  RTT, and max RTT in this run.
+- Batch 64 had the best p99 RTT, but lower median throughput than batch 32.
+- The observed maximum runtime batch size was still only 2 to 3 frames for the
+  larger caps, so the cap is not the only bottleneck. Current RDP-like traffic
+  does not naturally fill large batches on this short benchmark.
+- Keep the runtime default unchanged until a longer matrix covers more clients,
+  more frames, and live forwarding traffic. This result makes batch 32 a
+  candidate for the next tuning pass, not a production default by itself.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
