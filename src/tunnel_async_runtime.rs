@@ -221,7 +221,14 @@ impl AsyncTunnelCore {
                         }
                         let session_id = core.next_session_id.fetch_add(1, Ordering::Relaxed);
                         let _ = core
-                            .attach_ingress_stream(session_id, rule_id, stream, peer.to_string())
+                            .attach_ingress_stream(
+                                session_id,
+                                rule_id,
+                                spec.listen_address.clone(),
+                                spec.listen_port,
+                                stream,
+                                peer.to_string(),
+                            )
                             .await;
                     }
                     Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
@@ -235,6 +242,18 @@ impl AsyncTunnelCore {
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("listener map is unavailable"))?;
         if let Some(previous) = listeners.insert(rule_id, handle) {
             previous.abort();
+        }
+        Ok(())
+    }
+
+    pub async fn stop_ingress_listener(&self, rule_id: u64) -> Result<(), TunnelRuntimeError> {
+        let handle = self
+            .listeners
+            .lock()
+            .map_err(|_| TunnelRuntimeError::runtime_unavailable("listener map is unavailable"))?
+            .remove(&rule_id);
+        if let Some(handle) = handle {
+            handle.abort();
         }
         Ok(())
     }
@@ -284,6 +303,8 @@ impl AsyncTunnelCore {
         &self,
         session_id: u64,
         rule_id: u64,
+        listen_host: String,
+        listen_port: u16,
         stream: TcpStream,
         source_addr: String,
     ) -> Result<(), TunnelRuntimeError> {
@@ -305,8 +326,8 @@ impl AsyncTunnelCore {
 
         let payload = encode_session_open_payload(&TunnelSessionOpenPayload {
             rule_id,
-            listen_host: String::new(),
-            listen_port: 0,
+            listen_host,
+            listen_port,
             source_addr,
         })
         .map_err(|error| TunnelRuntimeError::runtime_unavailable(error.to_string()))?;

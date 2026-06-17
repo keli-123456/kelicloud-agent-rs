@@ -3,7 +3,9 @@ use kelicloud_agent_rs::tunnel_async_runtime::{
     AsyncTunnelCore, AsyncTunnelFrameQueue, TunnelIngressListenerSpec, TunnelRuntimeLimits,
     TunnelRuntimeStats,
 };
-use kelicloud_agent_rs::tunnel_session::{encode_session_open_payload, TunnelSessionOpenPayload};
+use kelicloud_agent_rs::tunnel_session::{
+    decode_session_open_payload, encode_session_open_payload, TunnelSessionOpenPayload,
+};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
@@ -136,6 +138,10 @@ fn async_ingress_listener_queues_open_data_and_writes_response() {
         assert_eq!(open.frame_type, FrameType::SessionOpen);
         assert_eq!(open.leg, FrameLeg::Ingress);
         assert_ne!(open.session_id, 0);
+        let open_payload = decode_session_open_payload(&open.payload).expect("decode open");
+        assert_eq!(open_payload.rule_id, 17);
+        assert_eq!(open_payload.listen_host, "127.0.0.1");
+        assert_eq!(open_payload.listen_port, listen_port);
 
         let data = wait_for_core_frame(&core).await.expect("data frame");
         assert_eq!(data.frame_type, FrameType::SessionData);
@@ -209,6 +215,34 @@ fn async_runtime_close_session_removes_active_count() {
     });
 }
 
+#[test]
+fn async_ingress_listener_stops_when_removed() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let listen_port = free_tcp_port();
+        let core = AsyncTunnelCore::new(TunnelRuntimeLimits::default());
+        core.start_ingress_listener(TunnelIngressListenerSpec {
+            rule_id: 71,
+            listen_address: "127.0.0.1".to_string(),
+            listen_port,
+            source_allowlist: "127.0.0.0/8".to_string(),
+        })
+        .await
+        .expect("start listener");
+
+        let _stream = connect_tokio_with_retry("127.0.0.1", listen_port).await;
+        core.stop_ingress_listener(71).await.expect("stop listener");
+
+        assert_tokio_port_eventually_closed("127.0.0.1", listen_port).await;
+    });
+}
+
 fn frame(session_id: u64, payload: &[u8]) -> KtpFrame {
     KtpFrame {
         frame_type: FrameType::SessionData,
@@ -269,6 +303,21 @@ async fn connect_tokio_with_retry(host: &str, port: u16) -> TokioTcpStream {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
             Err(error) => panic!("connect {addr}: {error}"),
+        }
+    }
+}
+
+async fn assert_tokio_port_eventually_closed(host: &str, port: u16) {
+    let addr = format!("{host}:{port}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match TokioTcpStream::connect(&addr).await {
+            Ok(stream) if std::time::Instant::now() < deadline => {
+                drop(stream);
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Ok(_) => panic!("port {addr} stayed open"),
+            Err(_) => return,
         }
     }
 }
