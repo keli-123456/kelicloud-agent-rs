@@ -17,6 +17,7 @@ const RELAY_BATCH_FRAMES: usize = 64;
 
 #[derive(Clone, Copy, Debug)]
 struct BenchConfig {
+    clients: usize,
     frames: usize,
     payload_bytes: usize,
 }
@@ -41,11 +42,15 @@ fn main() {
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
+    let mut clients = 1usize;
     let mut frames = 1024usize;
     let mut payload_bytes = 1024usize;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--clients" => {
+                clients = parse_positive_usize(next_value(&mut args, "--clients")?, "--clients")?
+            }
             "--frames" => {
                 frames = parse_positive_usize(next_value(&mut args, "--frames")?, "--frames")?
             }
@@ -60,6 +65,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
         }
     }
     Ok(BenchConfig {
+        clients,
         frames,
         payload_bytes,
     })
@@ -89,12 +95,25 @@ fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
     let target_addr = target.local_addr()?;
     let frames = config.frames;
     let payload_bytes = config.payload_bytes;
+    let clients = config.clients;
     let echo_thread = thread::spawn(move || -> std::io::Result<()> {
-        let (mut stream, _) = target.accept()?;
-        let mut buffer = vec![0u8; payload_bytes];
-        for _ in 0..frames {
-            stream.read_exact(&mut buffer)?;
-            stream.write_all(&buffer)?;
+        let mut handles = Vec::with_capacity(clients);
+        for _ in 0..clients {
+            let (mut stream, _) = target.accept()?;
+            let handle = thread::spawn(move || -> std::io::Result<()> {
+                let mut buffer = vec![0u8; payload_bytes];
+                for _ in 0..frames {
+                    stream.read_exact(&mut buffer)?;
+                    stream.write_all(&buffer)?;
+                }
+                Ok(())
+            });
+            handles.push(handle);
+        }
+        for handle in handles {
+            handle.join().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::Other, "echo thread panicked")
+            })??;
         }
         Ok(())
     });
@@ -116,49 +135,43 @@ fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
     let mut egress_runtime =
         TunnelTcpRuntime::new_for_data_transport(egress_state, TUNNEL_DATA_TRANSPORT_KTP_TCP);
 
-    let client_thread = thread::spawn(move || -> std::io::Result<()> {
-        let mut stream = connect_with_retry(("127.0.0.1", listen_port))?;
-        let payload = vec![0x5a; payload_bytes];
-        let mut response = vec![0u8; payload_bytes];
-        for _ in 0..frames {
-            stream.write_all(&payload)?;
-            stream.read_exact(&mut response)?;
-        }
-        Ok(())
-    });
+    let client_threads = (0..config.clients)
+        .map(|_| {
+            thread::spawn(move || -> std::io::Result<()> {
+                let mut stream = connect_with_retry(("127.0.0.1", listen_port))?;
+                let payload = vec![0x5a; payload_bytes];
+                let mut response = vec![0u8; payload_bytes];
+                for _ in 0..frames {
+                    stream.write_all(&payload)?;
+                    stream.read_exact(&mut response)?;
+                }
+                Ok(())
+            })
+        })
+        .collect::<Vec<_>>();
 
-    let bytes = config.frames * config.payload_bytes;
+    let bytes = config.clients * config.frames * config.payload_bytes;
     let started = Instant::now();
-    relay_open(&mut ingress_runtime, &mut egress_runtime)?;
     relay_data_batches(&mut ingress_runtime, &mut egress_runtime, bytes)?;
-    client_thread
-        .join()
-        .map_err(|_| "client thread panicked")??;
+    for client_thread in client_threads {
+        client_thread
+            .join()
+            .map_err(|_| "client thread panicked")??;
+    }
     echo_thread.join().map_err(|_| "echo thread panicked")??;
     let elapsed = started.elapsed();
     let elapsed_secs = elapsed.as_secs_f64().max(0.000_001);
     let throughput_mib_s = (bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs;
 
     Ok(format!(
-        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
+        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch clients={} frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
+        config.clients,
         config.frames,
         config.payload_bytes,
         bytes,
         elapsed.as_secs_f64() * 1000.0,
         throughput_mib_s
     ))
-}
-
-fn relay_open(
-    ingress_runtime: &mut TunnelTcpRuntime,
-    egress_runtime: &mut TunnelTcpRuntime,
-) -> BenchResult<()> {
-    let open = wait_for_next_runtime_frame(ingress_runtime, FrameType::SessionOpen)?;
-    let responses = egress_runtime.handle_server_frame(to_leg(open, FrameLeg::Egress))?;
-    for response in responses {
-        ingress_runtime.handle_server_frame(to_leg(response, FrameLeg::Ingress))?;
-    }
-    Ok(())
 }
 
 fn relay_data_batches(
@@ -174,13 +187,20 @@ fn relay_data_batches(
             if frame.frame_type == FrameType::SessionData {
                 ingress_bytes += frame.payload.len();
             }
-            egress_runtime.handle_server_frame(to_leg(frame, FrameLeg::Egress))?;
+            let responses = egress_runtime.handle_server_frame(to_leg(frame, FrameLeg::Egress))?;
+            for response in responses {
+                ingress_runtime.handle_server_frame(to_leg(response, FrameLeg::Ingress))?;
+            }
         }
         for frame in egress_runtime.next_client_frames(RELAY_BATCH_FRAMES)? {
             if frame.frame_type == FrameType::SessionData {
                 egress_bytes += frame.payload.len();
             }
-            ingress_runtime.handle_server_frame(to_leg(frame, FrameLeg::Ingress))?;
+            let responses =
+                ingress_runtime.handle_server_frame(to_leg(frame, FrameLeg::Ingress))?;
+            for response in responses {
+                egress_runtime.handle_server_frame(to_leg(response, FrameLeg::Egress))?;
+            }
         }
         if Instant::now() >= deadline {
             return Err(format!(
@@ -193,22 +213,6 @@ fn relay_data_batches(
         }
     }
     Ok(())
-}
-
-fn wait_for_next_runtime_frame(
-    runtime: &mut TunnelTcpRuntime,
-    expected_type: FrameType,
-) -> BenchResult<KtpFrame> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if let Some(frame) = runtime.next_client_frame()? {
-            if frame.frame_type == expected_type {
-                return Ok(frame);
-            }
-        }
-        thread::yield_now();
-    }
-    Err(format!("timed out waiting for {expected_type:?}").into())
 }
 
 fn to_leg(mut frame: KtpFrame, leg: FrameLeg) -> KtpFrame {
@@ -256,5 +260,5 @@ fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-e2e-bench [--frames N] [--payload-bytes BYTES]");
+    eprintln!("usage: ktp-e2e-bench [--clients N] [--frames N] [--payload-bytes BYTES]");
 }
