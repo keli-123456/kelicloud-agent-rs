@@ -1,7 +1,11 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
 use kelicloud_agent_rs::tunnel_async_runtime::{
-    AsyncTunnelFrameQueue, TunnelRuntimeLimits, TunnelRuntimeStats,
+    AsyncTunnelCore, AsyncTunnelFrameQueue, TunnelRuntimeLimits, TunnelRuntimeStats,
 };
+use kelicloud_agent_rs::tunnel_session::{encode_session_open_payload, TunnelSessionOpenPayload};
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::thread;
 
 #[test]
 fn async_runtime_limits_have_bounded_defaults() {
@@ -50,6 +54,57 @@ fn runtime_stats_snapshot_tracks_session_and_byte_counters() {
     assert_eq!(snapshot.rule_session_counts.get(&7).copied(), Some(0));
 }
 
+#[test]
+fn async_egress_session_connects_target_and_queues_response() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let target = TcpListener::bind("127.0.0.1:0").expect("bind target echo listener");
+        let target_addr = target.local_addr().expect("target local addr");
+        let echo_thread = thread::spawn(move || {
+            let (mut stream, _) = target.accept().expect("accept target connection");
+            let mut buffer = [0u8; 16];
+            let read = stream.read(&mut buffer).expect("read target input");
+            assert_eq!(&buffer[..read], b"ping");
+            stream.write_all(b"pong").expect("write target output");
+        });
+
+        let core = AsyncTunnelCore::new(TunnelRuntimeLimits::default());
+        let responses = core
+            .open_egress_session(
+                77,
+                7,
+                "127.0.0.1",
+                target_addr.port(),
+                session_open_payload(7),
+            )
+            .await
+            .expect("open egress session");
+
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].frame_type, FrameType::SessionAccept);
+        assert_eq!(responses[0].leg, FrameLeg::Egress);
+
+        core.handle_session_data(77, FrameLeg::Egress, b"ping".to_vec())
+            .await
+            .expect("write target data");
+
+        let frame = wait_for_core_frame(&core)
+            .await
+            .expect("target response frame");
+        assert_eq!(frame.frame_type, FrameType::SessionData);
+        assert_eq!(frame.leg, FrameLeg::Egress);
+        assert_eq!(frame.session_id, 77);
+        assert_eq!(frame.payload, b"pong");
+        echo_thread.join().expect("echo thread should finish");
+    });
+}
+
 fn frame(session_id: u64, payload: &[u8]) -> KtpFrame {
     KtpFrame {
         frame_type: FrameType::SessionData,
@@ -57,5 +112,28 @@ fn frame(session_id: u64, payload: &[u8]) -> KtpFrame {
         flags: 0,
         session_id,
         payload: payload.to_vec(),
+    }
+}
+
+fn session_open_payload(rule_id: u64) -> Vec<u8> {
+    encode_session_open_payload(&TunnelSessionOpenPayload {
+        rule_id,
+        listen_host: "127.0.0.1".to_string(),
+        listen_port: 10088,
+        source_addr: "127.0.0.1:50123".to_string(),
+    })
+    .expect("encode session open")
+}
+
+async fn wait_for_core_frame(core: &AsyncTunnelCore) -> Option<KtpFrame> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if let Some(frame) = core.next_frame().await {
+            return Some(frame);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }
