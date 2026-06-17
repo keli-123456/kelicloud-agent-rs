@@ -565,7 +565,7 @@ impl TunnelDataSocket for KtpEncryptedTcpTunnelDataSocket {
     ) -> Result<Option<Vec<u8>>, TransportError> {
         let result = self
             .runtime
-            .block_on(timeout(timeout_duration, self.stream.next_frame()));
+            .block_on(async { timeout(timeout_duration, self.stream.next_frame()).await });
         match result {
             Ok(Ok(frame)) => encode_frame(&frame)
                 .map(Some)

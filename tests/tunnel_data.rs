@@ -364,6 +364,40 @@ fn ktp_tcp_tunnel_data_transport_sends_auth_preface_before_hello() {
 }
 
 #[test]
+fn ktp_tcp_tunnel_data_optional_read_timeout_does_not_require_outer_tokio_runtime() {
+    let key = test_tunnel_data_crypto_key();
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ktp tcp listener");
+    std_listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    let addr = std_listener.local_addr().expect("listener addr");
+    let server = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("build ktp tcp server runtime");
+        runtime.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).expect("tokio listener");
+            let (_stream, _) = listener.accept().await.expect("accept ktp tcp client");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+    });
+
+    let mut transport = KtpEncryptedTcpTunnelDataTransport::new(key);
+    let mut socket = transport
+        .connect_tunnel_data(&format!("ktp+tcp://{addr}"), &[])
+        .expect("ktp tcp client should connect");
+
+    let frame = socket
+        .read_optional_frame_with_timeout(Duration::from_millis(10))
+        .expect("idle KTP TCP read should time out without panic");
+
+    assert_eq!(frame, None);
+    server.join().expect("server thread should finish");
+}
+
+#[test]
 fn tunnel_data_ready_state_derives_rule_ids_from_selected_roles() {
     let rules = vec![
         selected_rule(7, "ingress"),
