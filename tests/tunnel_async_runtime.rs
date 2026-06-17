@@ -1,13 +1,14 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
 use kelicloud_agent_rs::tunnel_async_runtime::{
-    AsyncTunnelCore, AsyncTunnelFrameQueue, TunnelIngressListenerSpec, TunnelRuntimeLimits,
-    TunnelRuntimeStats,
+    AsyncTunnelCore, AsyncTunnelFrameQueue, TunnelFrameReadyNotifier, TunnelIngressListenerSpec,
+    TunnelRuntimeLimits, TunnelRuntimeStats,
 };
 use kelicloud_agent_rs::tunnel_session::{
     decode_session_open_payload, encode_session_open_payload, TunnelSessionOpenPayload,
 };
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -89,6 +90,33 @@ fn async_frame_queue_drain_after_wait_wakes_when_frame_is_pushed() {
     producer_thread.join().expect("producer should finish");
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0].session_id, 9);
+}
+
+#[test]
+fn async_frame_queue_shared_notifier_wakes_when_any_attached_queue_pushes() {
+    let notifier = Arc::new(TunnelFrameReadyNotifier::new());
+    let first = AsyncTunnelFrameQueue::new_with_notifier(4, Arc::clone(&notifier));
+    let second = AsyncTunnelFrameQueue::new_with_notifier(4, Arc::clone(&notifier));
+    let observed_generation = notifier.generation();
+    let producer = second.clone();
+    let producer_thread = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        producer
+            .try_push(frame(19, b"shared"))
+            .expect("push delayed frame through second queue");
+    });
+
+    let changed_generation = notifier.wait_for_change(observed_generation, Duration::from_secs(1));
+
+    producer_thread.join().expect("producer should finish");
+    assert!(
+        changed_generation > observed_generation,
+        "shared notifier should wake when any attached queue receives a frame"
+    );
+    assert!(first.drain(4).is_empty());
+    let frames = second.drain(4);
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].session_id, 19);
 }
 
 #[test]

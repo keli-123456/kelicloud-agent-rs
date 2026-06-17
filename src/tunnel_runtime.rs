@@ -1,7 +1,8 @@
 use crate::ktp::{FrameLeg, FrameType, KtpFrame};
 use crate::transport::TransportError;
 use crate::tunnel_async_runtime::{
-    AsyncTunnelCore, TunnelIngressListenerSpec, TunnelRuntimeError, TunnelRuntimeLimits,
+    AsyncTunnelCore, TunnelFrameReadyNotifier, TunnelIngressListenerSpec, TunnelRuntimeError,
+    TunnelRuntimeLimits,
 };
 use crate::tunnel_control::{
     SelectedTunnelRule, TunnelRuleStateSink, TUNNEL_DATA_TRANSPORT_KTP_TCP,
@@ -369,6 +370,28 @@ impl TunnelTcpRuntime {
         limits: TunnelRuntimeLimits,
         data_transport: &str,
     ) -> Self {
+        Self::new_internal(rule_state, limits, data_transport, None)
+    }
+
+    pub fn new_with_frame_ready_notifier_for_data_transport(
+        rule_state: SharedTunnelRuleState,
+        data_transport: &str,
+        notifier: Arc<TunnelFrameReadyNotifier>,
+    ) -> Self {
+        Self::new_internal(
+            rule_state,
+            TunnelRuntimeLimits::default(),
+            data_transport,
+            Some(notifier),
+        )
+    }
+
+    fn new_internal(
+        rule_state: SharedTunnelRuleState,
+        limits: TunnelRuntimeLimits,
+        data_transport: &str,
+        frame_ready_notifier: Option<Arc<TunnelFrameReadyNotifier>>,
+    ) -> Self {
         let (listener_event_tx, listener_event_rx) = mpsc::channel();
         #[cfg(not(test))]
         let _ = listener_event_tx;
@@ -382,7 +405,10 @@ impl TunnelTcpRuntime {
             rule_state,
             data_transport: normalize_data_transport_filter(data_transport),
             async_runtime,
-            core: AsyncTunnelCore::new(limits),
+            core: match frame_ready_notifier {
+                Some(notifier) => AsyncTunnelCore::new_with_frame_ready_notifier(limits, notifier),
+                None => AsyncTunnelCore::new(limits),
+            },
             listeners: HashMap::new(),
             #[cfg(test)]
             listener_event_tx,

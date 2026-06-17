@@ -87,29 +87,88 @@ pub struct AsyncTunnelFrameQueue {
 struct AsyncTunnelFrameQueueInner {
     frames: Mutex<VecDeque<KtpFrame>>,
     ready: Condvar,
+    shared_ready: Option<Arc<TunnelFrameReadyNotifier>>,
+}
+
+#[derive(Debug, Default)]
+pub struct TunnelFrameReadyNotifier {
+    generation: Mutex<u64>,
+    ready: Condvar,
+}
+
+impl TunnelFrameReadyNotifier {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+            .lock()
+            .map(|generation| *generation)
+            .unwrap_or(0)
+    }
+
+    pub fn notify(&self) {
+        let Ok(mut generation) = self.generation.lock() else {
+            return;
+        };
+        *generation = generation.saturating_add(1);
+        self.ready.notify_all();
+    }
+
+    pub fn wait_for_change(&self, observed_generation: u64, timeout: Duration) -> u64 {
+        let Ok(generation) = self.generation.lock() else {
+            return observed_generation;
+        };
+        if *generation != observed_generation || timeout.is_zero() {
+            return *generation;
+        }
+        let Ok((generation, _)) =
+            self.ready
+                .wait_timeout_while(generation, timeout, |generation| {
+                    *generation == observed_generation
+                })
+        else {
+            return observed_generation;
+        };
+        *generation
+    }
 }
 
 impl AsyncTunnelFrameQueue {
     pub fn new(capacity: usize) -> Self {
+        Self::new_internal(capacity, None)
+    }
+
+    pub fn new_with_notifier(capacity: usize, notifier: Arc<TunnelFrameReadyNotifier>) -> Self {
+        Self::new_internal(capacity, Some(notifier))
+    }
+
+    fn new_internal(capacity: usize, shared_ready: Option<Arc<TunnelFrameReadyNotifier>>) -> Self {
         Self {
             inner: Arc::new(AsyncTunnelFrameQueueInner {
                 frames: Mutex::new(VecDeque::new()),
                 ready: Condvar::new(),
+                shared_ready,
             }),
             capacity,
         }
     }
 
     pub fn try_push(&self, frame: KtpFrame) -> Result<(), TunnelRuntimeError> {
-        let mut inner =
-            self.inner.frames.lock().map_err(|_| {
+        {
+            let mut inner = self.inner.frames.lock().map_err(|_| {
                 TunnelRuntimeError::runtime_unavailable("frame queue is unavailable")
             })?;
-        if inner.len() >= self.capacity {
-            return Err(TunnelRuntimeError::backpressure_limit());
+            if inner.len() >= self.capacity {
+                return Err(TunnelRuntimeError::backpressure_limit());
+            }
+            inner.push_back(frame);
         }
-        inner.push_back(frame);
         self.inner.ready.notify_one();
+        if let Some(shared_ready) = &self.inner.shared_ready {
+            shared_ready.notify();
+        }
         Ok(())
     }
 
@@ -251,8 +310,27 @@ struct AsyncTunnelSession {
 
 impl AsyncTunnelCore {
     pub fn new(limits: TunnelRuntimeLimits) -> Self {
+        Self::new_internal(limits, None)
+    }
+
+    pub fn new_with_frame_ready_notifier(
+        limits: TunnelRuntimeLimits,
+        notifier: Arc<TunnelFrameReadyNotifier>,
+    ) -> Self {
+        Self::new_internal(limits, Some(notifier))
+    }
+
+    fn new_internal(
+        limits: TunnelRuntimeLimits,
+        frame_ready_notifier: Option<Arc<TunnelFrameReadyNotifier>>,
+    ) -> Self {
         Self {
-            outbound: AsyncTunnelFrameQueue::new(limits.max_outbound_frames),
+            outbound: match frame_ready_notifier {
+                Some(notifier) => {
+                    AsyncTunnelFrameQueue::new_with_notifier(limits.max_outbound_frames, notifier)
+                }
+                None => AsyncTunnelFrameQueue::new(limits.max_outbound_frames),
+            },
             limits,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             listeners: Arc::new(Mutex::new(HashMap::new())),

@@ -1,5 +1,5 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
-use kelicloud_agent_rs::tunnel_async_runtime::TunnelRuntimeLimits;
+use kelicloud_agent_rs::tunnel_async_runtime::{TunnelFrameReadyNotifier, TunnelRuntimeLimits};
 use kelicloud_agent_rs::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
 use kelicloud_agent_rs::tunnel_data::TunnelDataReadySource;
 use kelicloud_agent_rs::tunnel_runtime::{
@@ -11,6 +11,7 @@ use kelicloud_agent_rs::tunnel_session::{
 };
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -747,6 +748,48 @@ fn tcp_runtime_next_client_frame_does_not_refresh_listeners() {
 
     runtime.tick().expect("tick should refresh listeners");
     connect_with_retry(("127.0.0.1", listen_port));
+}
+
+#[test]
+fn tcp_runtime_with_frame_ready_notifier_wakes_when_ingress_queues_frame() {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let notifier = Arc::new(TunnelFrameReadyNotifier::new());
+    let observed_generation = notifier.generation();
+    let listen_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(74, "tcp", "ingress", true);
+    rule.listen_address = "127.0.0.1".to_string();
+    rule.listen_port = listen_port;
+    rule.data_transport = "ktp_tcp".to_string();
+    state.update_rules("rev-frame-ready", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport(
+        state,
+        "ktp_tcp",
+        Arc::clone(&notifier),
+    );
+    runtime.refresh_listeners().expect("start ingress listener");
+    let waiter_notifier = Arc::clone(&notifier);
+    let waiter_thread = thread::spawn(move || {
+        waiter_notifier.wait_for_change(observed_generation, Duration::from_secs(2))
+    });
+    let client_thread = thread::spawn(move || {
+        let mut stream = connect_with_retry(("127.0.0.1", listen_port));
+        stream.write_all(b"ping").expect("write client payload");
+        thread::sleep(Duration::from_millis(50));
+    });
+
+    let changed_generation = waiter_thread.join().expect("waiter should finish");
+
+    client_thread.join().expect("client should finish");
+    assert!(
+        changed_generation > observed_generation,
+        "runtime notifier should wake when ingress queues an outbound frame"
+    );
+    let frame = wait_for_next_runtime_frame(&mut runtime).expect("ingress should queue a frame");
+    assert_eq!(frame.frame_type, FrameType::SessionOpen);
+    assert_eq!(frame.leg, FrameLeg::Ingress);
 }
 
 #[test]

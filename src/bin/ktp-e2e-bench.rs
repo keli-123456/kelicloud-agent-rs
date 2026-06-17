@@ -1,4 +1,5 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
+use kelicloud_agent_rs::tunnel_async_runtime::TunnelFrameReadyNotifier;
 use kelicloud_agent_rs::tunnel_control::{
     SelectedTunnelRule, TunnelRuleStateSink, TUNNEL_DATA_TRANSPORT_KTP_TCP,
 };
@@ -8,6 +9,7 @@ use kelicloud_agent_rs::tunnel_runtime::{
 use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -164,12 +166,14 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
     });
 
     let listen_port = free_tcp_port()?;
+    let frame_ready_notifier =
+        (!config.relay_wait_timeout.is_zero()).then(|| Arc::new(TunnelFrameReadyNotifier::new()));
     let ingress_state = SharedTunnelRuleState::new();
     let mut ingress_rule = selected_rule(31, "ingress");
     ingress_rule.listen_port = listen_port;
     ingress_state.update_rules("bench", &[ingress_rule]);
     let mut ingress_runtime =
-        TunnelTcpRuntime::new_for_data_transport(ingress_state, TUNNEL_DATA_TRANSPORT_KTP_TCP);
+        new_bench_runtime(ingress_state, frame_ready_notifier.as_ref().map(Arc::clone));
     ingress_runtime.refresh_listeners()?;
 
     let egress_state = SharedTunnelRuleState::new();
@@ -178,7 +182,7 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
     egress_rule.target_port = target_addr.port();
     egress_state.update_rules("bench", &[egress_rule]);
     let mut egress_runtime =
-        TunnelTcpRuntime::new_for_data_transport(egress_state, TUNNEL_DATA_TRANSPORT_KTP_TCP);
+        new_bench_runtime(egress_state, frame_ready_notifier.as_ref().map(Arc::clone));
 
     let client_threads = (0..config.clients)
         .map(|_| {
@@ -202,6 +206,7 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
         &mut egress_runtime,
         bytes,
         config.relay_wait_timeout,
+        frame_ready_notifier,
     )?;
     for client_thread in client_threads {
         client_thread
@@ -302,11 +307,26 @@ fn median(sorted_values: &[f64]) -> f64 {
     }
 }
 
+fn new_bench_runtime(
+    state: SharedTunnelRuleState,
+    frame_ready_notifier: Option<Arc<TunnelFrameReadyNotifier>>,
+) -> TunnelTcpRuntime {
+    match frame_ready_notifier {
+        Some(notifier) => TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport(
+            state,
+            TUNNEL_DATA_TRANSPORT_KTP_TCP,
+            notifier,
+        ),
+        None => TunnelTcpRuntime::new_for_data_transport(state, TUNNEL_DATA_TRANSPORT_KTP_TCP),
+    }
+}
+
 fn relay_data_batches(
     ingress_runtime: &mut TunnelTcpRuntime,
     egress_runtime: &mut TunnelTcpRuntime,
     expected_bytes: usize,
     relay_wait_timeout: Duration,
+    frame_ready_notifier: Option<Arc<TunnelFrameReadyNotifier>>,
 ) -> BenchResult<RelayStats> {
     let mut ingress_bytes = 0usize;
     let mut egress_bytes = 0usize;
@@ -315,15 +335,27 @@ fn relay_data_batches(
     while egress_bytes < expected_bytes {
         stats.relay_turns += 1;
         let mut frames_this_turn = 0usize;
+        let observed_generation = frame_ready_notifier
+            .as_ref()
+            .filter(|_| !relay_wait_timeout.is_zero())
+            .map(|notifier| notifier.generation());
         let mut ingress_frames = ingress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
         let mut egress_frames = egress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
         if ingress_frames.is_empty() && egress_frames.is_empty() && !relay_wait_timeout.is_zero() {
             stats.relay_wait_turns += 1;
-            ingress_frames = ingress_runtime
-                .next_client_frames_after_wait(RELAY_BATCH_FRAMES, relay_wait_timeout)?;
-            if ingress_frames.is_empty() {
-                egress_frames = egress_runtime
+            if let (Some(notifier), Some(observed_generation)) =
+                (frame_ready_notifier.as_ref(), observed_generation)
+            {
+                let _ = notifier.wait_for_change(observed_generation, relay_wait_timeout);
+                ingress_frames = ingress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
+                egress_frames = egress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
+            } else {
+                ingress_frames = ingress_runtime
                     .next_client_frames_after_wait(RELAY_BATCH_FRAMES, relay_wait_timeout)?;
+                if ingress_frames.is_empty() {
+                    egress_frames = egress_runtime
+                        .next_client_frames_after_wait(RELAY_BATCH_FRAMES, relay_wait_timeout)?;
+                }
             }
         }
 
