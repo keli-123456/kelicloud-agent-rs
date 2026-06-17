@@ -559,6 +559,59 @@ Notes:
   and `rtt_client_p95_spread_micros`. A candidate that raises client spread
   materially is not a clear win even if global p95 looks acceptable.
 
+## 2026-06-18 Client Fairness Matrix
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Commit: `71f379f`
+- End-to-end binary: `ktp-e2e-bench`
+- Build mode: release builds created by `scripts/ktp-relay-batch-matrix.sh`
+- Run directory: `/root/kelicloud-agent-rs-fairness-71f379f-a`
+
+Command:
+
+```bash
+KTP_BATCH_MATRIX_CLIENTS="1 2 4 8" \
+KTP_BATCH_MATRIX_BATCHES="16 32 64" \
+KTP_BATCH_MATRIX_RUNS=5 \
+KTP_BATCH_MATRIX_FRAMES=64 \
+KTP_BATCH_MATRIX_PAYLOAD_BYTES=8192 \
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-client-fairness-matrix-71f379f.csv \
+  bash scripts/ktp-relay-batch-matrix.sh
+```
+
+Fairness matrix:
+
+| Clients | Batch | Throughput Median | RTT p95 | RTT p99 | RTT Max | Client p95 Spread |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 16 | 3.662 MiB/s | 478 us | 1769 us | 2112 us | 0 us |
+| 1 | 32 | 4.122 MiB/s | 501 us | 1266 us | 3053 us | 0 us |
+| 1 | 64 | 4.250 MiB/s | 407 us | 1115 us | 1396 us | 0 us |
+| 2 | 16 | 6.236 MiB/s | 757 us | 2430 us | 3038 us | 28 us |
+| 2 | 32 | 6.353 MiB/s | 681 us | 1588 us | 2994 us | 98 us |
+| 2 | 64 | 7.032 MiB/s | 905 us | 1466 us | 5037 us | 48 us |
+| 4 | 16 | 5.805 MiB/s | 983 us | 3711 us | 7943 us | 634 us |
+| 4 | 32 | 12.046 MiB/s | 606 us | 1253 us | 3323 us | 70 us |
+| 4 | 64 | 9.661 MiB/s | 828 us | 1927 us | 3565 us | 270 us |
+| 8 | 16 | 11.638 MiB/s | 1538 us | 3144 us | 5557 us | 400 us |
+| 8 | 32 | 11.744 MiB/s | 1713 us | 4333 us | 23893 us | 734 us |
+| 8 | 64 | 11.899 MiB/s | 1519 us | 4738 us | 26134 us | 884 us |
+
+Notes:
+
+- Batch 64 remains the best single-client sample and has the highest median
+  throughput at two and eight clients, but fairness changes the tuning picture.
+- At four clients, batch 32 is the best balanced point: highest median
+  throughput, lowest global p95/p99, and the lowest client p95 spread.
+- At eight clients, batch 64 only improves median throughput by about 2.2% over
+  batch 16, while client p95 spread more than doubles and max RTT rises from
+  5557 us to 26134 us.
+- The next adaptive scheduling experiment should not be a global FIFO
+  replacement. A safer shape is a concurrency-aware batch cap: keep larger
+  batches for low concurrency, then reduce the effective drain cap when active
+  sessions are high or client p95 spread grows.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
