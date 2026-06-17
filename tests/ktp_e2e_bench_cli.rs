@@ -28,6 +28,7 @@ fn ktp_e2e_bench_cli_reports_runtime_ingress_egress_throughput() {
     assert!(stdout.contains("bytes=384"));
     assert!(stdout.contains("elapsed_ms="));
     assert!(stdout.contains("throughput_mib_s="));
+    assert!(!stdout.contains("relay_turns="));
 }
 
 #[test]
@@ -129,4 +130,38 @@ fn ktp_e2e_bench_cli_reports_repeated_run_statistics() {
     assert!(stdout.contains("throughput_mib_s_min="));
     assert!(stdout.contains("throughput_mib_s_median="));
     assert!(stdout.contains("throughput_mib_s_max="));
+}
+
+#[test]
+fn ktp_e2e_bench_cli_reports_relay_diagnostics_when_requested() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--diagnostics",
+            "--clients",
+            "2",
+            "--frames",
+            "2",
+            "--payload-bytes",
+            "128",
+        ])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-e2e-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("relay_turns="));
+    assert!(stdout.contains("relay_empty_turns="));
+    assert!(stdout.contains("relay_yield_turns="));
+    assert!(stdout.contains("ingress_frames="));
+    assert!(stdout.contains("egress_frames="));
+    assert!(stdout.contains("ingress_data_frames="));
+    assert!(stdout.contains("egress_data_frames="));
 }
