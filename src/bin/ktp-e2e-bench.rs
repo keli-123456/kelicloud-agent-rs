@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 type BenchResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const RELAY_BATCH_FRAMES: usize = 64;
-const CLIENT_WINDOW_FRAMES: usize = 64;
 
 #[derive(Clone, Copy, Debug)]
 struct BenchConfig {
@@ -121,16 +120,9 @@ fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
         let mut stream = connect_with_retry(("127.0.0.1", listen_port))?;
         let payload = vec![0x5a; payload_bytes];
         let mut response = vec![0u8; payload_bytes];
-        let mut sent = 0usize;
-        while sent < frames {
-            let batch = CLIENT_WINDOW_FRAMES.min(frames - sent);
-            for _ in 0..batch {
-                stream.write_all(&payload)?;
-            }
-            for _ in 0..batch {
-                stream.read_exact(&mut response)?;
-            }
-            sent += batch;
+        for _ in 0..frames {
+            stream.write_all(&payload)?;
+            stream.read_exact(&mut response)?;
         }
         Ok(())
     });
