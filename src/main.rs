@@ -20,6 +20,7 @@ use kelicloud_agent_rs::token::{SharedAgentToken, SharedTokenRecovery};
 use kelicloud_agent_rs::transport::{
     access_headers, ReqwestHttpTransport, TungsteniteWebSocketTransport,
 };
+use kelicloud_agent_rs::tunnel_async_runtime::TunnelFrameReadyNotifier;
 use kelicloud_agent_rs::tunnel_control::{
     run_tunnel_control_once_with_rule_sink_and_data_transports,
     run_tunnel_control_session_with_rule_sink_and_data_transports,
@@ -31,6 +32,7 @@ use kelicloud_agent_rs::tunnel_data::{
     KtpEncryptedTcpTunnelDataTransport, TungsteniteTunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::{SharedTunnelRuleState, TunnelTcpRuntime};
+use std::sync::Arc;
 
 fn main() {
     if !kelicloud_agent_rs::linux_proc::linux_supported() {
@@ -190,10 +192,16 @@ fn main() {
         let tunnel_data_shared_token = shared_token.clone();
         let tunnel_data_ready_state = tunnel_ready_state.clone();
         std::thread::spawn(move || {
+            let frame_ready_notifier =
+                ktp_tcp_enabled.then(|| Arc::new(TunnelFrameReadyNotifier::new()));
             let mut tunnel_runtime = if ktp_tcp_enabled {
-                TunnelTcpRuntime::new_for_data_transport(
+                TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport(
                     tunnel_data_ready_state.clone(),
                     TUNNEL_DATA_TRANSPORT_KTP_TCP,
+                    frame_ready_notifier
+                        .as_ref()
+                        .map(Arc::clone)
+                        .expect("ktp runtime should have frame notifier"),
                 )
             } else {
                 TunnelTcpRuntime::new(tunnel_data_ready_state.clone())

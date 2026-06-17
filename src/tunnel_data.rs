@@ -120,6 +120,13 @@ pub trait TunnelDataSocket {
     fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
         self.read_frame().map(Some)
     }
+    fn read_optional_frame_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, TransportError> {
+        let _ = timeout;
+        self.read_optional_frame()
+    }
 }
 
 pub trait TunnelDataTransport {
@@ -280,9 +287,16 @@ impl TunnelDataSocket for KtpEncryptedTcpTunnelDataSocket {
     }
 
     fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        self.read_optional_frame_with_timeout(self.read_timeout)
+    }
+
+    fn read_optional_frame_with_timeout(
+        &mut self,
+        timeout_duration: Duration,
+    ) -> Result<Option<Vec<u8>>, TransportError> {
         let result = self
             .runtime
-            .block_on(timeout(self.read_timeout, self.stream.next_frame()));
+            .block_on(timeout(timeout_duration, self.stream.next_frame()));
         match result {
             Ok(Ok(frame)) => encode_frame(&frame)
                 .map(Some)
@@ -377,12 +391,19 @@ impl TunnelDataSocket for TungsteniteTunnelDataSocket {
     }
 
     fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
-        self.read_next_frame(false)?
+        self.read_next_frame(false, self.read_timeout)?
             .ok_or_else(|| TransportError::RequestFailed("tunnel data frame timeout".to_string()))
     }
 
     fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
-        self.read_next_frame(true)
+        self.read_optional_frame_with_timeout(self.read_timeout)
+    }
+
+    fn read_optional_frame_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, TransportError> {
+        self.read_next_frame(true, timeout)
     }
 }
 
@@ -390,8 +411,9 @@ impl TungsteniteTunnelDataSocket {
     fn read_next_frame(
         &mut self,
         timeout_as_idle: bool,
+        read_timeout: Duration,
     ) -> Result<Option<Vec<u8>>, TransportError> {
-        self.set_read_timeout(Some(self.read_timeout))?;
+        self.set_read_timeout(Some(read_timeout))?;
         loop {
             match self.socket.read() {
                 Ok(Message::Binary(bytes)) => return Ok(Some(bytes.to_vec())),
@@ -572,8 +594,19 @@ where
             }
             last_ready = current_ready;
         }
-        drain_tunnel_session_runtime_frames(&mut socket, runtime)?;
-        match socket.read_optional_frame() {
+        let sent_runtime_frames = drain_tunnel_session_runtime_frames(&mut socket, runtime)?;
+        if !sent_runtime_frames {
+            if let Some(timeout) = runtime.tunnel_data_client_frame_wait_timeout() {
+                if drain_tunnel_session_runtime_frames_after_wait(&mut socket, runtime, timeout)? {
+                    continue;
+                }
+            }
+        }
+        let read_result = match runtime.tunnel_data_socket_idle_timeout() {
+            Some(timeout) => socket.read_optional_frame_with_timeout(timeout),
+            None => socket.read_optional_frame(),
+        };
+        match read_result {
             Ok(Some(bytes)) => handle_tunnel_data_session_frame(&mut socket, &bytes, runtime)?,
             Ok(None) => continue,
             Err(TransportError::SocketClosed) => return Ok(()),
@@ -668,22 +701,52 @@ where
 fn drain_tunnel_session_runtime_frames<S, R>(
     socket: &mut S,
     runtime: &mut R,
-) -> Result<(), TransportError>
+) -> Result<bool, TransportError>
 where
     S: TunnelDataSocket,
     R: TunnelSessionRuntime,
 {
+    let mut sent_any = false;
     loop {
         let frames = runtime.next_client_frames(64)?;
         if frames.is_empty() {
-            return Ok(());
+            return Ok(sent_any);
         }
-        for frame in frames {
-            let bytes = encode_frame(&frame)
-                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-            let _ = send_tunnel_data_frame(socket, &bytes)?;
-        }
+        send_tunnel_session_runtime_frame_batch(socket, frames)?;
+        sent_any = true;
     }
+}
+
+fn drain_tunnel_session_runtime_frames_after_wait<S, R>(
+    socket: &mut S,
+    runtime: &mut R,
+    timeout: Duration,
+) -> Result<bool, TransportError>
+where
+    S: TunnelDataSocket,
+    R: TunnelSessionRuntime,
+{
+    let frames = runtime.next_client_frames_after_wait(64, timeout)?;
+    if frames.is_empty() {
+        return Ok(false);
+    }
+    send_tunnel_session_runtime_frame_batch(socket, frames)?;
+    Ok(true)
+}
+
+fn send_tunnel_session_runtime_frame_batch<S>(
+    socket: &mut S,
+    frames: Vec<KtpFrame>,
+) -> Result<(), TransportError>
+where
+    S: TunnelDataSocket,
+{
+    for frame in frames {
+        let bytes = encode_frame(&frame)
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        let _ = send_tunnel_data_frame(socket, &bytes)?;
+    }
+    Ok(())
 }
 
 fn handle_tunnel_data_session_frame<S, R>(

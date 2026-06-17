@@ -316,6 +316,14 @@ pub trait TunnelSessionRuntime {
     ) -> Result<Vec<KtpFrame>, TransportError> {
         self.next_client_frames(max_frames)
     }
+
+    fn tunnel_data_client_frame_wait_timeout(&self) -> Option<Duration> {
+        None
+    }
+
+    fn tunnel_data_socket_idle_timeout(&self) -> Option<Duration> {
+        None
+    }
 }
 
 #[derive(Debug, Default)]
@@ -618,6 +626,14 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
         Ok(self
             .async_runtime
             .block_on(self.core.next_frames_after_wait(max_frames, timeout)))
+    }
+
+    fn tunnel_data_client_frame_wait_timeout(&self) -> Option<Duration> {
+        (self.data_transport == TUNNEL_DATA_TRANSPORT_KTP_TCP).then_some(Duration::from_micros(100))
+    }
+
+    fn tunnel_data_socket_idle_timeout(&self) -> Option<Duration> {
+        (self.data_transport == TUNNEL_DATA_TRANSPORT_KTP_TCP).then_some(Duration::from_millis(10))
     }
 }
 

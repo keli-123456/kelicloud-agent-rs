@@ -40,6 +40,7 @@ struct FakeTunnelDataSocket {
     send_count: usize,
     optional_read_hook: Option<OptionalReadHook>,
     optional_read_count: usize,
+    optional_read_timeouts: Vec<Duration>,
 }
 
 impl FakeTunnelDataTransport {
@@ -76,6 +77,7 @@ impl TunnelDataTransport for FakeTunnelDataTransport {
             send_count: 0,
             optional_read_hook: self.optional_read_hook.take(),
             optional_read_count: 0,
+            optional_read_timeouts: Vec::new(),
         })
     }
 }
@@ -109,6 +111,17 @@ impl TunnelDataSocket for FakeTunnelDataSocket {
             .remove(0)
             .map(Some)
             .map_err(|error| error.clone())
+    }
+
+    fn read_optional_frame_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("read_optional_timeout:{}us", timeout.as_micros()));
+        self.optional_read_timeouts.push(timeout);
+        self.read_optional_frame()
     }
 }
 
@@ -735,12 +748,100 @@ fn tunnel_data_session_sends_later_ready_before_runtime_frames() {
     );
 }
 
+struct RuntimeWaitOrderingRuntime {
+    events: Rc<RefCell<Vec<String>>>,
+    waited: bool,
+}
+
+impl TunnelSessionRuntime for RuntimeWaitOrderingRuntime {
+    fn next_client_frames_after_wait(
+        &mut self,
+        _max_frames: usize,
+        timeout: Duration,
+    ) -> Result<Vec<KtpFrame>, TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("runtime_wait:{}us", timeout.as_micros()));
+        if self.waited {
+            return Ok(Vec::new());
+        }
+        self.waited = true;
+        Ok(vec![KtpFrame {
+            frame_type: FrameType::SessionData,
+            leg: FrameLeg::Ingress,
+            flags: 0,
+            session_id: 88,
+            payload: b"waited".to_vec(),
+        }])
+    }
+
+    fn tunnel_data_client_frame_wait_timeout(&self) -> Option<Duration> {
+        Some(Duration::from_micros(100))
+    }
+
+    fn tunnel_data_socket_idle_timeout(&self) -> Option<Duration> {
+        Some(Duration::from_millis(10))
+    }
+}
+
+#[test]
+fn tunnel_data_session_waits_for_runtime_frames_before_idle_socket_read() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: None,
+    };
+    let mut runtime = RuntimeWaitOrderingRuntime {
+        events: Rc::clone(&events),
+        waited: false,
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-ktp"),
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should send waited runtime frame before idle read");
+
+    let events = events.borrow();
+    let wait_index = events
+        .iter()
+        .position(|event| event == "runtime_wait:100us")
+        .expect("runtime wait should be called");
+    let session_frame_index = events
+        .iter()
+        .position(|event| {
+            event.starts_with("frame:") && frame_type_from_event(event) == FrameType::SessionData
+        })
+        .expect("waited runtime frame should be sent");
+    let timeout_read_index = events
+        .iter()
+        .position(|event| event == "read_optional_timeout:10000us")
+        .expect("socket idle read should use runtime-provided timeout");
+
+    assert!(wait_index < timeout_read_index, "events: {events:?}");
+    assert!(
+        session_frame_index < timeout_read_index,
+        "waited runtime frame must be sent before idle socket read: {events:?}"
+    );
+}
+
 #[test]
 fn main_wires_tunnel_control_state_into_data_ready_source() {
     let source = std::fs::read_to_string("src/main.rs").expect("main source should be readable");
 
     assert!(source.contains("SharedTunnelRuleState::new()"));
     assert!(source.contains("TunnelTcpRuntime::new"));
+    assert!(source.contains("TunnelFrameReadyNotifier::new"));
+    assert!(source.contains("TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport"));
     assert!(source.contains("run_tunnel_control_once_with_rule_sink"));
     assert!(source.contains("run_tunnel_control_session_with_rule_sink"));
     assert!(source.contains("run_tunnel_data_session_with_ready_source_and_runtime"));
