@@ -1,7 +1,7 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN};
 use kelicloud_agent_rs::ktp_transport::{KtpCryptoDirection, KtpCryptoKey, KtpEncryptedTcpStream};
 use std::error::Error;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream};
 
 type BenchResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
@@ -10,6 +10,13 @@ type BenchResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 struct BenchConfig {
     frames: usize,
     payload_bytes: usize,
+    runs: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BenchSample {
+    bytes: usize,
+    elapsed: Duration,
 }
 
 fn main() {
@@ -41,6 +48,7 @@ fn main() {
 fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
     let mut frames = 4096usize;
     let mut payload_bytes = 16 * 1024usize;
+    let mut runs = 1usize;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -53,6 +61,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
                     "--payload-bytes",
                 )?
             }
+            "--runs" => runs = parse_positive_usize(next_value(&mut args, "--runs")?, "--runs")?,
             "--help" | "-h" => return Err("help requested".into()),
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
@@ -66,6 +75,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
     Ok(BenchConfig {
         frames,
         payload_bytes,
+        runs,
     })
 }
 
@@ -89,6 +99,33 @@ fn parse_positive_usize(raw: String, flag: &str) -> BenchResult<usize> {
 }
 
 async fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
+    let mut samples = Vec::with_capacity(config.runs);
+    for _ in 0..config.runs {
+        samples.push(run_benchmark_once(config).await?);
+    }
+    let bytes_per_run = config.frames * config.payload_bytes;
+    let total_bytes = samples.iter().map(|sample| sample.bytes).sum::<usize>();
+    let total_elapsed = samples
+        .iter()
+        .map(|sample| sample.elapsed)
+        .fold(Duration::ZERO, |total, elapsed| total + elapsed);
+    let elapsed_secs = total_elapsed.as_secs_f64().max(0.000_001);
+    let throughput_mib_s = (total_bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs;
+
+    Ok(format!(
+        "ktp_tunnel_bench carrier=encrypted_tcp direction=client_to_relay runs={} frames={} payload_bytes={} bytes={} bytes_per_run={} total_bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
+        config.runs,
+        config.frames,
+        config.payload_bytes,
+        bytes_per_run,
+        bytes_per_run,
+        total_bytes,
+        total_elapsed.as_secs_f64() * 1000.0,
+        throughput_mib_s
+    ))
+}
+
+async fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
     let key = KtpCryptoKey::from_bytes([0x42; 32]);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
@@ -137,19 +174,9 @@ async fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
     drop(client);
     let bytes = server.await??;
     let elapsed = started.elapsed();
-    let elapsed_secs = elapsed.as_secs_f64().max(0.000_001);
-    let throughput_mib_s = (bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs;
-
-    Ok(format!(
-        "ktp_tunnel_bench carrier=encrypted_tcp direction=client_to_relay frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
-        config.frames,
-        config.payload_bytes,
-        bytes,
-        elapsed.as_secs_f64() * 1000.0,
-        throughput_mib_s
-    ))
+    Ok(BenchSample { bytes, elapsed })
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-tunnel-bench [--frames N] [--payload-bytes BYTES]");
+    eprintln!("usage: ktp-tunnel-bench [--frames N] [--payload-bytes BYTES] [--runs N]");
 }

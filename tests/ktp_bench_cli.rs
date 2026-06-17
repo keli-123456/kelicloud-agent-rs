@@ -25,6 +25,30 @@ fn ktp_tunnel_bench_cli_reports_loopback_throughput() {
 }
 
 #[test]
+fn ktp_tunnel_bench_cli_can_average_multiple_runs() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-tunnel-bench")
+        .expect("ktp-tunnel-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args(["--frames", "2", "--payload-bytes", "128", "--runs", "2"])
+        .output()
+        .expect("ktp-tunnel-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-tunnel-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("runs=2"));
+    assert!(stdout.contains("frames=2"));
+    assert!(stdout.contains("bytes_per_run=256"));
+    assert!(stdout.contains("total_bytes=512"));
+    assert!(stdout.contains("throughput_mib_s="));
+}
+
+#[test]
 fn tunnel_relay_smoke_script_runs_ktp_tunnel_bench() {
     let script = std::fs::read_to_string("scripts/tunnel-relay-local-smoke.sh")
         .expect("smoke script should be readable");
