@@ -207,6 +207,60 @@ fn ktp_e2e_bench_cli_reports_custom_relay_batch_frames_when_requested() {
 }
 
 #[test]
+fn ktp_e2e_bench_cli_reports_adaptive_relay_batch_policy_when_requested() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--diagnostics",
+            "--relay-batch-policy",
+            "adaptive",
+            "--relay-batch-frames",
+            "64",
+            "--clients",
+            "4",
+            "--frames",
+            "2",
+            "--payload-bytes",
+            "128",
+        ])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-e2e-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("relay_batch_policy=adaptive"));
+    assert!(stdout.contains("relay_batch_frames=64"));
+    assert!(stdout.contains("relay_batch_frames_effective=32"));
+}
+
+#[test]
+fn ktp_e2e_bench_cli_rejects_unknown_relay_batch_policy() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args(["--relay-batch-policy", "random"])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        !output.status.success(),
+        "ktp-e2e-bench unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--relay-batch-policy must be fixed or adaptive"));
+}
+
+#[test]
 fn ktp_e2e_bench_cli_rejects_zero_relay_batch_frames() {
     let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
         .expect("ktp-e2e-bench binary should be built by cargo");

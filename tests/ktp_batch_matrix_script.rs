@@ -13,11 +13,14 @@ fn ktp_batch_matrix_script_sweeps_relay_batch_frames_with_rdp_like_defaults() {
     assert!(script.contains("--latency"));
     assert!(script.contains("--relay-wait-timeout-us"));
     assert!(script.contains("--relay-batch-frames"));
+    assert!(script.contains("KTP_BATCH_MATRIX_BATCH_POLICY"));
+    assert!(script.contains("--relay-batch-policy"));
     assert!(script.contains("relay_batch_frames=$batch"));
     assert!(script.contains("KTP_BATCH_MATRIX_CSV"));
     assert!(script.contains("write_csv_row"));
     assert!(script.contains("throughput_mib_s_median"));
     assert!(script.contains("rtt_client_p95_spread_micros"));
+    assert!(script.contains("relay_batch_frames_effective"));
 }
 
 #[test]
@@ -175,14 +178,15 @@ fn ktp_batch_matrix_script_writes_csv_from_bench_output_on_linux() {
     );
     let csv = std::fs::read_to_string(&csv_path).expect("CSV should be written");
     assert!(csv.contains("profile,runs,clients,frames,payload_bytes,relay_batch_frames"));
+    assert!(csv.contains("relay_batch_policy,relay_batch_frames_effective"));
     assert!(csv.contains(
         "rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max"
     ));
     assert!(csv.contains(
-        "rdp-like,1,1,8,1024,1,1.000,1.000,1.000,1.500,1.500,1.500,10,20,30,40,20,20,0,40,7,2,3,4,1,1"
+        "rdp-like,1,1,8,1024,1,fixed,1,1.000,1.000,1.000,1.500,1.500,1.500,10,20,30,40,20,20,0,40,7,2,3,4,1,1"
     ));
     assert!(csv.contains(
-        "rdp-like,1,1,8,1024,4,4.000,4.000,4.000,4.500,4.500,4.500,10,20,30,40,20,20,0,40,7,2,3,4,4,4"
+        "rdp-like,1,1,8,1024,4,fixed,4,4.000,4.000,4.000,4.500,4.500,4.500,10,20,30,40,20,20,0,40,7,2,3,4,4,4"
     ));
 }
 
@@ -203,10 +207,15 @@ fn fake_cargo_script() -> &'static str {
     r#"#!/usr/bin/env bash
 set -euo pipefail
 batch=""
+policy="fixed"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --relay-batch-frames)
       batch="$2"
+      shift 2
+      ;;
+    --relay-batch-policy)
+      policy="$2"
       shift 2
       ;;
     *)
@@ -218,6 +227,6 @@ if [[ -z "$batch" ]]; then
   echo "missing --relay-batch-frames" >&2
   exit 9
 fi
-echo "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile=rdp_like runs=1 clients=1 frames=8 payload_bytes=1024 bytes=1472 elapsed_ms=${batch}.000 throughput_mib_s=${batch}.500 rtt_micros_samples=8 rtt_micros_p50=10 rtt_micros_p95=20 rtt_micros_p99=30 rtt_micros_max=40 rtt_client_p95_micros_min=20 rtt_client_p95_micros_max=20 rtt_client_p95_spread_micros=0 rtt_client_max_micros_max=40 relay_batch_frames=${batch} relay_turns=7 relay_empty_turns=0 relay_yield_turns=6 relay_wait_turns=2 ingress_frames=9 egress_frames=8 ingress_data_frames=8 egress_data_frames=8 ingress_batches=3 egress_batches=4 ingress_max_batch_frames=${batch} egress_max_batch_frames=${batch}"
+echo "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile=rdp_like runs=1 clients=1 frames=8 payload_bytes=1024 bytes=1472 elapsed_ms=${batch}.000 throughput_mib_s=${batch}.500 rtt_micros_samples=8 rtt_micros_p50=10 rtt_micros_p95=20 rtt_micros_p99=30 rtt_micros_max=40 rtt_client_p95_micros_min=20 rtt_client_p95_micros_max=20 rtt_client_p95_spread_micros=0 rtt_client_max_micros_max=40 relay_batch_policy=${policy} relay_batch_frames=${batch} relay_batch_frames_effective=${batch} relay_turns=7 relay_empty_turns=0 relay_yield_turns=6 relay_wait_turns=2 ingress_frames=9 egress_frames=8 ingress_data_frames=8 egress_data_frames=8 ingress_batches=3 egress_batches=4 ingress_max_batch_frames=${batch} egress_max_batch_frames=${batch}"
 "#
 }

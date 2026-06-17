@@ -612,6 +612,48 @@ Notes:
   batches for low concurrency, then reduce the effective drain cap when active
   sessions are high or client p95 spread grows.
 
+## 2026-06-18 KTP Adaptive Batch Policy Smoke
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Base commit: `f39a882`
+- Patch: benchmark-only `--relay-batch-policy fixed|adaptive`
+- End-to-end binary: `ktp-e2e-bench`
+- Run directory: `/root/kelicloud-agent-rs-adaptive-batch-20260618a`
+
+Command shape:
+
+```bash
+KTP_BATCH_MATRIX_CLIENTS="4 8" \
+KTP_BATCH_MATRIX_BATCHES="64" \
+KTP_BATCH_MATRIX_BATCH_POLICY=<fixed|adaptive> \
+KTP_BATCH_MATRIX_RUNS=3 \
+KTP_BATCH_MATRIX_FRAMES=64 \
+KTP_BATCH_MATRIX_PAYLOAD_BYTES=8192 \
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-adaptive-<policy>-smoke.csv \
+  bash scripts/ktp-relay-batch-matrix.sh
+```
+
+Smoke comparison:
+
+| Policy | Clients | Configured Batch | Effective Batch | Throughput Median | RTT p95 | RTT p99 | RTT Max | Client p95 Spread |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fixed | 4 | 64 | 64 | 9.373 MiB/s | 1127 us | 1892 us | 2641 us | 181 us |
+| adaptive | 4 | 64 | 32 | 12.219 MiB/s | 499 us | 1150 us | 2898 us | 221 us |
+| fixed | 8 | 64 | 64 | 16.648 MiB/s | 1015 us | 1898 us | 3455 us | 389 us |
+| adaptive | 8 | 64 | 16 | 15.988 MiB/s | 959 us | 1670 us | 2963 us | 532 us |
+
+Notes:
+
+- The adaptive policy is intentionally benchmark-only in this patch. Production
+  runtime behavior remains fixed unless a future runtime change opts in.
+- At four clients, the adaptive cap improved median throughput and global RTT
+  p95/p99 on this smoke run.
+- At eight clients, adaptive reduced global p95/p99/max but slightly reduced
+  median throughput and widened client p95 spread. This needs a larger matrix
+  before becoming the default scheduling policy.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
