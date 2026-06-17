@@ -16,9 +16,53 @@ use std::time::{Duration, Instant};
 type BenchResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 const RELAY_BATCH_FRAMES: usize = 64;
+const RDP_LIKE_PAYLOAD_PATTERN: [usize; 16] = [
+    96, 128, 160, 96, 512, 128, 96, 256, 1024, 128, 96, 160, 4096, 192, 96, 8192,
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BenchProfile {
+    Fixed,
+    RdpLike,
+}
+
+impl BenchProfile {
+    fn parse(raw: &str) -> BenchResult<Self> {
+        match raw {
+            "fixed" => Ok(Self::Fixed),
+            "rdp-like" | "rdp_like" => Ok(Self::RdpLike),
+            _ => Err("--profile must be fixed or rdp-like".into()),
+        }
+    }
+
+    fn report_value(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::RdpLike => "rdp_like",
+        }
+    }
+
+    fn payload_len(self, max_payload_bytes: usize, frame_index: usize) -> usize {
+        match self {
+            Self::Fixed => max_payload_bytes,
+            Self::RdpLike => {
+                let pattern_payload =
+                    RDP_LIKE_PAYLOAD_PATTERN[frame_index % RDP_LIKE_PAYLOAD_PATTERN.len()];
+                pattern_payload.min(max_payload_bytes).max(1)
+            }
+        }
+    }
+
+    fn bytes_per_client(self, frames: usize, max_payload_bytes: usize) -> usize {
+        (0..frames)
+            .map(|frame_index| self.payload_len(max_payload_bytes, frame_index))
+            .sum()
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct BenchConfig {
+    profile: BenchProfile,
     runs: usize,
     clients: usize,
     frames: usize,
@@ -26,6 +70,15 @@ struct BenchConfig {
     diagnostics: bool,
     latency: bool,
     relay_wait_timeout: Duration,
+}
+
+impl BenchConfig {
+    fn total_payload_bytes(self) -> usize {
+        self.clients
+            * self
+                .profile
+                .bytes_per_client(self.frames, self.payload_bytes)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -72,6 +125,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
     let mut clients = 1usize;
     let mut frames = 1024usize;
     let mut payload_bytes = 1024usize;
+    let mut profile = BenchProfile::Fixed;
     let mut diagnostics = false;
     let mut latency = false;
     let mut relay_wait_timeout = Duration::ZERO;
@@ -100,11 +154,13 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
                     "--payload-bytes",
                 )?
             }
+            "--profile" => profile = BenchProfile::parse(&next_value(&mut args, "--profile")?)?,
             "--help" | "-h" => return Err("help requested".into()),
             _ => return Err(format!("unknown argument: {arg}").into()),
         }
     }
     Ok(BenchConfig {
+        profile,
         runs,
         clients,
         frames,
@@ -147,6 +203,7 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
     let target_addr = target.local_addr()?;
     let frames = config.frames;
     let payload_bytes = config.payload_bytes;
+    let profile = config.profile;
     let clients = config.clients;
     let echo_thread = thread::spawn(move || -> std::io::Result<()> {
         let mut handles = Vec::with_capacity(clients);
@@ -154,9 +211,10 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
             let (mut stream, _) = target.accept()?;
             let handle = thread::spawn(move || -> std::io::Result<()> {
                 let mut buffer = vec![0u8; payload_bytes];
-                for _ in 0..frames {
-                    stream.read_exact(&mut buffer)?;
-                    stream.write_all(&buffer)?;
+                for frame_index in 0..frames {
+                    let payload_len = profile.payload_len(payload_bytes, frame_index);
+                    stream.read_exact(&mut buffer[..payload_len])?;
+                    stream.write_all(&buffer[..payload_len])?;
                 }
                 Ok(())
             });
@@ -201,10 +259,11 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
                 } else {
                     Vec::new()
                 };
-                for _ in 0..frames {
+                for frame_index in 0..frames {
+                    let payload_len = config.profile.payload_len(payload_bytes, frame_index);
                     let round_started = collect_latency.then(Instant::now);
-                    stream.write_all(&payload)?;
-                    stream.read_exact(&mut response)?;
+                    stream.write_all(&payload[..payload_len])?;
+                    stream.read_exact(&mut response[..payload_len])?;
                     if let Some(round_started) = round_started {
                         latency_micros.push(round_started.elapsed().as_micros() as u64);
                     }
@@ -214,7 +273,7 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
         })
         .collect::<Vec<_>>();
 
-    let bytes = config.clients * config.frames * config.payload_bytes;
+    let bytes = config.total_payload_bytes();
     let started = Instant::now();
     let relay_stats = relay_data_batches(
         &mut ingress_runtime,
@@ -244,11 +303,12 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
 }
 
 fn format_report(config: BenchConfig, samples: &[BenchSample]) -> String {
-    let bytes = config.clients * config.frames * config.payload_bytes;
+    let bytes = config.total_payload_bytes();
     if samples.len() == 1 {
         let sample = &samples[0];
         return format!(
-            "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}{}",
+            "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile={} runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}{}",
+            config.profile.report_value(),
             config.runs,
             config.clients,
             config.frames,
@@ -272,7 +332,8 @@ fn format_report(config: BenchConfig, samples: &[BenchSample]) -> String {
     throughput_values.sort_by(f64::total_cmp);
 
     format!(
-        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms_min={:.3} elapsed_ms_median={:.3} elapsed_ms_max={:.3} throughput_mib_s_min={:.3} throughput_mib_s_median={:.3} throughput_mib_s_max={:.3}{}",
+        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile={} runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms_min={:.3} elapsed_ms_median={:.3} elapsed_ms_max={:.3} throughput_mib_s_min={:.3} throughput_mib_s_median={:.3} throughput_mib_s_max={:.3}{}",
+        config.profile.report_value(),
         config.runs,
         config.clients,
         config.frames,
@@ -514,5 +575,5 @@ fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--latency] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
+    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--latency] [--profile fixed|rdp-like] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
 }

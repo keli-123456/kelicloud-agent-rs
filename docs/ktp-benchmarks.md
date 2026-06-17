@@ -143,6 +143,17 @@ client threads and appends `rtt_micros_samples`, `rtt_micros_p50`,
 off for raw throughput-only samples; turn it on when comparing small-frame
 interactive paths such as RDP-like forwarding.
 
+Runtime RDP-like mixed-payload evidence:
+
+```bash
+./target/release/ktp-e2e-bench --profile rdp-like --diagnostics --latency --relay-wait-timeout-us 100 --runs 3 --clients <N> --frames <N> --payload-bytes <MAX_BYTES>
+```
+
+The RDP-like profile keeps the same ingress-to-egress runtime path but sends a
+deterministic mix of small interactive frames and occasional larger refresh
+bursts. In this mode, `--payload-bytes` is the cap for any one benchmark frame,
+and the report's `bytes` field is the aggregate mixed-payload byte count.
+
 Live KTP tunnel diagnostics evidence:
 
 ```bash
@@ -343,6 +354,8 @@ Notes:
 Next evidence to collect:
 
 - Repeated multi-client runs with higher sample counts and percentile summaries.
+- Release-host samples for `ktp-e2e-bench --profile rdp-like` so tunnel tuning
+  compares interactive mixed-payload traffic instead of fixed-size frames only.
 - Before/after diagnostics for production data carrier scheduling changes.
 - Inspect the next GitHub Actions KTP local-backend artifact and keep it as the
   release evidence source instead of relying on one-off remote host paths.

@@ -199,3 +199,61 @@ fn ktp_e2e_bench_cli_reports_latency_percentiles_when_requested() {
     assert!(stdout.contains("rtt_micros_p99="));
     assert!(stdout.contains("rtt_micros_max="));
 }
+
+#[test]
+fn ktp_e2e_bench_cli_reports_rdp_like_profile_metrics() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--profile",
+            "rdp-like",
+            "--latency",
+            "--diagnostics",
+            "--relay-wait-timeout-us",
+            "100",
+            "--clients",
+            "1",
+            "--frames",
+            "13",
+            "--payload-bytes",
+            "1024",
+        ])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-e2e-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("profile=rdp_like"));
+    assert!(stdout.contains("frames=13"));
+    assert!(stdout.contains("payload_bytes=1024"));
+    assert!(stdout.contains("bytes=3904"));
+    assert!(stdout.contains("rtt_micros_samples=13"));
+    assert!(stdout.contains("relay_turns="));
+}
+
+#[test]
+fn ktp_e2e_bench_cli_rejects_unknown_profile() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args(["--profile", "udp"])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        !output.status.success(),
+        "ktp-e2e-bench unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--profile must be fixed or rdp-like"));
+}
