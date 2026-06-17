@@ -686,6 +686,29 @@ This two-run smoke confirms the compare path and CSV shape. It also shows why
 larger same-host matrices are required before promoting adaptive scheduling:
 the short sample contradicted the earlier three-run smoke at four clients.
 
+Policy summary gate:
+
+- `ktp-policy-summary <csv>` reads a relay batch matrix CSV and pairs fixed and
+  adaptive rows by `clients` and `relay_batch_frames`.
+- Verdicts are intentionally conservative:
+  - `adaptive_better` only when median throughput is no worse, RTT p95 is no
+    worse, and client p95 spread is no worse.
+  - `fixed_better` when adaptive regresses all three primary metrics.
+  - `mixed` for trade-offs that require human review before runtime changes.
+
+Validation command:
+
+```bash
+cargo run --release --bin ktp-policy-summary -- /tmp/ktp-policy-compare-smoke.csv
+```
+
+Validation output:
+
+```text
+ktp_policy_summary rows=2 pairs=1
+clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=32 throughput_delta_pct=-39.94 rtt_p95_delta_pct=53.42 client_p95_spread_delta_pct=729.84 verdict=fixed_better
+```
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
