@@ -66,6 +66,40 @@ fn ktp_batch_matrix_script_dry_run_expands_each_batch_on_linux() {
 }
 
 #[test]
+fn ktp_batch_matrix_script_dry_run_expands_each_client_and_batch_on_linux() {
+    if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+
+    let output = Command::new("bash")
+        .env("KTP_BATCH_MATRIX_DRY_RUN", "1")
+        .env("KTP_BATCH_MATRIX_CLIENTS", "1 4")
+        .env("KTP_BATCH_MATRIX_BATCHES", "16 32")
+        .env("KTP_BATCH_MATRIX_RUNS", "2")
+        .env("KTP_BATCH_MATRIX_FRAMES", "8")
+        .env("KTP_BATCH_MATRIX_PAYLOAD_BYTES", "1024")
+        .args(["scripts/ktp-relay-batch-matrix.sh"])
+        .output()
+        .expect("batch matrix dry-run should run");
+
+    assert!(
+        output.status.success(),
+        "batch matrix dry-run failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("dry_run:").count(), 4);
+    assert!(stdout.contains("clients=1 relay_batch_frames=16"));
+    assert!(stdout.contains("clients=1 relay_batch_frames=32"));
+    assert!(stdout.contains("clients=4 relay_batch_frames=16"));
+    assert!(stdout.contains("clients=4 relay_batch_frames=32"));
+    assert!(stdout.contains("--clients 1"));
+    assert!(stdout.contains("--clients 4"));
+    assert!(!stdout.contains("--clients '1 4'"));
+}
+
+#[test]
 fn ktp_batch_matrix_script_dry_run_does_not_create_csv_on_linux() {
     if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
         return;

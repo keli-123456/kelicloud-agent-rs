@@ -52,8 +52,9 @@ required_metric_value() {
 }
 
 write_csv_row() {
-  local batch="$1"
-  local output="$2"
+  local clients="$1"
+  local batch="$2"
+  local output="$3"
   local elapsed_ms_min elapsed_ms_median elapsed_ms_max
   local throughput_mib_s_min throughput_mib_s_median throughput_mib_s_max
   local rtt_micros_p50 rtt_micros_p95 rtt_micros_p99 rtt_micros_max
@@ -80,7 +81,7 @@ write_csv_row() {
   printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "${PROFILE}" \
     "${RUNS}" \
-    "${CLIENTS}" \
+    "${clients}" \
     "${FRAMES}" \
     "${PAYLOAD_BYTES}" \
     "${batch}" \
@@ -115,33 +116,40 @@ if [[ -n "${CSV_PATH}" ]]; then
   fi
 fi
 
-for batch in ${BATCHES}; do
-  if ! [[ "${batch}" =~ ^[0-9]+$ ]] || [[ "${batch}" == "0" ]]; then
-    echo "invalid relay batch frame count: ${batch}" >&2
+for clients in ${CLIENTS}; do
+  if ! [[ "${clients}" =~ ^[0-9]+$ ]] || [[ "${clients}" == "0" ]]; then
+    echo "invalid client count: ${clients}" >&2
     exit 2
   fi
 
-  echo "== relay_batch_frames=$batch =="
-  cmd=(cargo run --release --bin ktp-e2e-bench -- \
-    --profile "${PROFILE}" \
-    --diagnostics \
-    --latency \
-    --relay-wait-timeout-us "${RELAY_WAIT_TIMEOUT_US}" \
-    --runs "${RUNS}" \
-    --clients "${CLIENTS}" \
-    --frames "${FRAMES}" \
-    --payload-bytes "${PAYLOAD_BYTES}" \
-    --relay-batch-frames "${batch}")
-
-  if [[ "${DRY_RUN}" == "1" ]]; then
-    printf 'dry_run:'
-    printf ' %q' "${cmd[@]}"
-    printf '\n'
-  else
-    output="$("${cmd[@]}")"
-    printf '%s\n' "${output}"
-    if [[ -n "${CSV_PATH}" ]]; then
-      write_csv_row "${batch}" "${output}"
+  for batch in ${BATCHES}; do
+    if ! [[ "${batch}" =~ ^[0-9]+$ ]] || [[ "${batch}" == "0" ]]; then
+      echo "invalid relay batch frame count: ${batch}" >&2
+      exit 2
     fi
-  fi
+
+    echo "== clients=${clients} relay_batch_frames=$batch =="
+    cmd=(cargo run --release --bin ktp-e2e-bench -- \
+      --profile "${PROFILE}" \
+      --diagnostics \
+      --latency \
+      --relay-wait-timeout-us "${RELAY_WAIT_TIMEOUT_US}" \
+      --runs "${RUNS}" \
+      --clients "${clients}" \
+      --frames "${FRAMES}" \
+      --payload-bytes "${PAYLOAD_BYTES}" \
+      --relay-batch-frames "${batch}")
+
+    if [[ "${DRY_RUN}" == "1" ]]; then
+      printf 'dry_run:'
+      printf ' %q' "${cmd[@]}"
+      printf '\n'
+    else
+      output="$("${cmd[@]}")"
+      printf '%s\n' "${output}"
+      if [[ -n "${CSV_PATH}" ]]; then
+        write_csv_row "${clients}" "${batch}" "${output}"
+      fi
+    fi
+  done
 done
