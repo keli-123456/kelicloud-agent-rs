@@ -4,7 +4,7 @@ use kelicloud_agent_rs::ktp::{
 };
 use kelicloud_agent_rs::ktp_transport::{
     KtpCryptoDirection, KtpCryptoKey, KtpCryptoOpen, KtpCryptoRecordCodec, KtpCryptoSeal,
-    KtpEncryptedTcpStream, KtpStreamCodec, KtpStreamCodecError,
+    KtpEncryptedTcpFrameRelay, KtpEncryptedTcpStream, KtpStreamCodec, KtpStreamCodecError,
 };
 use tokio::net::{TcpListener, TcpStream};
 
@@ -282,6 +282,78 @@ fn encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips() {
     });
 }
 
+#[test]
+fn encrypted_tcp_frame_relay_forwards_between_two_endpoints() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(4)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let relay_key = key.clone();
+        let relay_task = tokio::spawn(async move {
+            let (left_stream, _) = listener.accept().await.expect("accept left");
+            let (right_stream, _) = listener.accept().await.expect("accept right");
+            let left = KtpEncryptedTcpStream::from_stream(
+                left_stream,
+                relay_key.clone(),
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            let right = KtpEncryptedTcpStream::from_stream(
+                right_stream,
+                relay_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            let mut relay = KtpEncryptedTcpFrameRelay::new(left, right);
+            let forwarded = relay
+                .relay_next_left_to_right()
+                .await
+                .expect("relay request");
+            assert_eq!(forwarded.session_id, 1201);
+            let forwarded = relay
+                .relay_next_right_to_left()
+                .await
+                .expect("relay response");
+            assert_eq!(forwarded.session_id, 1202);
+            assert_eq!(relay.stats().frames_left_to_right, 1);
+            assert_eq!(relay.stats().frames_right_to_left, 1);
+        });
+
+        let mut left_client = connect_encrypted_client(addr, key.clone()).await;
+        let mut right_client = connect_encrypted_client(addr, key).await;
+        left_client
+            .send_frame(&session_data(1201, b"from left"))
+            .await
+            .expect("send left");
+        assert_eq!(
+            right_client.next_frame().await.expect("right receives"),
+            session_data(1201, b"from left")
+        );
+        right_client
+            .send_frame(&session_data(1202, b"from right"))
+            .await
+            .expect("send right");
+        assert_eq!(
+            left_client.next_frame().await.expect("left receives"),
+            session_data(1202, b"from right")
+        );
+        relay_task.await.expect("relay task");
+    });
+}
+
 fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
     KtpFrame {
         frame_type: FrameType::SessionData,
@@ -294,4 +366,19 @@ fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
 
 fn test_crypto_key() -> KtpCryptoKey {
     KtpCryptoKey::from_bytes([7u8; 32])
+}
+
+async fn connect_encrypted_client(
+    addr: std::net::SocketAddr,
+    key: KtpCryptoKey,
+) -> KtpEncryptedTcpStream {
+    let stream = TcpStream::connect(addr).await.expect("connect client");
+    KtpEncryptedTcpStream::from_stream(
+        stream,
+        key,
+        KtpCryptoDirection::ClientToRelay,
+        KtpCryptoDirection::RelayToClient,
+        KTP_MAX_PAYLOAD_LEN,
+        1024 * 1024,
+    )
 }

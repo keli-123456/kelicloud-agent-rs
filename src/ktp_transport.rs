@@ -466,3 +466,43 @@ impl KtpEncryptedTcpStream {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct KtpEncryptedTcpRelayStats {
+    pub frames_left_to_right: u64,
+    pub frames_right_to_left: u64,
+}
+
+pub struct KtpEncryptedTcpFrameRelay {
+    left: KtpEncryptedTcpStream,
+    right: KtpEncryptedTcpStream,
+    stats: KtpEncryptedTcpRelayStats,
+}
+
+impl KtpEncryptedTcpFrameRelay {
+    pub fn new(left: KtpEncryptedTcpStream, right: KtpEncryptedTcpStream) -> Self {
+        Self {
+            left,
+            right,
+            stats: KtpEncryptedTcpRelayStats::default(),
+        }
+    }
+
+    pub fn stats(&self) -> KtpEncryptedTcpRelayStats {
+        self.stats
+    }
+
+    pub async fn relay_next_left_to_right(&mut self) -> Result<KtpFrame, KtpTcpTransportError> {
+        let frame = self.left.next_frame().await?;
+        self.right.send_frame(&frame).await?;
+        self.stats.frames_left_to_right += 1;
+        Ok(frame)
+    }
+
+    pub async fn relay_next_right_to_left(&mut self) -> Result<KtpFrame, KtpTcpTransportError> {
+        let frame = self.right.next_frame().await?;
+        self.left.send_frame(&frame).await?;
+        self.stats.frames_right_to_left += 1;
+        Ok(frame)
+    }
+}
