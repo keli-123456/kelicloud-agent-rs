@@ -9,6 +9,7 @@ use kelicloud_agent_rs::tunnel_session::{
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream};
 
@@ -70,6 +71,24 @@ fn async_frame_queue_drains_fifo_batches() {
         vec![3]
     );
     assert!(queue.is_empty());
+}
+
+#[test]
+fn async_frame_queue_drain_after_wait_wakes_when_frame_is_pushed() {
+    let queue = AsyncTunnelFrameQueue::new(4);
+    let producer = queue.clone();
+    let producer_thread = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        producer
+            .try_push(frame(9, b"late"))
+            .expect("push delayed frame");
+    });
+
+    let frames = queue.drain_after_wait(4, Duration::from_secs(1));
+
+    producer_thread.join().expect("producer should finish");
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].session_id, 9);
 }
 
 #[test]

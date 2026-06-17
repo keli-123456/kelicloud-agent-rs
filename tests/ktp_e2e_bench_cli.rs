@@ -140,6 +140,8 @@ fn ktp_e2e_bench_cli_reports_relay_diagnostics_when_requested() {
     let output = Command::new(exe)
         .args([
             "--diagnostics",
+            "--relay-wait-timeout-us",
+            "100",
             "--clients",
             "2",
             "--frames",
@@ -160,6 +162,7 @@ fn ktp_e2e_bench_cli_reports_relay_diagnostics_when_requested() {
     assert!(stdout.contains("relay_turns="));
     assert!(stdout.contains("relay_empty_turns="));
     assert!(stdout.contains("relay_yield_turns="));
+    assert!(stdout.contains("relay_wait_turns="));
     assert!(stdout.contains("ingress_frames="));
     assert!(stdout.contains("egress_frames="));
     assert!(stdout.contains("ingress_data_frames="));

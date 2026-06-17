@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct SharedTunnelRuleState {
@@ -306,6 +307,14 @@ pub trait TunnelSessionRuntime {
         }
         Ok(frames)
     }
+
+    fn next_client_frames_after_wait(
+        &mut self,
+        max_frames: usize,
+        _timeout: Duration,
+    ) -> Result<Vec<KtpFrame>, TransportError> {
+        self.next_client_frames(max_frames)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -573,6 +582,16 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
         Ok(self
             .async_runtime
             .block_on(self.core.next_frames(max_frames)))
+    }
+
+    fn next_client_frames_after_wait(
+        &mut self,
+        max_frames: usize,
+        timeout: Duration,
+    ) -> Result<Vec<KtpFrame>, TransportError> {
+        Ok(self
+            .async_runtime
+            .block_on(self.core.next_frames_after_wait(max_frames, timeout)))
     }
 }
 

@@ -22,6 +22,7 @@ struct BenchConfig {
     frames: usize,
     payload_bytes: usize,
     diagnostics: bool,
+    relay_wait_timeout: Duration,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -36,6 +37,7 @@ struct RelayStats {
     relay_turns: usize,
     relay_empty_turns: usize,
     relay_yield_turns: usize,
+    relay_wait_turns: usize,
     ingress_frames: usize,
     egress_frames: usize,
     ingress_data_frames: usize,
@@ -67,10 +69,18 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
     let mut frames = 1024usize;
     let mut payload_bytes = 1024usize;
     let mut diagnostics = false;
+    let mut relay_wait_timeout = Duration::ZERO;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--diagnostics" => diagnostics = true,
+            "--relay-wait-timeout-us" => {
+                let micros = parse_positive_usize(
+                    next_value(&mut args, "--relay-wait-timeout-us")?,
+                    "--relay-wait-timeout-us",
+                )?;
+                relay_wait_timeout = Duration::from_micros(micros as u64);
+            }
             "--runs" => runs = parse_positive_usize(next_value(&mut args, "--runs")?, "--runs")?,
             "--clients" => {
                 clients = parse_positive_usize(next_value(&mut args, "--clients")?, "--clients")?
@@ -94,6 +104,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
         frames,
         payload_bytes,
         diagnostics,
+        relay_wait_timeout,
     })
 }
 
@@ -186,7 +197,12 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
 
     let bytes = config.clients * config.frames * config.payload_bytes;
     let started = Instant::now();
-    let relay_stats = relay_data_batches(&mut ingress_runtime, &mut egress_runtime, bytes)?;
+    let relay_stats = relay_data_batches(
+        &mut ingress_runtime,
+        &mut egress_runtime,
+        bytes,
+        config.relay_wait_timeout,
+    )?;
     for client_thread in client_threads {
         client_thread
             .join()
@@ -258,16 +274,18 @@ fn diagnostics_suffix(config: BenchConfig, samples: &[BenchSample]) -> String {
         total.relay_turns += sample.relay_stats.relay_turns;
         total.relay_empty_turns += sample.relay_stats.relay_empty_turns;
         total.relay_yield_turns += sample.relay_stats.relay_yield_turns;
+        total.relay_wait_turns += sample.relay_stats.relay_wait_turns;
         total.ingress_frames += sample.relay_stats.ingress_frames;
         total.egress_frames += sample.relay_stats.egress_frames;
         total.ingress_data_frames += sample.relay_stats.ingress_data_frames;
         total.egress_data_frames += sample.relay_stats.egress_data_frames;
     }
     format!(
-        " relay_turns={} relay_empty_turns={} relay_yield_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={}",
+        " relay_turns={} relay_empty_turns={} relay_yield_turns={} relay_wait_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={}",
         total.relay_turns,
         total.relay_empty_turns,
         total.relay_yield_turns,
+        total.relay_wait_turns,
         total.ingress_frames,
         total.egress_frames,
         total.ingress_data_frames,
@@ -288,6 +306,7 @@ fn relay_data_batches(
     ingress_runtime: &mut TunnelTcpRuntime,
     egress_runtime: &mut TunnelTcpRuntime,
     expected_bytes: usize,
+    relay_wait_timeout: Duration,
 ) -> BenchResult<RelayStats> {
     let mut ingress_bytes = 0usize;
     let mut egress_bytes = 0usize;
@@ -296,7 +315,19 @@ fn relay_data_batches(
     while egress_bytes < expected_bytes {
         stats.relay_turns += 1;
         let mut frames_this_turn = 0usize;
-        for frame in ingress_runtime.next_client_frames(RELAY_BATCH_FRAMES)? {
+        let mut ingress_frames = ingress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
+        let mut egress_frames = egress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
+        if ingress_frames.is_empty() && egress_frames.is_empty() && !relay_wait_timeout.is_zero() {
+            stats.relay_wait_turns += 1;
+            ingress_frames = ingress_runtime
+                .next_client_frames_after_wait(RELAY_BATCH_FRAMES, relay_wait_timeout)?;
+            if ingress_frames.is_empty() {
+                egress_frames = egress_runtime
+                    .next_client_frames_after_wait(RELAY_BATCH_FRAMES, relay_wait_timeout)?;
+            }
+        }
+
+        for frame in ingress_frames {
             stats.ingress_frames += 1;
             frames_this_turn += 1;
             if frame.frame_type == FrameType::SessionData {
@@ -308,7 +339,7 @@ fn relay_data_batches(
                 ingress_runtime.handle_server_frame(to_leg(response, FrameLeg::Ingress))?;
             }
         }
-        for frame in egress_runtime.next_client_frames(RELAY_BATCH_FRAMES)? {
+        for frame in egress_frames {
             stats.egress_frames += 1;
             frames_this_turn += 1;
             if frame.frame_type == FrameType::SessionData {
@@ -383,5 +414,5 @@ fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
+    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
 }

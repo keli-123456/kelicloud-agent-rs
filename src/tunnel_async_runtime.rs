@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -79,32 +79,43 @@ impl Error for TunnelRuntimeError {}
 
 #[derive(Clone, Debug)]
 pub struct AsyncTunnelFrameQueue {
-    inner: Arc<Mutex<VecDeque<KtpFrame>>>,
+    inner: Arc<AsyncTunnelFrameQueueInner>,
     capacity: usize,
+}
+
+#[derive(Debug)]
+struct AsyncTunnelFrameQueueInner {
+    frames: Mutex<VecDeque<KtpFrame>>,
+    ready: Condvar,
 }
 
 impl AsyncTunnelFrameQueue {
     pub fn new(capacity: usize) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(VecDeque::new())),
+            inner: Arc::new(AsyncTunnelFrameQueueInner {
+                frames: Mutex::new(VecDeque::new()),
+                ready: Condvar::new(),
+            }),
             capacity,
         }
     }
 
     pub fn try_push(&self, frame: KtpFrame) -> Result<(), TunnelRuntimeError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .map_err(|_| TunnelRuntimeError::runtime_unavailable("frame queue is unavailable"))?;
+        let mut inner =
+            self.inner.frames.lock().map_err(|_| {
+                TunnelRuntimeError::runtime_unavailable("frame queue is unavailable")
+            })?;
         if inner.len() >= self.capacity {
             return Err(TunnelRuntimeError::backpressure_limit());
         }
         inner.push_back(frame);
+        self.inner.ready.notify_one();
         Ok(())
     }
 
     pub fn pop(&self) -> Option<KtpFrame> {
         self.inner
+            .frames
             .lock()
             .ok()
             .and_then(|mut inner| inner.pop_front())
@@ -114,15 +125,36 @@ impl AsyncTunnelFrameQueue {
         if max_frames == 0 {
             return Vec::new();
         }
-        let Ok(mut inner) = self.inner.lock() else {
+        let Ok(mut inner) = self.inner.frames.lock() else {
             return Vec::new();
         };
         let count = max_frames.min(inner.len());
         inner.drain(..count).collect()
     }
 
+    pub fn drain_after_wait(&self, max_frames: usize, timeout: Duration) -> Vec<KtpFrame> {
+        if max_frames == 0 {
+            return Vec::new();
+        }
+        let Ok(mut inner) = self.inner.frames.lock() else {
+            return Vec::new();
+        };
+        if inner.is_empty() && !timeout.is_zero() {
+            let Ok((waited_inner, _)) = self.inner.ready.wait_timeout(inner, timeout) else {
+                return Vec::new();
+            };
+            inner = waited_inner;
+        }
+        let count = max_frames.min(inner.len());
+        inner.drain(..count).collect()
+    }
+
     pub fn len(&self) -> usize {
-        self.inner.lock().map(|inner| inner.len()).unwrap_or(0)
+        self.inner
+            .frames
+            .lock()
+            .map(|inner| inner.len())
+            .unwrap_or(0)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -408,6 +440,14 @@ impl AsyncTunnelCore {
 
     pub async fn next_frames(&self, max_frames: usize) -> Vec<KtpFrame> {
         self.outbound.drain(max_frames)
+    }
+
+    pub async fn next_frames_after_wait(
+        &self,
+        max_frames: usize,
+        timeout: Duration,
+    ) -> Vec<KtpFrame> {
+        self.outbound.drain_after_wait(max_frames, timeout)
     }
 
     pub async fn close_session(
