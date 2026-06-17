@@ -38,6 +38,7 @@ fn tunnel_relay_smoke_script_can_run_optional_policy_gate() {
     assert!(script.contains("== ktp relay batch policy gate =="));
     assert!(script.contains("scripts/ktp-relay-batch-matrix.sh"));
     assert!(script.contains("KTP_BATCH_MATRIX_CSV"));
+    assert!(script.contains("KTP_BATCH_MATRIX_RUNS:-5"));
     assert!(script.contains("KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1"));
 }
 

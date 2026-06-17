@@ -85,8 +85,8 @@ impl RelayBatchPolicy {
     fn effective_batch_frames(self, configured_batch_frames: usize, clients: usize) -> usize {
         match self {
             Self::Fixed => configured_batch_frames,
-            Self::Adaptive if clients >= 8 => configured_batch_frames.min(16),
-            Self::Adaptive if clients >= 4 => configured_batch_frames.min(32),
+            Self::Adaptive if clients >= 16 => configured_batch_frames.min(16),
+            Self::Adaptive if clients >= 8 => configured_batch_frames.min(32),
             Self::Adaptive => configured_batch_frames,
         }
     }

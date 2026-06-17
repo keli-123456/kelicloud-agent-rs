@@ -169,6 +169,10 @@ fn percent_delta(candidate: f64, baseline: f64) -> f64 {
 }
 
 fn verdict(fixed: &PolicyRow, adaptive: &PolicyRow) -> &'static str {
+    if fixed.effective_batch_frames == adaptive.effective_batch_frames {
+        return "same_effective";
+    }
+
     let throughput_improved = adaptive.throughput_mib_s_median >= fixed.throughput_mib_s_median;
     let rtt_improved = adaptive.rtt_micros_p95 <= fixed.rtt_micros_p95;
     let spread_improved = adaptive.client_p95_spread_micros <= fixed.client_p95_spread_micros;

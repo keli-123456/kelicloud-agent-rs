@@ -218,7 +218,7 @@ fn ktp_batch_matrix_script_writes_csv_for_each_policy_on_linux() {
         "rdp-like,1,4,8,1024,64,fixed,64,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,64,64"
     ));
     assert!(csv.contains(
-        "rdp-like,1,4,8,1024,64,adaptive,32,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,32,32"
+        "rdp-like,1,4,8,1024,64,adaptive,64,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,64,64"
     ));
 }
 
@@ -456,9 +456,9 @@ if [[ -z "$batch" ]]; then
   exit 9
 fi
 effective="$batch"
-if [[ "$policy" == "adaptive" && "$clients" -ge 8 && "$effective" -gt 16 ]]; then
+if [[ "$policy" == "adaptive" && "$clients" -ge 16 && "$effective" -gt 16 ]]; then
   effective="16"
-elif [[ "$policy" == "adaptive" && "$clients" -ge 4 && "$effective" -gt 32 ]]; then
+elif [[ "$policy" == "adaptive" && "$clients" -ge 8 && "$effective" -gt 32 ]]; then
   effective="32"
 fi
 echo "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile=rdp_like runs=1 clients=${clients} frames=8 payload_bytes=1024 bytes=1472 elapsed_ms=${batch}.000 throughput_mib_s=${batch}.500 rtt_micros_samples=8 rtt_micros_p50=10 rtt_micros_p95=20 rtt_micros_p99=30 rtt_micros_max=40 rtt_client_p95_micros_min=20 rtt_client_p95_micros_max=20 rtt_client_p95_spread_micros=0 rtt_client_max_micros_max=40 relay_batch_policy=${policy} relay_batch_frames=${batch} relay_batch_frames_effective=${effective} relay_turns=7 relay_empty_turns=0 relay_yield_turns=6 relay_wait_turns=2 ingress_frames=9 egress_frames=8 ingress_data_frames=8 egress_data_frames=8 ingress_batches=3 egress_batches=4 ingress_max_batch_frames=${effective} egress_max_batch_frames=${effective}"

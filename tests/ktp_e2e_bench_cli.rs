@@ -207,7 +207,7 @@ fn ktp_e2e_bench_cli_reports_custom_relay_batch_frames_when_requested() {
 }
 
 #[test]
-fn ktp_e2e_bench_cli_reports_adaptive_relay_batch_policy_when_requested() {
+fn ktp_e2e_bench_cli_keeps_adaptive_batch_at_four_clients() {
     let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
         .expect("ktp-e2e-bench binary should be built by cargo");
 
@@ -220,6 +220,40 @@ fn ktp_e2e_bench_cli_reports_adaptive_relay_batch_policy_when_requested() {
             "64",
             "--clients",
             "4",
+            "--frames",
+            "2",
+            "--payload-bytes",
+            "128",
+        ])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-e2e-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("relay_batch_policy=adaptive"));
+    assert!(stdout.contains("relay_batch_frames=64"));
+    assert!(stdout.contains("relay_batch_frames_effective=64"));
+}
+
+#[test]
+fn ktp_e2e_bench_cli_caps_adaptive_batch_at_eight_clients() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--diagnostics",
+            "--relay-batch-policy",
+            "adaptive",
+            "--relay-batch-frames",
+            "64",
+            "--clients",
+            "8",
             "--frames",
             "2",
             "--payload-bytes",

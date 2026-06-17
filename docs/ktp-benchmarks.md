@@ -691,6 +691,8 @@ Policy summary gate:
 - `ktp-policy-summary <csv>` reads a relay batch matrix CSV and pairs fixed and
   adaptive rows by `clients` and `relay_batch_frames`.
 - Verdicts are intentionally conservative:
+  - `same_effective` when fixed and adaptive produce the same effective batch
+    cap, because any measured difference is not caused by a scheduling change.
   - `adaptive_better` only when median throughput is no worse, RTT p95 is no
     worse, and client p95 spread is no worse.
   - `fixed_better` when adaptive regresses all three primary metrics.
@@ -746,6 +748,39 @@ KTP_SMOKE_POLICY_GATE=1 bash scripts/tunnel-relay-local-smoke.sh
 When enabled, the smoke script writes the matrix CSV to
 `${TMPDIR:-/tmp}/ktp-relay-policy-smoke.csv` unless `KTP_SMOKE_POLICY_CSV`
 overrides it.
+
+Conservative adaptive cap update:
+
+- The initial adaptive smoke used `clients >= 4 => cap 32` and
+  `clients >= 8 => cap 16`. Later repeated two-run samples showed the
+  four-client cap could lose throughput, RTT p95, and client p95 spread at the
+  same time.
+- The candidate policy is now deliberately less aggressive:
+  - fewer than 8 clients: keep the configured batch cap;
+  - 8 to 15 clients: cap at 32 frames;
+  - 16 or more clients: cap at 16 frames.
+- This keeps the low-concurrency RDP-like case on the known-good fixed batch
+  path while still leaving a measurable adaptive branch for higher fan-out
+  experiments.
+
+Validation after the conservative cap:
+
+```bash
+KTP_BATCH_MATRIX_BATCH_POLICIES="fixed adaptive" \
+KTP_BATCH_MATRIX_CLIENTS=4 \
+KTP_BATCH_MATRIX_BATCHES=64 \
+KTP_BATCH_MATRIX_RUNS=5 \
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-policy-conservative-smoke.csv \
+KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1 \
+bash scripts/ktp-relay-batch-matrix.sh
+```
+
+Summary:
+
+```text
+clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=64 throughput_delta_pct=17.48 rtt_p95_delta_pct=-28.70 client_p95_spread_delta_pct=-48.73 verdict=same_effective
+KTP_SMOKE_POLICY_GATE=1 bash scripts/tunnel-relay-local-smoke.sh completed successfully.
+```
 
 ## 2026-06-18 KTP Local Backend Smoke
 
