@@ -354,6 +354,67 @@ fn encrypted_tcp_frame_relay_forwards_between_two_endpoints() {
     });
 }
 
+#[test]
+fn encrypted_tcp_frame_relay_handles_100_bidirectional_rounds() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(4)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let relay_key = key.clone();
+        let relay_task = tokio::spawn(async move {
+            let (left_stream, _) = listener.accept().await.expect("accept left");
+            let (right_stream, _) = listener.accept().await.expect("accept right");
+            let left = relay_side_stream(left_stream, relay_key.clone());
+            let right = relay_side_stream(right_stream, relay_key);
+            let mut relay = KtpEncryptedTcpFrameRelay::new(left, right);
+            relay
+                .relay_bidirectional_rounds(100)
+                .await
+                .expect("relay 100 rounds");
+            assert_eq!(relay.stats().frames_left_to_right, 100);
+            assert_eq!(relay.stats().frames_right_to_left, 100);
+        });
+
+        let mut left_client = connect_encrypted_client(addr, key.clone()).await;
+        let mut right_client = connect_encrypted_client(addr, key).await;
+        let left_task = tokio::spawn(async move {
+            for index in 0..100u64 {
+                left_client
+                    .send_frame(&session_data(2200 + index, b"from left"))
+                    .await
+                    .expect("left send");
+                let response = left_client.next_frame().await.expect("left receive");
+                assert_eq!(response.session_id, 3200 + index);
+                assert_eq!(response.payload, b"from right");
+            }
+        });
+        let right_task = tokio::spawn(async move {
+            for index in 0..100u64 {
+                let request = right_client.next_frame().await.expect("right receive");
+                assert_eq!(request.session_id, 2200 + index);
+                assert_eq!(request.payload, b"from left");
+                right_client
+                    .send_frame(&session_data(3200 + index, b"from right"))
+                    .await
+                    .expect("right send");
+            }
+        });
+
+        left_task.await.expect("left task");
+        right_task.await.expect("right task");
+        relay_task.await.expect("relay task");
+    });
+}
+
 fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
     KtpFrame {
         frame_type: FrameType::SessionData,
@@ -366,6 +427,17 @@ fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
 
 fn test_crypto_key() -> KtpCryptoKey {
     KtpCryptoKey::from_bytes([7u8; 32])
+}
+
+fn relay_side_stream(stream: TcpStream, key: KtpCryptoKey) -> KtpEncryptedTcpStream {
+    KtpEncryptedTcpStream::from_stream(
+        stream,
+        key,
+        KtpCryptoDirection::RelayToClient,
+        KtpCryptoDirection::ClientToRelay,
+        KTP_MAX_PAYLOAD_LEN,
+        1024 * 1024,
+    )
 }
 
 async fn connect_encrypted_client(

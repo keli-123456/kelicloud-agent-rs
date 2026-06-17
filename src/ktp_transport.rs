@@ -505,4 +505,15 @@ impl KtpEncryptedTcpFrameRelay {
         self.stats.frames_right_to_left += 1;
         Ok(frame)
     }
+
+    pub async fn relay_bidirectional_rounds(
+        &mut self,
+        rounds: usize,
+    ) -> Result<KtpEncryptedTcpRelayStats, KtpTcpTransportError> {
+        for _ in 0..rounds {
+            self.relay_next_left_to_right().await?;
+            self.relay_next_right_to_left().await?;
+        }
+        Ok(self.stats)
+    }
 }

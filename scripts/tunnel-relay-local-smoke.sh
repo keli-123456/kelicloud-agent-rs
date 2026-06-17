@@ -12,6 +12,7 @@ cargo test --test tunnel_async_runtime async_runtime_handles_100_concurrent_loop
 
 echo "== encrypted ktp tcp carrier performance gate =="
 cargo test --test ktp_transport encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips -- --nocapture
+cargo test --test ktp_transport encrypted_tcp_frame_relay_handles_100_bidirectional_rounds -- --nocapture
 
 echo "== tunnel runtime listener lifecycle =="
 cargo test --test tunnel_runtime tcp_runtime_stops_listener_when_rule_is_removed -- --nocapture
