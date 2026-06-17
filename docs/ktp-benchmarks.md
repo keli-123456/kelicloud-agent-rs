@@ -12,6 +12,7 @@ Code:
 - Commit: `fcf21a8` for end-to-end runtime results with batched frame drain
 - Commit: `12fc85c` for multi-client end-to-end runtime results
 - Commit: `a06916c` for repeated-run end-to-end runtime statistics
+- Commit: `c86a832` for relay-loop diagnostic counters
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -74,6 +75,18 @@ Runtime ingress-to-egress repeated-run path:
 | 3 | 4 | 256 | 1024 B | 1048576 | 270.165 ms | 298.625 ms | 301.182 ms | 3.320 MiB/s | 3.349 MiB/s | 3.701 MiB/s |
 | 3 | 4 | 256 | 16384 B | 16777216 | 212.048 ms | 230.662 ms | 275.564 ms | 58.063 MiB/s | 69.366 MiB/s | 75.454 MiB/s |
 
+Runtime relay-loop diagnostics:
+
+```bash
+./target/release/ktp-e2e-bench --diagnostics --runs 3 --clients <N> --frames <N> --payload-bytes <BYTES>
+```
+
+| Runs | Clients | Payload | Relay Turns | Empty Turns | Yield Turns | Ingress Frames | Egress Frames | Ingress Data Frames | Egress Data Frames |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | 1024 B | 376226 | 370089 | 376223 | 3075 | 3075 | 3072 | 3072 |
+| 3 | 4 | 1024 B | 483878 | 478957 | 483875 | 3093 | 3082 | 3072 | 3072 |
+| 3 | 4 | 16384 B | 403808 | 399467 | 403805 | 3092 | 3083 | 3072 | 3072 |
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
@@ -97,9 +110,15 @@ Observations:
   aggregate throughput than small-frame tests, but variance is large enough that
   future runtime changes should compare median and min/max spread, not just the
   fastest sample.
+- Relay diagnostics show hundreds of thousands of relay-loop turns for roughly
+  three thousand data frames. More than 98% of turns are empty and nearly every
+  turn calls `thread::yield_now()`. The next optimization should replace this
+  bench/runtime polling shape with condition-based waiting or readiness
+  notification before changing cryptography or frame encoding.
 
 Next evidence to collect:
 
 - Same benchmark on a release Linux host with CPU details captured.
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Latency distribution for small frames.
+- Condition-based relay waiting prototype and before/after diagnostics.
