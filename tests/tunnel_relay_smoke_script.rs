@@ -6,6 +6,8 @@ fn tunnel_relay_smoke_script_runs_runtime_relay_test() {
         .expect("smoke script should be readable");
     assert!(script.contains("tcp_runtime_two_agent_relay_simulation_forwards_echo"));
     assert!(script.contains("cargo test --test tunnel_runtime"));
+    assert!(script.contains("cargo test --test tunnel_async_runtime"));
+    assert!(script.contains("async_runtime_handles_100_concurrent_loopback_sessions"));
 }
 
 #[test]

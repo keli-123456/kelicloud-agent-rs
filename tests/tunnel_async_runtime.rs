@@ -10,7 +10,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream as TokioTcpStream;
+use tokio::net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream};
 
 #[test]
 fn async_runtime_limits_have_bounded_defaults() {
@@ -212,6 +212,90 @@ fn async_runtime_close_session_removes_active_count() {
             .await
             .expect("session should close");
         assert_eq!(core.stats_snapshot().active_sessions, 0);
+    });
+}
+
+#[test]
+fn async_runtime_rejects_payload_over_session_pending_byte_limit() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let mut limits = TunnelRuntimeLimits::default();
+        limits.max_session_pending_bytes = 4;
+        let core = AsyncTunnelCore::new(limits);
+        let (target_port, _hold_thread) = hold_one_target_connection();
+        core.open_egress_session(11, 7, "127.0.0.1", target_port, session_open_payload(7))
+            .await
+            .expect("session should open");
+
+        let err = core
+            .handle_session_data(11, FrameLeg::Egress, b"12345".to_vec())
+            .await
+            .expect_err("oversized payload should exceed per-session pending byte limit");
+
+        assert_eq!(err.code(), "session_pending_bytes_limit");
+        assert_eq!(core.stats_snapshot().active_sessions, 1);
+    });
+}
+
+#[test]
+fn async_runtime_handles_100_concurrent_loopback_sessions() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(4)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let listener = TokioTcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind async target listener");
+        let target_port = listener.local_addr().expect("target addr").port();
+        let held_streams = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let accepted = std::sync::Arc::clone(&held_streams);
+        let accept_task = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                accepted.lock().await.push(stream);
+            }
+        });
+        let core = AsyncTunnelCore::new(TunnelRuntimeLimits::default());
+        let mut handles = Vec::new();
+        for session_id in 1..=100u64 {
+            let cloned = core.clone();
+            handles.push(tokio::spawn(async move {
+                cloned
+                    .open_egress_session(
+                        session_id,
+                        7,
+                        "127.0.0.1",
+                        target_port,
+                        session_open_payload(7),
+                    )
+                    .await
+                    .expect("open loopback session");
+            }));
+        }
+
+        for handle in handles {
+            handle.await.expect("session task");
+        }
+        let snapshot = core.stats_snapshot();
+        assert_eq!(snapshot.active_sessions, 100);
+        assert_eq!(snapshot.total_sessions, 100);
+
+        for session_id in 1..=100u64 {
+            core.close_session(session_id, "test cleanup")
+                .await
+                .expect("close loopback session");
+        }
+        assert_eq!(core.stats_snapshot().active_sessions, 0);
+        accept_task.abort();
     });
 }
 

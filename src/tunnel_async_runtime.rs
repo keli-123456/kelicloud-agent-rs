@@ -203,6 +203,7 @@ pub struct AsyncTunnelCore {
 struct AsyncTunnelSession {
     rule_id: u64,
     to_tcp: mpsc::Sender<Vec<u8>>,
+    pending_bytes: Arc<AtomicUsize>,
 }
 
 impl AsyncTunnelCore {
@@ -293,6 +294,7 @@ impl AsyncTunnelCore {
                 .map_err(|error| TunnelRuntimeError::target_connect_failed(error.to_string()))?;
         let (reader, writer) = stream.into_split();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
+        let pending_bytes = Arc::new(AtomicUsize::new(0));
 
         self.sessions
             .lock()
@@ -302,11 +304,12 @@ impl AsyncTunnelCore {
                 AsyncTunnelSession {
                     rule_id,
                     to_tcp: tx,
+                    pending_bytes: Arc::clone(&pending_bytes),
                 },
             );
         self.stats.session_opened(rule_id);
         self.spawn_session_reader(reader, session_id, rule_id, FrameLeg::Egress);
-        self.spawn_session_writer(writer, rx, rule_id);
+        self.spawn_session_writer(writer, rx, rule_id, pending_bytes);
 
         Ok(vec![KtpFrame {
             frame_type: FrameType::SessionAccept,
@@ -329,6 +332,7 @@ impl AsyncTunnelCore {
         self.ensure_agent_session_capacity()?;
         let (reader, writer) = stream.into_split();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
+        let pending_bytes = Arc::new(AtomicUsize::new(0));
 
         self.sessions
             .lock()
@@ -338,6 +342,7 @@ impl AsyncTunnelCore {
                 AsyncTunnelSession {
                     rule_id,
                     to_tcp: tx,
+                    pending_bytes: Arc::clone(&pending_bytes),
                 },
             );
         self.stats.session_opened(rule_id);
@@ -357,7 +362,7 @@ impl AsyncTunnelCore {
             payload,
         })?;
         self.spawn_session_reader(reader, session_id, rule_id, FrameLeg::Ingress);
-        self.spawn_session_writer(writer, rx, rule_id);
+        self.spawn_session_writer(writer, rx, rule_id, pending_bytes);
         Ok(())
     }
 
@@ -367,17 +372,23 @@ impl AsyncTunnelCore {
         _leg: FrameLeg,
         payload: Vec<u8>,
     ) -> Result<(), TunnelRuntimeError> {
-        let sender = self
+        let session = self
             .sessions
             .lock()
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
             .get(&session_id)
-            .map(|session| session.to_tcp.clone())
+            .cloned()
             .ok_or_else(|| TunnelRuntimeError::runtime_unavailable("session not found"))?;
 
-        sender
-            .try_send(payload)
-            .map_err(|_| TunnelRuntimeError::backpressure_limit())
+        let payload_len = payload.len();
+        session.reserve_pending_bytes(payload_len, self.limits.max_session_pending_bytes)?;
+        match session.to_tcp.try_send(payload) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                session.release_pending_bytes(error.into_inner().len());
+                Err(TunnelRuntimeError::backpressure_limit())
+            }
+        }
     }
 
     pub async fn next_frame(&self) -> Option<KtpFrame> {
@@ -468,17 +479,56 @@ impl AsyncTunnelCore {
         mut writer: tokio::net::tcp::OwnedWriteHalf,
         mut rx: mpsc::Receiver<Vec<u8>>,
         rule_id: u64,
+        pending_bytes: Arc<AtomicUsize>,
     ) {
         let stats = self.stats.clone();
         tokio::spawn(async move {
             while let Some(payload) = rx.recv().await {
+                let payload_len = payload.len();
                 stats.bytes_in(rule_id, payload.len() as u64);
-                if writer.write_all(&payload).await.is_err() {
+                let write_result = writer.write_all(&payload).await;
+                release_pending_bytes(&pending_bytes, payload_len);
+                if write_result.is_err() {
                     break;
                 }
             }
         });
     }
+}
+
+impl AsyncTunnelSession {
+    fn reserve_pending_bytes(&self, bytes: usize, limit: usize) -> Result<(), TunnelRuntimeError> {
+        loop {
+            let current = self.pending_bytes.load(Ordering::Acquire);
+            let Some(next) = current.checked_add(bytes) else {
+                return Err(TunnelRuntimeError::session_pending_bytes_limit(
+                    "session pending byte counter overflowed",
+                ));
+            };
+            if next > limit {
+                return Err(TunnelRuntimeError::session_pending_bytes_limit(format!(
+                    "session pending bytes would exceed limit {limit}"
+                )));
+            }
+            if self
+                .pending_bytes
+                .compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+    }
+
+    fn release_pending_bytes(&self, bytes: usize) {
+        release_pending_bytes(&self.pending_bytes, bytes);
+    }
+}
+
+fn release_pending_bytes(counter: &AtomicUsize, bytes: usize) {
+    let _ = counter.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        Some(current.saturating_sub(bytes))
+    });
 }
 
 impl TunnelRuntimeError {
@@ -499,6 +549,13 @@ impl TunnelRuntimeError {
     pub fn session_limit(message: impl Into<String>) -> Self {
         Self {
             code: "session_limit",
+            message: message.into(),
+        }
+    }
+
+    pub fn session_pending_bytes_limit(message: impl Into<String>) -> Self {
+        Self {
+            code: "session_pending_bytes_limit",
             message: message.into(),
         }
     }
