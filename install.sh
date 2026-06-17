@@ -30,6 +30,7 @@ EXCLUDE_NICS=""
 INCLUDE_MOUNTPOINTS=""
 MONTH_ROTATE=""
 TUNNEL_DATA_ENABLED=""
+TUNNEL_KTP_TCP_ADDRESS=""
 KEEP_CONFIG="false"
 COMMAND=""
 
@@ -75,6 +76,8 @@ Install options:
   --include-mountpoints LIST     Alias of --include-mountpoint
   --month-rotate DAY             Set AGENT_MONTH_ROTATE
   --enable-tunnel-data           Set AGENT_TUNNEL_DATA_ENABLED=true
+  --tunnel-ktp-tcp-address ADDRESS
+                                  Set AGENT_TUNNEL_KTP_TCP_ADDRESS
 EOF
 }
 
@@ -238,6 +241,11 @@ parse_args() {
                 TUNNEL_DATA_ENABLED="true"
                 shift
                 ;;
+            --tunnel-ktp-tcp-address|--ktp-tcp-address)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_TCP_ADDRESS="$2"
+                shift 2
+                ;;
             --keep-config)
                 KEEP_CONFIG="true"
                 shift
@@ -351,6 +359,7 @@ render_env() {
     emit_env "AGENT_INCLUDE_MOUNTPOINTS" "$INCLUDE_MOUNTPOINTS"
     emit_env "AGENT_MONTH_ROTATE" "$MONTH_ROTATE"
     emit_env "AGENT_TUNNEL_DATA_ENABLED" "$TUNNEL_DATA_ENABLED"
+    emit_env "AGENT_TUNNEL_KTP_TCP_ADDRESS" "$TUNNEL_KTP_TCP_ADDRESS"
 }
 
 render_service() {

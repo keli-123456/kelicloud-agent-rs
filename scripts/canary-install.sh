@@ -9,6 +9,7 @@ REPO="keli-123456/kelicloud-agent-rs"
 
 ENDPOINT="${AGENT_ENDPOINT:-}"
 AUTO_DISCOVERY_KEY="${AGENT_AUTO_DISCOVERY_KEY:-}"
+TUNNEL_KTP_TCP_ADDRESS="${AGENT_TUNNEL_KTP_TCP_ADDRESS:-}"
 INSTALL_VERSION=""
 GITHUB_PROXY=""
 INSECURE="false"
@@ -47,6 +48,8 @@ Required:
 Options:
   --install-version VERSION      Re-run install with this release tag, for example v0.1.0
   --github-proxy URL             Prefix used by the installer for GitHub downloads
+  --tunnel-ktp-tcp-address ADDRESS
+                                  Enable KTP TCP tunnel data and pass the relay address
   --insecure                     Pass --ignore-unsafe-cert to the installer
   --duration SECONDS             Online observation window for panel exec/ping/WebSSH, default 90
   --service-wait SECONDS         Wait time for systemd active checks, default 45
@@ -59,7 +62,8 @@ Options:
 
 This script verifies the release asset name pattern kelicloud-agent-rs-linux-*,
 the installed systemd service, AGENT_ENDPOINT / AGENT_AUTO_DISCOVERY_KEY config,
-restart behavior, optional version pin/upgrade, uninstall, and optional rollback.
+optional AGENT_TUNNEL_KTP_TCP_ADDRESS config, restart behavior, optional version
+pin/upgrade, uninstall, and optional rollback.
 EOF
 }
 
@@ -110,6 +114,11 @@ parse_args() {
             --install-version)
                 need_value "$1" "${2:-}"
                 INSTALL_VERSION="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-tcp-address|--ktp-tcp-address)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_TCP_ADDRESS="$2"
                 shift 2
                 ;;
             --github-proxy)
@@ -248,6 +257,9 @@ installer_args() {
     if [[ -n "$INSTALL_VERSION" ]]; then
         INSTALL_ARGS+=(--install-version "$INSTALL_VERSION")
     fi
+    if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
+        INSTALL_ARGS+=(--enable-tunnel-data --tunnel-ktp-tcp-address "$TUNNEL_KTP_TCP_ADDRESS")
+    fi
     if [[ -n "$GITHUB_PROXY" ]]; then
         INSTALL_ARGS+=(--install-ghproxy "$GITHUB_PROXY")
     fi
@@ -295,6 +307,12 @@ verify_service() {
     [[ -f "/etc/systemd/system/${SERVICE_NAME}.service" ]] || die "systemd unit missing"
     grep -q "^AGENT_ENDPOINT=" "$CONFIG_FILE" || die "AGENT_ENDPOINT missing from config"
     grep -q "^AGENT_AUTO_DISCOVERY_KEY=" "$CONFIG_FILE" || die "AGENT_AUTO_DISCOVERY_KEY missing from config"
+    if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
+        grep -q "^AGENT_TUNNEL_DATA_ENABLED='true'" "$CONFIG_FILE" ||
+            die "AGENT_TUNNEL_DATA_ENABLED missing from config"
+        grep -q "^AGENT_TUNNEL_KTP_TCP_ADDRESS=" "$CONFIG_FILE" ||
+            die "AGENT_TUNNEL_KTP_TCP_ADDRESS missing from config"
+    fi
     wait_for_service
     RUST_SERVICE_STATUS="$(systemctl is-active "${SERVICE_NAME}.service")"
     log "systemctl is-active ${SERVICE_NAME}.service: ${RUST_SERVICE_STATUS}"
@@ -463,6 +481,9 @@ main() {
     stage "canary context"
     log "Endpoint: ${ENDPOINT}"
     log "Auto-discovery key: $(redact_value "$AUTO_DISCOVERY_KEY")"
+    if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
+        log "KTP TCP address: ${TUNNEL_KTP_TCP_ADDRESS}"
+    fi
     log "Install source: ${INSTALL_URL}"
     if [[ -n "$INSTALL_VERSION" ]]; then
         log "Install version: ${INSTALL_VERSION}"

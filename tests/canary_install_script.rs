@@ -9,6 +9,7 @@ fn canary_install_script_documents_real_host_stages() {
         "--endpoint URL",
         "--auto-discovery KEY",
         "--install-version VERSION",
+        "--tunnel-ktp-tcp-address ADDRESS",
         "--rollback-command COMMAND",
         "--rollback-service-name NAME",
         "--skip-rollback-service-check",
@@ -32,6 +33,7 @@ fn canary_install_script_documents_real_host_stages() {
         "kelicloud-agent",
         "AGENT_ENDPOINT",
         "AGENT_AUTO_DISCOVERY_KEY",
+        "AGENT_TUNNEL_KTP_TCP_ADDRESS",
         "kelicloud-agent-rs-linux",
     ] {
         assert!(script.contains(expected), "missing {expected}");
