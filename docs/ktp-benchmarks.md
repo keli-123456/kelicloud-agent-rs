@@ -18,6 +18,7 @@ Code:
 - Commit: `23551b8` for production tunnel-data loop readiness scheduling
 - Commit: `56b562f` for local production tunnel-data diagnostics counters
 - Commit: `7760cd3` for production runtime-wait latency percentile diagnostics
+- Commit: `9590a4f` for production outbound queue dwell diagnostics
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -128,6 +129,7 @@ cargo build --release --bin kelicloud-agent-rs --bin ktp-e2e-bench
 | `23551b8` | 3 | 4 | 1024 B | 176.353 ms | 5.670 MiB/s | 4092 | 654 | 2833 |
 | `56b562f` | 3 | 4 | 1024 B | 219.319 ms | 4.560 MiB/s | 4273 | 954 | 3214 |
 | `7760cd3` | 3 | 4 | 1024 B | 204.894 ms | 4.881 MiB/s | 4277 | 882 | 3137 |
+| `9590a4f` | 3 | 4 | 1024 B | 162.743 ms | 6.145 MiB/s | 4268 | 619 | 3010 |
 
 Observations:
 
@@ -181,6 +183,14 @@ Observations:
 - Runtime wait elapsed diagnostics now include p50, p95, and p99 microsecond
   bucket upper bounds. This keeps production logs cheap while making wait-time
   regressions visible without exporting raw per-frame samples.
+- Production KTP runtime queues now timestamp outbound frames at enqueue and
+  record queue dwell at dequeue. Tunnel-data diagnostics expose cumulative
+  frames, total/max microseconds, and p50/p95/p99 bucket upper bounds, so logs
+  can distinguish scheduler wait from time spent sitting in the runtime queue.
+- The `9590a4f` sample did not show an obvious benchmark regression from the
+  enqueue timestamp and dequeue bucket accounting, but the run-to-run variance
+  above still means this should be treated as a measurement point, not proof of
+  a performance improvement.
 
 Next evidence to collect:
 
@@ -188,5 +198,5 @@ Next evidence to collect:
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Latency distribution for small frames.
 - Before/after diagnostics for production data carrier scheduling changes.
-- Queue dwell distribution for production outbound runtime frames, measured from
-  enqueue to send, to complement the runtime wait elapsed distribution.
+- Live KTP canary logs with runtime wait and outbound queue dwell percentiles
+  captured during real tunnel traffic.
