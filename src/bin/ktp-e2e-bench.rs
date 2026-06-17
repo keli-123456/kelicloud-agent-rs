@@ -17,9 +17,16 @@ const RELAY_BATCH_FRAMES: usize = 64;
 
 #[derive(Clone, Copy, Debug)]
 struct BenchConfig {
+    runs: usize,
     clients: usize,
     frames: usize,
     payload_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BenchSample {
+    elapsed_ms: f64,
+    throughput_mib_s: f64,
 }
 
 fn main() {
@@ -42,12 +49,14 @@ fn main() {
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
+    let mut runs = 1usize;
     let mut clients = 1usize;
     let mut frames = 1024usize;
     let mut payload_bytes = 1024usize;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--runs" => runs = parse_positive_usize(next_value(&mut args, "--runs")?, "--runs")?,
             "--clients" => {
                 clients = parse_positive_usize(next_value(&mut args, "--clients")?, "--clients")?
             }
@@ -65,6 +74,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
         }
     }
     Ok(BenchConfig {
+        runs,
         clients,
         frames,
         payload_bytes,
@@ -91,6 +101,14 @@ fn parse_positive_usize(raw: String, flag: &str) -> BenchResult<usize> {
 }
 
 fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
+    let mut samples = Vec::with_capacity(config.runs);
+    for _ in 0..config.runs {
+        samples.push(run_benchmark_once(config)?);
+    }
+    Ok(format_report(config, &samples))
+}
+
+fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
     let target = TcpListener::bind("127.0.0.1:0")?;
     let target_addr = target.local_addr()?;
     let frames = config.frames;
@@ -163,15 +181,62 @@ fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
     let elapsed_secs = elapsed.as_secs_f64().max(0.000_001);
     let throughput_mib_s = (bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs;
 
-    Ok(format!(
-        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch clients={} frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
+    Ok(BenchSample {
+        elapsed_ms: elapsed.as_secs_f64() * 1000.0,
+        throughput_mib_s,
+    })
+}
+
+fn format_report(config: BenchConfig, samples: &[BenchSample]) -> String {
+    let bytes = config.clients * config.frames * config.payload_bytes;
+    if samples.len() == 1 {
+        let sample = samples[0];
+        return format!(
+            "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
+            config.runs,
+            config.clients,
+            config.frames,
+            config.payload_bytes,
+            bytes,
+            sample.elapsed_ms,
+            sample.throughput_mib_s
+        );
+    }
+
+    let mut elapsed_values = samples
+        .iter()
+        .map(|sample| sample.elapsed_ms)
+        .collect::<Vec<_>>();
+    elapsed_values.sort_by(f64::total_cmp);
+    let mut throughput_values = samples
+        .iter()
+        .map(|sample| sample.throughput_mib_s)
+        .collect::<Vec<_>>();
+    throughput_values.sort_by(f64::total_cmp);
+
+    format!(
+        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms_min={:.3} elapsed_ms_median={:.3} elapsed_ms_max={:.3} throughput_mib_s_min={:.3} throughput_mib_s_median={:.3} throughput_mib_s_max={:.3}",
+        config.runs,
         config.clients,
         config.frames,
         config.payload_bytes,
         bytes,
-        elapsed.as_secs_f64() * 1000.0,
-        throughput_mib_s
-    ))
+        elapsed_values[0],
+        median(&elapsed_values),
+        elapsed_values[elapsed_values.len() - 1],
+        throughput_values[0],
+        median(&throughput_values),
+        throughput_values[throughput_values.len() - 1]
+    )
+}
+
+fn median(sorted_values: &[f64]) -> f64 {
+    let middle = sorted_values.len() / 2;
+    if sorted_values.len() % 2 == 0 {
+        (sorted_values[middle - 1] + sorted_values[middle]) / 2.0
+    } else {
+        sorted_values[middle]
+    }
 }
 
 fn relay_data_batches(
@@ -260,5 +325,5 @@ fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-e2e-bench [--clients N] [--frames N] [--payload-bytes BYTES]");
+    eprintln!("usage: ktp-e2e-bench [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
 }
