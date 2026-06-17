@@ -16,6 +16,7 @@ Code:
 - Commit: `d1355da` for condition-wait relay prototype
 - Commit: `ca46474` for shared relay readiness notification
 - Commit: `23551b8` for production tunnel-data loop readiness scheduling
+- Commit: `56b562f` for local production tunnel-data diagnostics counters
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -124,6 +125,7 @@ cargo build --release --bin kelicloud-agent-rs --bin ktp-e2e-bench
 | Commit | Runs | Clients | Payload | Elapsed Median | Throughput Median | Relay Turns | Empty Turns | Wait Turns |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `23551b8` | 3 | 4 | 1024 B | 176.353 ms | 5.670 MiB/s | 4092 | 654 | 2833 |
+| `56b562f` | 3 | 4 | 1024 B | 219.319 ms | 4.560 MiB/s | 4273 | 954 | 3214 |
 
 Observations:
 
@@ -169,6 +171,11 @@ Observations:
   wait before idle socket reads and use a short idle socket read timeout. The
   default websocket path keeps the older blocking behavior because the runtime
   scheduling hints default to disabled.
+- Production tunnel-data sessions now have local diagnostics counters for
+  runtime wait attempts, wait hits, wait elapsed microseconds, outbound runtime
+  frames, socket idle reads, and empty idle reads. The counters are not sent in
+  the KTP protocol; the agent logs a sanitized summary after KTP data-session
+  reconnect boundaries when there is activity.
 
 Next evidence to collect:
 
@@ -176,5 +183,5 @@ Next evidence to collect:
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Latency distribution for small frames.
 - Before/after diagnostics for production data carrier scheduling changes.
-- Dedicated production data-carrier diagnostics that measure socket-read idle
-  wakeups and outbound frame latency, not only benchmark relay-loop counters.
+- Latency distribution for production outbound runtime frames instead of only
+  aggregate wait elapsed counters.
