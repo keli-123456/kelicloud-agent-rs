@@ -63,6 +63,8 @@ Supported flags:
 - `--enable-gpu`, `--gpu`, or `AGENT_ENABLE_GPU=true`
 - `--month-rotate <day>` or `AGENT_MONTH_ROTATE`
 - `--host-proc <path>` or `HOST_PROC`
+- `AGENT_TUNNEL_DATA_ENABLED=true` enables the tunnel data plane used by
+  tunnel forwarding rules. The installer exposes this as `--enable-tunnel-data`.
 
 ## Linux Install
 
@@ -71,7 +73,7 @@ auto-discovery command is:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/keli-123456/kelicloud-agent-rs/refs/heads/main/install.sh |
-  sudo bash -s -- -e https://panel.example.com --auto-discovery DISCOVERY_KEY
+  sudo bash -s -- -e https://panel.example.com --auto-discovery DISCOVERY_KEY --enable-tunnel-data
 ```
 
 You can also install with an explicit client token:
@@ -79,13 +81,14 @@ You can also install with an explicit client token:
 ```bash
 sudo ./install.sh install \
   --endpoint https://panel.example.com \
-  --token TOKEN
+  --token TOKEN \
+  --enable-tunnel-data
 ```
 
 The same options can use the shorter panel aliases:
 
 ```bash
-sudo ./install.sh -e https://panel.example.com -t TOKEN
+sudo ./install.sh -e https://panel.example.com -t TOKEN --enable-tunnel-data
 ```
 
 By default it installs:
@@ -108,7 +111,7 @@ To upgrade or pin a specific GitHub release from the panel-style path:
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/keli-123456/kelicloud-agent-rs/refs/heads/main/install.sh |
-  sudo bash -s -- -e https://panel.example.com --auto-discovery DISCOVERY_KEY --install-version v0.1.0
+  sudo bash -s -- -e https://panel.example.com --auto-discovery DISCOVERY_KEY --enable-tunnel-data --install-version v0.1.0
 ```
 
 To roll back to the Go agent, uninstall the Rust service first:

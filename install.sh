@@ -29,6 +29,7 @@ INCLUDE_NICS=""
 EXCLUDE_NICS=""
 INCLUDE_MOUNTPOINTS=""
 MONTH_ROTATE=""
+TUNNEL_DATA_ENABLED=""
 KEEP_CONFIG="false"
 COMMAND=""
 
@@ -73,6 +74,7 @@ Install options:
   --include-mountpoint LIST      Set AGENT_INCLUDE_MOUNTPOINTS
   --include-mountpoints LIST     Alias of --include-mountpoint
   --month-rotate DAY             Set AGENT_MONTH_ROTATE
+  --enable-tunnel-data           Set AGENT_TUNNEL_DATA_ENABLED=true
 EOF
 }
 
@@ -232,6 +234,10 @@ parse_args() {
                 MONTH_ROTATE="$2"
                 shift 2
                 ;;
+            --enable-tunnel-data)
+                TUNNEL_DATA_ENABLED="true"
+                shift
+                ;;
             --keep-config)
                 KEEP_CONFIG="true"
                 shift
@@ -344,6 +350,7 @@ render_env() {
     emit_env "AGENT_EXCLUDE_NICS" "$EXCLUDE_NICS"
     emit_env "AGENT_INCLUDE_MOUNTPOINTS" "$INCLUDE_MOUNTPOINTS"
     emit_env "AGENT_MONTH_ROTATE" "$MONTH_ROTATE"
+    emit_env "AGENT_TUNNEL_DATA_ENABLED" "$TUNNEL_DATA_ENABLED"
 }
 
 render_service() {

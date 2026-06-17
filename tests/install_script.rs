@@ -28,12 +28,14 @@ fn install_script_exposes_panel_compatible_linux_flags() {
         "--exclude-nics CSV",
         "--include-mountpoint LIST",
         "--month-rotate DAY",
+        "--enable-tunnel-data",
         "AGENT_AUTO_DISCOVERY_KEY",
         "AGENT_MEMORY_INCLUDE_CACHE",
         "AGENT_INCLUDE_NICS",
         "AGENT_EXCLUDE_NICS",
         "AGENT_INCLUDE_MOUNTPOINTS",
         "AGENT_MONTH_ROTATE",
+        "AGENT_TUNNEL_DATA_ENABLED",
     ] {
         assert!(script.contains(expected), "missing {expected}");
     }
@@ -92,6 +94,29 @@ fn render_env_outputs_agent_environment() {
     assert!(stdout.contains("AGENT_TOKEN='secret token'"));
     assert!(stdout.contains("AGENT_DISABLE_WEB_SSH='true'"));
     assert!(stdout.contains("AGENT_INTERVAL='5'"));
+}
+
+#[cfg(unix)]
+#[test]
+fn render_env_can_enable_tunnel_data_plane() {
+    let output = std::process::Command::new("bash")
+        .arg(install_script_path())
+        .arg("render-env")
+        .arg("--endpoint")
+        .arg("https://panel.example.com")
+        .arg("--token")
+        .arg("secret-token")
+        .arg("--enable-tunnel-data")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("AGENT_TUNNEL_DATA_ENABLED='true'"));
 }
 
 #[cfg(unix)]
