@@ -143,6 +143,50 @@ client threads and appends `rtt_micros_samples`, `rtt_micros_p50`,
 off for raw throughput-only samples; turn it on when comparing small-frame
 interactive paths such as RDP-like forwarding.
 
+## 2026-06-18 Release Host Latency Sample
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Commit: `c4cd594`
+- Carrier binary: `ktp-tunnel-bench`
+- End-to-end binary: `ktp-e2e-bench`
+- Build mode: `cargo build --release --bin ktp-tunnel-bench --bin ktp-e2e-bench`
+
+Host:
+
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- CPU: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+- CPU cores: 4
+- Memory: 3.8 GiB
+
+Commands:
+
+```bash
+./target/release/ktp-tunnel-bench --runs 3 --frames 4096 --payload-bytes 16384
+./target/release/ktp-e2e-bench --diagnostics --latency --relay-wait-timeout-us 100 --runs 3 --clients 4 --frames 64 --payload-bytes 1024
+```
+
+Encrypted carrier only:
+
+| Runs | Frames | Payload | Total Bytes | Elapsed | Throughput |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 4096 | 16384 B | 201326592 | 647.616 ms | 296.472 MiB/s |
+
+Runtime ingress-to-egress small-frame latency:
+
+| Runs | Clients | Frames / Client | Payload | Bytes / Run | Elapsed Median | Throughput Median | RTT p50 | RTT p95 | RTT p99 | RTT Max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 4 | 64 | 1024 B | 262144 | 59.555 ms | 4.198 MiB/s | 433 us | 2444 us | 4797 us | 9448 us |
+
+Runtime relay-loop diagnostics:
+
+| Runs | Clients | Payload | Relay Turns | Empty Turns | Yield Turns | Wait Turns | Ingress Frames | Egress Frames | Ingress Data Frames | Egress Data Frames |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 4 | 1024 B | 1257 | 255 | 1254 | 953 | 789 | 779 | 768 | 768 |
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
@@ -206,12 +250,14 @@ Observations:
 - `ktp-e2e-bench --latency` now captures client-observed round-trip percentiles
   for small-frame paths. This gives us a lightweight local signal for
   interactivity before moving to live canary traffic.
+- The `c4cd594` release-host sample records the same encrypted carrier
+  throughput shape as the earlier baseline, and adds small-frame RTT percentiles
+  from the runtime ingress-to-egress path. The p95/p99 gap shows why live canary
+  traffic should capture latency and runtime queue diagnostics together.
 
 Next evidence to collect:
 
-- Same benchmark on a release Linux host with CPU details captured.
 - Repeated multi-client runs with higher sample counts and percentile summaries.
-- Live small-frame latency distribution on a release Linux host.
 - Before/after diagnostics for production data carrier scheduling changes.
 - Live KTP canary logs with runtime wait and outbound queue dwell percentiles
   captured during real tunnel traffic.
