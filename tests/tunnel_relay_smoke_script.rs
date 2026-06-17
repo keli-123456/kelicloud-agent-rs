@@ -11,6 +11,7 @@ fn tunnel_relay_smoke_script_runs_runtime_relay_test() {
     assert!(script.contains("cargo test --test ktp_transport"));
     assert!(script.contains("encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips"));
     assert!(script.contains("encrypted_tcp_frame_relay_handles_100_bidirectional_rounds"));
+    assert!(script.contains("cargo run --bin ktp-e2e-bench"));
 }
 
 #[test]

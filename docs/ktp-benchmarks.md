@@ -8,9 +8,11 @@ numbers as engineering baselines, not production capacity promises.
 Code:
 
 - Repository: `kelicloud-agent-rs`
-- Commit: `9fe3b83`
-- Binary: `ktp-tunnel-bench`
-- Build mode: `cargo build --release --bin ktp-tunnel-bench`
+- Commit: `9fe3b83` for carrier results
+- Commit: `a192e72` for end-to-end runtime results
+- Carrier binary: `ktp-tunnel-bench`
+- End-to-end binary: `ktp-e2e-bench`
+- Build mode: `cargo build --release --bin <bench>`
 
 Host:
 
@@ -27,22 +29,37 @@ Command shape:
 
 Results:
 
+Encrypted carrier only:
+
 | Frames | Payload | Total Bytes | Elapsed | Throughput |
 | ---: | ---: | ---: | ---: | ---: |
 | 65536 | 1024 B | 201326592 | 1258.015 ms | 152.621 MiB/s |
 | 4096 | 16384 B | 201326592 | 647.507 ms | 296.522 MiB/s |
 | 2048 | 65536 B | 402653184 | 1084.613 ms | 354.043 MiB/s |
 
+Runtime ingress-to-egress path:
+
+```bash
+./target/release/ktp-e2e-bench --frames <N> --payload-bytes <BYTES>
+```
+
+| Frames | Payload | Bytes | Elapsed | Throughput |
+| ---: | ---: | ---: | ---: | ---: |
+| 1024 | 1024 B | 1048576 | 257.742 ms | 3.880 MiB/s |
+| 256 | 16384 B | 4194304 | 114.293 ms | 34.998 MiB/s |
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
 - 16 KiB and 64 KiB payloads show much higher encrypted TCP carrier throughput.
+- End-to-end runtime throughput is far below carrier-only throughput, so the
+  next bottleneck is runtime relay scheduling and per-frame session handling,
+  not ChaCha20-Poly1305 encryption itself.
 - Future optimization should focus on frame batching, read/write scheduling,
-  and end-to-end relay behavior before changing cryptography.
+  and reducing ingress/egress relay round trips before changing cryptography.
 
 Next evidence to collect:
 
 - Same benchmark on a release Linux host with CPU details captured.
-- End-to-end ingress-to-egress tunnel throughput, not only encrypted carrier
-  write/read throughput.
+- Multi-connection end-to-end ingress-to-egress throughput.
 - Latency distribution for small frames.

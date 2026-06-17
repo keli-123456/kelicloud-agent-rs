@@ -14,6 +14,7 @@ echo "== encrypted ktp tcp carrier performance gate =="
 cargo test --test ktp_transport encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips -- --nocapture
 cargo test --test ktp_transport encrypted_tcp_frame_relay_handles_100_bidirectional_rounds -- --nocapture
 cargo run --bin ktp-tunnel-bench -- --frames 4096 --payload-bytes 16384
+cargo run --bin ktp-e2e-bench -- --frames 16 --payload-bytes 1024
 
 echo "== tunnel runtime listener lifecycle =="
 cargo test --test tunnel_runtime tcp_runtime_stops_listener_when_rule_is_removed -- --nocapture
