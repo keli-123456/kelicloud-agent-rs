@@ -11,6 +11,7 @@ Code:
 - Commit: `9fe3b83` for carrier results
 - Commit: `fcf21a8` for end-to-end runtime results with batched frame drain
 - Commit: `12fc85c` for multi-client end-to-end runtime results
+- Commit: `a06916c` for repeated-run end-to-end runtime statistics
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -61,6 +62,18 @@ Runtime ingress-to-egress multi-client path:
 | 4 | 256 | 1024 B | 1048576 | 159.376 ms | 6.274 MiB/s |
 | 4 | 256 | 16384 B | 16777216 | 175.639 ms | 91.096 MiB/s |
 
+Runtime ingress-to-egress repeated-run path:
+
+```bash
+./target/release/ktp-e2e-bench --runs 3 --clients <N> --frames <N> --payload-bytes <BYTES>
+```
+
+| Runs | Clients | Frames / Client | Payload | Bytes / Run | Elapsed Min | Elapsed Median | Elapsed Max | Throughput Min | Throughput Median | Throughput Max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | 1024 | 1024 B | 1048576 | 366.064 ms | 455.854 ms | 476.726 ms | 2.098 MiB/s | 2.194 MiB/s | 2.732 MiB/s |
+| 3 | 4 | 256 | 1024 B | 1048576 | 270.165 ms | 298.625 ms | 301.182 ms | 3.320 MiB/s | 3.349 MiB/s | 3.701 MiB/s |
+| 3 | 4 | 256 | 16384 B | 16777216 | 212.048 ms | 230.662 ms | 275.564 ms | 58.063 MiB/s | 69.366 MiB/s | 75.454 MiB/s |
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
@@ -80,9 +93,13 @@ Observations:
 - Run-to-run variance is visible on this small Linux host, so later performance
   gates should use repeated runs or percentile summaries instead of one-off
   wall-clock samples.
+- `--runs 3` confirms that the 4-client 16 KiB path still has much better
+  aggregate throughput than small-frame tests, but variance is large enough that
+  future runtime changes should compare median and min/max spread, not just the
+  fastest sample.
 
 Next evidence to collect:
 
 - Same benchmark on a release Linux host with CPU details captured.
-- Repeated multi-client runs with min/median/max or percentile summaries.
+- Repeated multi-client runs with higher sample counts and percentile summaries.
 - Latency distribution for small frames.
