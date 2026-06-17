@@ -16,6 +16,7 @@ pub mod task;
 pub mod terminal;
 pub mod token;
 pub mod transport;
+pub mod tunnel_async_runtime;
 pub mod tunnel_control;
 pub mod tunnel_data;
 pub mod tunnel_preflight;
