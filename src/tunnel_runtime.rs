@@ -1,8 +1,8 @@
 use crate::ktp::{FrameLeg, FrameType, KtpFrame};
 use crate::transport::TransportError;
 use crate::tunnel_async_runtime::{
-    AsyncTunnelCore, TunnelFrameReadyNotifier, TunnelIngressListenerSpec, TunnelRuntimeError,
-    TunnelRuntimeLimits,
+    AsyncTunnelCore, TunnelFrameReadyNotifier, TunnelIngressListenerSpec,
+    TunnelQueueDwellStatsSnapshot, TunnelRuntimeError, TunnelRuntimeLimits,
 };
 use crate::tunnel_control::{
     SelectedTunnelRule, TunnelRuleStateSink, TUNNEL_DATA_TRANSPORT_KTP_TCP,
@@ -324,6 +324,10 @@ pub trait TunnelSessionRuntime {
     fn tunnel_data_socket_idle_timeout(&self) -> Option<Duration> {
         None
     }
+
+    fn outbound_queue_dwell_snapshot(&self) -> Option<TunnelQueueDwellStatsSnapshot> {
+        None
+    }
 }
 
 #[derive(Debug, Default)]
@@ -634,6 +638,10 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
 
     fn tunnel_data_socket_idle_timeout(&self) -> Option<Duration> {
         (self.data_transport == TUNNEL_DATA_TRANSPORT_KTP_TCP).then_some(Duration::from_millis(10))
+    }
+
+    fn outbound_queue_dwell_snapshot(&self) -> Option<TunnelQueueDwellStatsSnapshot> {
+        Some(self.core.stats_snapshot().outbound_queue_dwell)
     }
 }
 

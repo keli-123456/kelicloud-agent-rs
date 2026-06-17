@@ -3,6 +3,7 @@ use crate::ktp_transport::{
     KtpCryptoDirection, KtpCryptoKey, KtpEncryptedTcpStream, KtpTcpTransportError,
 };
 use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
+use crate::tunnel_async_runtime::TunnelQueueDwellStatsSnapshot;
 use crate::tunnel_control::SelectedTunnelRule;
 use crate::tunnel_runtime::{NoopTunnelSessionRuntime, TunnelSessionRuntime};
 use hmac::{Hmac, Mac};
@@ -148,6 +149,12 @@ struct TunnelDataDiagnosticsInner {
     runtime_wait_elapsed_micros_max: AtomicU64,
     runtime_wait_elapsed_micros_buckets: [AtomicU64; RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS.len()],
     outbound_runtime_frames: AtomicU64,
+    outbound_queue_dwell_frames: AtomicU64,
+    outbound_queue_dwell_micros_total: AtomicU64,
+    outbound_queue_dwell_micros_max: AtomicU64,
+    outbound_queue_dwell_p50_micros: AtomicU64,
+    outbound_queue_dwell_p95_micros: AtomicU64,
+    outbound_queue_dwell_p99_micros: AtomicU64,
     socket_idle_reads: AtomicU64,
     socket_idle_empty_reads: AtomicU64,
 }
@@ -162,6 +169,12 @@ pub struct TunnelDataDiagnosticsSnapshot {
     pub runtime_wait_elapsed_p95_micros: u64,
     pub runtime_wait_elapsed_p99_micros: u64,
     pub outbound_runtime_frames: u64,
+    pub outbound_queue_dwell_frames: u64,
+    pub outbound_queue_dwell_micros_total: u64,
+    pub outbound_queue_dwell_micros_max: u64,
+    pub outbound_queue_dwell_p50_micros: u64,
+    pub outbound_queue_dwell_p95_micros: u64,
+    pub outbound_queue_dwell_p99_micros: u64,
     pub socket_idle_reads: u64,
     pub socket_idle_empty_reads: u64,
 }
@@ -210,6 +223,30 @@ impl SharedTunnelDataDiagnostics {
                 99,
             ),
             outbound_runtime_frames: self.inner.outbound_runtime_frames.load(Ordering::Relaxed),
+            outbound_queue_dwell_frames: self
+                .inner
+                .outbound_queue_dwell_frames
+                .load(Ordering::Relaxed),
+            outbound_queue_dwell_micros_total: self
+                .inner
+                .outbound_queue_dwell_micros_total
+                .load(Ordering::Relaxed),
+            outbound_queue_dwell_micros_max: self
+                .inner
+                .outbound_queue_dwell_micros_max
+                .load(Ordering::Relaxed),
+            outbound_queue_dwell_p50_micros: self
+                .inner
+                .outbound_queue_dwell_p50_micros
+                .load(Ordering::Relaxed),
+            outbound_queue_dwell_p95_micros: self
+                .inner
+                .outbound_queue_dwell_p95_micros
+                .load(Ordering::Relaxed),
+            outbound_queue_dwell_p99_micros: self
+                .inner
+                .outbound_queue_dwell_p99_micros
+                .load(Ordering::Relaxed),
             socket_idle_reads: self.inner.socket_idle_reads.load(Ordering::Relaxed),
             socket_idle_empty_reads: self.inner.socket_idle_empty_reads.load(Ordering::Relaxed),
         }
@@ -238,6 +275,33 @@ impl SharedTunnelDataDiagnostics {
         .fetch_add(1, Ordering::Relaxed);
     }
 
+    fn record_outbound_queue_dwell_snapshot(
+        &self,
+        snapshot: Option<TunnelQueueDwellStatsSnapshot>,
+    ) {
+        let Some(snapshot) = snapshot else {
+            return;
+        };
+        self.inner
+            .outbound_queue_dwell_frames
+            .store(snapshot.frames, Ordering::Relaxed);
+        self.inner
+            .outbound_queue_dwell_micros_total
+            .store(snapshot.micros_total, Ordering::Relaxed);
+        self.inner
+            .outbound_queue_dwell_micros_max
+            .store(snapshot.micros_max, Ordering::Relaxed);
+        self.inner
+            .outbound_queue_dwell_p50_micros
+            .store(snapshot.p50_micros, Ordering::Relaxed);
+        self.inner
+            .outbound_queue_dwell_p95_micros
+            .store(snapshot.p95_micros, Ordering::Relaxed);
+        self.inner
+            .outbound_queue_dwell_p99_micros
+            .store(snapshot.p99_micros, Ordering::Relaxed);
+    }
+
     fn record_socket_idle_read(&self) {
         self.inner.socket_idle_reads.fetch_add(1, Ordering::Relaxed);
     }
@@ -254,6 +318,7 @@ impl TunnelDataDiagnosticsSnapshot {
         self.runtime_wait_attempts > 0
             || self.runtime_wait_hits > 0
             || self.outbound_runtime_frames > 0
+            || self.outbound_queue_dwell_frames > 0
             || self.socket_idle_reads > 0
             || self.socket_idle_empty_reads > 0
     }
@@ -261,7 +326,7 @@ impl TunnelDataDiagnosticsSnapshot {
 
 pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) -> String {
     format!(
-        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} socket_idle_reads={} socket_idle_empty_reads={}",
+        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={}",
         snapshot.runtime_wait_attempts,
         snapshot.runtime_wait_hits,
         snapshot.runtime_wait_elapsed_micros_total,
@@ -270,6 +335,12 @@ pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) ->
         snapshot.runtime_wait_elapsed_p95_micros,
         snapshot.runtime_wait_elapsed_p99_micros,
         snapshot.outbound_runtime_frames,
+        snapshot.outbound_queue_dwell_frames,
+        snapshot.outbound_queue_dwell_micros_total,
+        snapshot.outbound_queue_dwell_micros_max,
+        snapshot.outbound_queue_dwell_p50_micros,
+        snapshot.outbound_queue_dwell_p95_micros,
+        snapshot.outbound_queue_dwell_p99_micros,
         snapshot.socket_idle_reads,
         snapshot.socket_idle_empty_reads
     )
@@ -838,6 +909,7 @@ where
         }
         let sent_runtime_frames = drain_tunnel_session_runtime_frames(&mut socket, runtime)?;
         diagnostics.record_outbound_runtime_frames(sent_runtime_frames);
+        diagnostics.record_outbound_queue_dwell_snapshot(runtime.outbound_queue_dwell_snapshot());
         if sent_runtime_frames == 0 {
             if let Some(timeout) = runtime.tunnel_data_client_frame_wait_timeout() {
                 let wait_started = Instant::now();
@@ -845,6 +917,8 @@ where
                     drain_tunnel_session_runtime_frames_after_wait(&mut socket, runtime, timeout)?;
                 diagnostics.record_runtime_wait(wait_started.elapsed(), waited_runtime_frames);
                 diagnostics.record_outbound_runtime_frames(waited_runtime_frames);
+                diagnostics
+                    .record_outbound_queue_dwell_snapshot(runtime.outbound_queue_dwell_snapshot());
                 if waited_runtime_frames > 0 {
                     continue;
                 }

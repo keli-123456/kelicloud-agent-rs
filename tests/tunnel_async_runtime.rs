@@ -75,6 +75,32 @@ fn async_frame_queue_drains_fifo_batches() {
 }
 
 #[test]
+fn async_frame_queue_records_enqueue_to_drain_dwell() {
+    let stats = TunnelRuntimeStats::default();
+    let queue = AsyncTunnelFrameQueue::new_with_stats(4, stats.clone());
+    queue.try_push(frame(7, b"queued")).expect("push frame");
+
+    thread::sleep(Duration::from_millis(2));
+    let frames = queue.drain(4);
+    let snapshot = stats.snapshot();
+
+    assert_eq!(frames.len(), 1);
+    assert_eq!(snapshot.outbound_queue_dwell.frames, 1);
+    assert!(
+        snapshot.outbound_queue_dwell.micros_total > 0,
+        "queue dwell total should be observable"
+    );
+    assert!(
+        snapshot.outbound_queue_dwell.micros_max > 0,
+        "queue dwell max should be observable"
+    );
+    assert!(
+        snapshot.outbound_queue_dwell.p50_micros > 0,
+        "queue dwell p50 should be observable"
+    );
+}
+
+#[test]
 fn async_frame_queue_drain_after_wait_wakes_when_frame_is_pushed() {
     let queue = AsyncTunnelFrameQueue::new(4);
     let producer = queue.clone();

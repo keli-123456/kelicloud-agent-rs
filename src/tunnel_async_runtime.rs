@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -34,6 +34,26 @@ impl Default for TunnelRuntimeLimits {
         }
     }
 }
+
+const OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS: [u64; 17] = [
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1_000,
+    2_500,
+    5_000,
+    10_000,
+    25_000,
+    50_000,
+    100_000,
+    250_000,
+    500_000,
+    1_000_000,
+    u64::MAX,
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TunnelRuntimeError {
@@ -85,9 +105,16 @@ pub struct AsyncTunnelFrameQueue {
 
 #[derive(Debug)]
 struct AsyncTunnelFrameQueueInner {
-    frames: Mutex<VecDeque<KtpFrame>>,
+    frames: Mutex<VecDeque<QueuedKtpFrame>>,
     ready: Condvar,
     shared_ready: Option<Arc<TunnelFrameReadyNotifier>>,
+    stats: TunnelRuntimeStats,
+}
+
+#[derive(Debug)]
+struct QueuedKtpFrame {
+    frame: KtpFrame,
+    enqueued_at: Instant,
 }
 
 #[derive(Debug, Default)]
@@ -137,19 +164,28 @@ impl TunnelFrameReadyNotifier {
 
 impl AsyncTunnelFrameQueue {
     pub fn new(capacity: usize) -> Self {
-        Self::new_internal(capacity, None)
+        Self::new_internal(capacity, None, TunnelRuntimeStats::default())
     }
 
     pub fn new_with_notifier(capacity: usize, notifier: Arc<TunnelFrameReadyNotifier>) -> Self {
-        Self::new_internal(capacity, Some(notifier))
+        Self::new_internal(capacity, Some(notifier), TunnelRuntimeStats::default())
     }
 
-    fn new_internal(capacity: usize, shared_ready: Option<Arc<TunnelFrameReadyNotifier>>) -> Self {
+    pub fn new_with_stats(capacity: usize, stats: TunnelRuntimeStats) -> Self {
+        Self::new_internal(capacity, None, stats)
+    }
+
+    fn new_internal(
+        capacity: usize,
+        shared_ready: Option<Arc<TunnelFrameReadyNotifier>>,
+        stats: TunnelRuntimeStats,
+    ) -> Self {
         Self {
             inner: Arc::new(AsyncTunnelFrameQueueInner {
                 frames: Mutex::new(VecDeque::new()),
                 ready: Condvar::new(),
                 shared_ready,
+                stats,
             }),
             capacity,
         }
@@ -163,7 +199,10 @@ impl AsyncTunnelFrameQueue {
             if inner.len() >= self.capacity {
                 return Err(TunnelRuntimeError::backpressure_limit());
             }
-            inner.push_back(frame);
+            inner.push_back(QueuedKtpFrame {
+                frame,
+                enqueued_at: Instant::now(),
+            });
         }
         self.inner.ready.notify_one();
         if let Some(shared_ready) = &self.inner.shared_ready {
@@ -178,34 +217,47 @@ impl AsyncTunnelFrameQueue {
             .lock()
             .ok()
             .and_then(|mut inner| inner.pop_front())
+            .map(|queued| self.into_frame_with_dwell(queued))
     }
 
     pub fn drain(&self, max_frames: usize) -> Vec<KtpFrame> {
         if max_frames == 0 {
             return Vec::new();
         }
-        let Ok(mut inner) = self.inner.frames.lock() else {
-            return Vec::new();
+        let queued_frames = {
+            let Ok(mut inner) = self.inner.frames.lock() else {
+                return Vec::new();
+            };
+            let count = max_frames.min(inner.len());
+            inner.drain(..count).collect::<Vec<_>>()
         };
-        let count = max_frames.min(inner.len());
-        inner.drain(..count).collect()
+        queued_frames
+            .into_iter()
+            .map(|queued| self.into_frame_with_dwell(queued))
+            .collect()
     }
 
     pub fn drain_after_wait(&self, max_frames: usize, timeout: Duration) -> Vec<KtpFrame> {
         if max_frames == 0 {
             return Vec::new();
         }
-        let Ok(mut inner) = self.inner.frames.lock() else {
-            return Vec::new();
-        };
-        if inner.is_empty() && !timeout.is_zero() {
-            let Ok((waited_inner, _)) = self.inner.ready.wait_timeout(inner, timeout) else {
+        let queued_frames = {
+            let Ok(mut inner) = self.inner.frames.lock() else {
                 return Vec::new();
             };
-            inner = waited_inner;
-        }
-        let count = max_frames.min(inner.len());
-        inner.drain(..count).collect()
+            if inner.is_empty() && !timeout.is_zero() {
+                let Ok((waited_inner, _)) = self.inner.ready.wait_timeout(inner, timeout) else {
+                    return Vec::new();
+                };
+                inner = waited_inner;
+            }
+            let count = max_frames.min(inner.len());
+            inner.drain(..count).collect::<Vec<_>>()
+        };
+        queued_frames
+            .into_iter()
+            .map(|queued| self.into_frame_with_dwell(queued))
+            .collect()
     }
 
     pub fn len(&self) -> usize {
@@ -219,6 +271,13 @@ impl AsyncTunnelFrameQueue {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    fn into_frame_with_dwell(&self, queued: QueuedKtpFrame) -> KtpFrame {
+        self.inner
+            .stats
+            .record_outbound_queue_dwell(queued.enqueued_at.elapsed());
+        queued.frame
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -228,6 +287,25 @@ pub struct TunnelRuntimeStats {
     bytes_in: Arc<AtomicU64>,
     bytes_out: Arc<AtomicU64>,
     rule_session_counts: Arc<Mutex<HashMap<u64, usize>>>,
+    outbound_queue_dwell: Arc<TunnelQueueDwellStatsInner>,
+}
+
+#[derive(Debug, Default)]
+struct TunnelQueueDwellStatsInner {
+    frames: AtomicU64,
+    micros_total: AtomicU64,
+    micros_max: AtomicU64,
+    micros_buckets: [AtomicU64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()],
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TunnelQueueDwellStatsSnapshot {
+    pub frames: u64,
+    pub micros_total: u64,
+    pub micros_max: u64,
+    pub p50_micros: u64,
+    pub p95_micros: u64,
+    pub p99_micros: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -237,6 +315,7 @@ pub struct TunnelRuntimeStatsSnapshot {
     pub bytes_in: u64,
     pub bytes_out: u64,
     pub rule_session_counts: HashMap<u64, usize>,
+    pub outbound_queue_dwell: TunnelQueueDwellStatsSnapshot,
 }
 
 impl TunnelRuntimeStats {
@@ -268,7 +347,25 @@ impl TunnelRuntimeStats {
         self.bytes_out.fetch_add(bytes, Ordering::Relaxed);
     }
 
+    fn record_outbound_queue_dwell(&self, elapsed: Duration) {
+        let elapsed_micros = elapsed.as_micros().min(u128::from(u64::MAX)) as u64;
+        self.outbound_queue_dwell
+            .frames
+            .fetch_add(1, Ordering::Relaxed);
+        self.outbound_queue_dwell
+            .micros_total
+            .fetch_add(elapsed_micros, Ordering::Relaxed);
+        update_atomic_max(&self.outbound_queue_dwell.micros_max, elapsed_micros);
+        self.outbound_queue_dwell.micros_buckets[outbound_queue_dwell_bucket_index(elapsed_micros)]
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> TunnelRuntimeStatsSnapshot {
+        let outbound_queue_dwell_frames = self.outbound_queue_dwell.frames.load(Ordering::Relaxed);
+        let mut outbound_queue_dwell_buckets = [0u64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()];
+        for (index, bucket) in self.outbound_queue_dwell.micros_buckets.iter().enumerate() {
+            outbound_queue_dwell_buckets[index] = bucket.load(Ordering::Relaxed);
+        }
         TunnelRuntimeStatsSnapshot {
             active_sessions: self.active_sessions.load(Ordering::Relaxed),
             total_sessions: self.total_sessions.load(Ordering::Relaxed),
@@ -279,6 +376,66 @@ impl TunnelRuntimeStats {
                 .lock()
                 .map(|counts| counts.clone())
                 .unwrap_or_default(),
+            outbound_queue_dwell: TunnelQueueDwellStatsSnapshot {
+                frames: outbound_queue_dwell_frames,
+                micros_total: self
+                    .outbound_queue_dwell
+                    .micros_total
+                    .load(Ordering::Relaxed),
+                micros_max: self.outbound_queue_dwell.micros_max.load(Ordering::Relaxed),
+                p50_micros: outbound_queue_dwell_percentile(
+                    &outbound_queue_dwell_buckets,
+                    outbound_queue_dwell_frames,
+                    50,
+                ),
+                p95_micros: outbound_queue_dwell_percentile(
+                    &outbound_queue_dwell_buckets,
+                    outbound_queue_dwell_frames,
+                    95,
+                ),
+                p99_micros: outbound_queue_dwell_percentile(
+                    &outbound_queue_dwell_buckets,
+                    outbound_queue_dwell_frames,
+                    99,
+                ),
+            },
+        }
+    }
+}
+
+fn outbound_queue_dwell_bucket_index(elapsed_micros: u64) -> usize {
+    OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS
+        .iter()
+        .position(|bucket| elapsed_micros <= *bucket)
+        .unwrap_or(OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len() - 1)
+}
+
+fn outbound_queue_dwell_percentile(
+    buckets: &[u64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()],
+    total: u64,
+    percentile: u64,
+) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+    let rank = ((total * percentile).saturating_add(99) / 100).max(1);
+    let mut cumulative = 0u64;
+    for (index, count) in buckets.iter().enumerate() {
+        cumulative = cumulative.saturating_add(*count);
+        if cumulative >= rank {
+            return OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS[index];
+        }
+    }
+    OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS[OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len() - 1]
+}
+
+fn update_atomic_max(target: &AtomicU64, candidate: u64) {
+    let mut current = target.load(Ordering::Relaxed);
+    while candidate > current {
+        match target.compare_exchange_weak(current, candidate, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => break,
+            Err(next) => current = next,
         }
     }
 }
@@ -324,18 +481,24 @@ impl AsyncTunnelCore {
         limits: TunnelRuntimeLimits,
         frame_ready_notifier: Option<Arc<TunnelFrameReadyNotifier>>,
     ) -> Self {
+        let stats = TunnelRuntimeStats::default();
+        let outbound = match frame_ready_notifier {
+            Some(notifier) => AsyncTunnelFrameQueue::new_internal(
+                limits.max_outbound_frames,
+                Some(notifier),
+                stats.clone(),
+            ),
+            None => {
+                AsyncTunnelFrameQueue::new_with_stats(limits.max_outbound_frames, stats.clone())
+            }
+        };
         Self {
-            outbound: match frame_ready_notifier {
-                Some(notifier) => {
-                    AsyncTunnelFrameQueue::new_with_notifier(limits.max_outbound_frames, notifier)
-                }
-                None => AsyncTunnelFrameQueue::new(limits.max_outbound_frames),
-            },
+            outbound,
             limits,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             listeners: Arc::new(Mutex::new(HashMap::new())),
             next_session_id: Arc::new(AtomicU64::new(1)),
-            stats: TunnelRuntimeStats::default(),
+            stats,
         }
     }
 

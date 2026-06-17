@@ -10,6 +10,7 @@ use kelicloud_agent_rs::ktp::{
 };
 use kelicloud_agent_rs::ktp_transport::{KtpCryptoDirection, KtpCryptoKey, KtpEncryptedTcpStream};
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
+use kelicloud_agent_rs::tunnel_async_runtime::TunnelQueueDwellStatsSnapshot;
 use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
 use kelicloud_agent_rs::tunnel_data::{
     build_ktp_tcp_auth_preface, derive_ktp_tcp_crypto_key, run_tunnel_data_once,
@@ -784,6 +785,17 @@ impl TunnelSessionRuntime for RuntimeWaitOrderingRuntime {
     fn tunnel_data_socket_idle_timeout(&self) -> Option<Duration> {
         Some(Duration::from_millis(10))
     }
+
+    fn outbound_queue_dwell_snapshot(&self) -> Option<TunnelQueueDwellStatsSnapshot> {
+        Some(TunnelQueueDwellStatsSnapshot {
+            frames: 1,
+            micros_total: 420,
+            micros_max: 420,
+            p50_micros: 500,
+            p95_micros: 500,
+            p99_micros: 500,
+        })
+    }
 }
 
 #[test]
@@ -869,6 +881,12 @@ fn tunnel_data_session_records_local_diagnostics_for_runtime_wait_and_idle_read(
     assert_eq!(snapshot.runtime_wait_attempts, 2);
     assert_eq!(snapshot.runtime_wait_hits, 1);
     assert_eq!(snapshot.outbound_runtime_frames, 1);
+    assert_eq!(snapshot.outbound_queue_dwell_frames, 1);
+    assert_eq!(snapshot.outbound_queue_dwell_micros_total, 420);
+    assert_eq!(snapshot.outbound_queue_dwell_micros_max, 420);
+    assert_eq!(snapshot.outbound_queue_dwell_p50_micros, 500);
+    assert_eq!(snapshot.outbound_queue_dwell_p95_micros, 500);
+    assert_eq!(snapshot.outbound_queue_dwell_p99_micros, 500);
     assert_eq!(snapshot.socket_idle_reads, 1);
     assert_eq!(snapshot.socket_idle_empty_reads, 0);
     assert!(
@@ -888,6 +906,12 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
         runtime_wait_elapsed_p95_micros: 100,
         runtime_wait_elapsed_p99_micros: 100,
         outbound_runtime_frames: 9,
+        outbound_queue_dwell_frames: 9,
+        outbound_queue_dwell_micros_total: 240,
+        outbound_queue_dwell_micros_max: 90,
+        outbound_queue_dwell_p50_micros: 50,
+        outbound_queue_dwell_p95_micros: 100,
+        outbound_queue_dwell_p99_micros: 100,
         socket_idle_reads: 4,
         socket_idle_empty_reads: 1,
     };
@@ -897,7 +921,7 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
     assert!(snapshot.has_activity());
     assert_eq!(
         line,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 socket_idle_reads=4 socket_idle_empty_reads=1"
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1"
     );
     assert!(!line.contains("token"));
 }
