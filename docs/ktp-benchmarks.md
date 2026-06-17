@@ -143,6 +143,21 @@ client threads and appends `rtt_micros_samples`, `rtt_micros_p50`,
 off for raw throughput-only samples; turn it on when comparing small-frame
 interactive paths such as RDP-like forwarding.
 
+Live KTP tunnel diagnostics evidence:
+
+```bash
+scripts/ktp-live-canary-evidence.sh \
+  --service-name kelicloud-agent-rs \
+  --since "30 minutes ago" \
+  --evidence-file ktp-live-canary.evidence.md
+```
+
+During a real KTP canary window, run the helper after sending tunnel traffic.
+It reads `journalctl` by default, or `--log-file <path>` for captured agent
+logs, and verifies that `tunnel data diagnostics` lines include runtime wait
+and outbound queue dwell percentile fields. Treat the generated Markdown file
+as the live-log companion to `ktp-e2e-bench --latency` output.
+
 ## 2026-06-18 Release Host Latency Sample
 
 Code:
@@ -259,5 +274,5 @@ Next evidence to collect:
 
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Before/after diagnostics for production data carrier scheduling changes.
-- Live KTP canary logs with runtime wait and outbound queue dwell percentiles
-  captured during real tunnel traffic.
+- Live KTP canary traffic captured with `scripts/ktp-live-canary-evidence.sh`
+  and paired with RTT/throughput evidence from the same observation window.
