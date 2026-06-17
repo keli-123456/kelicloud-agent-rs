@@ -208,6 +208,7 @@ fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
         source_allowlist: "0.0.0.0/0".to_string(),
         max_concurrent_sessions: 32,
         last_revision: 1,
+        data_transport: "websocket".to_string(),
     }
 }
 

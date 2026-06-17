@@ -19,6 +19,7 @@ fn tunnel_control_hello_declares_capability_without_data_plane() {
     assert!(json.contains(r#""tunnel_control""#));
     assert!(json.contains(r#""rule_sync""#));
     assert!(json.contains(r#""status_report""#));
+    assert!(json.contains(r#""data_transports":["websocket","ktp_tcp"]"#));
     assert!(json.contains(r#""data_plane":false"#));
 }
 
@@ -67,9 +68,79 @@ fn tunnel_control_parses_rule_sync_payload() {
                 source_allowlist: "0.0.0.0/0".to_string(),
                 max_concurrent_sessions: 32,
                 last_revision: 1,
+                data_transport: "websocket".to_string(),
             }],
         }
     );
+}
+
+#[test]
+fn tunnel_control_defaults_missing_rule_data_transport_to_websocket() {
+    let message = parse_server_message(
+        br#"{
+            "type":"rule_sync",
+            "revision":"rev-default",
+            "rules":[{
+                "id":8,
+                "name":"SSH",
+                "enabled":true,
+                "protocol":"tcp",
+                "role":"both",
+                "ingress_group":"edge",
+                "listen_address":"0.0.0.0",
+                "listen_port":10022,
+                "egress_group":"edge",
+                "target_host":"127.0.0.1",
+                "target_port":22,
+                "source_allowlist":"0.0.0.0/0",
+                "max_concurrent_sessions":16,
+                "last_revision":2
+            }]
+        }"#,
+    )
+    .unwrap();
+
+    let TunnelControlServerMessage::RuleSync { rules, .. } = message else {
+        panic!("expected rule sync");
+    };
+
+    assert_eq!(rules[0].data_transport, "websocket");
+    assert_eq!(rules[0].data_transport(), "websocket");
+}
+
+#[test]
+fn tunnel_control_parses_ktp_tcp_rule_data_transport() {
+    let message = parse_server_message(
+        br#"{
+            "type":"rule_sync",
+            "revision":"rev-ktp",
+            "rules":[{
+                "id":9,
+                "name":"RDP",
+                "enabled":true,
+                "protocol":"tcp",
+                "role":"both",
+                "ingress_group":"edge",
+                "listen_address":"0.0.0.0",
+                "listen_port":10089,
+                "egress_group":"edge",
+                "target_host":"127.0.0.1",
+                "target_port":3389,
+                "source_allowlist":"0.0.0.0/0",
+                "max_concurrent_sessions":32,
+                "last_revision":3,
+                "data_transport":"ktp_tcp"
+            }]
+        }"#,
+    )
+    .unwrap();
+
+    let TunnelControlServerMessage::RuleSync { rules, .. } = message else {
+        panic!("expected rule sync");
+    };
+
+    assert_eq!(rules[0].data_transport, "ktp_tcp");
+    assert_eq!(rules[0].data_transport(), "ktp_tcp");
 }
 
 #[test]
@@ -98,6 +169,7 @@ fn tunnel_control_builds_heartbeat_and_rule_ack() {
         source_allowlist: "0.0.0.0/0".to_string(),
         max_concurrent_sessions: 32,
         last_revision: 1,
+        data_transport: "websocket".to_string(),
     }];
     let rejected = vec![RejectedTunnelRule {
         id: 9,

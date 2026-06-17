@@ -12,6 +12,8 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 
 pub const TUNNEL_CONTROL_PROTOCOL_V1: &str = "keli-tunnel-control.v1";
+pub const TUNNEL_DATA_TRANSPORT_WEBSOCKET: &str = "websocket";
+pub const TUNNEL_DATA_TRANSPORT_KTP_TCP: &str = "ktp_tcp";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectedTunnelRule {
@@ -29,6 +31,19 @@ pub struct SelectedTunnelRule {
     pub source_allowlist: String,
     pub max_concurrent_sessions: u32,
     pub last_revision: i64,
+    #[serde(default = "default_tunnel_data_transport")]
+    pub data_transport: String,
+}
+
+impl SelectedTunnelRule {
+    pub fn data_transport(&self) -> &str {
+        let value = self.data_transport.trim();
+        if value.is_empty() {
+            TUNNEL_DATA_TRANSPORT_WEBSOCKET
+        } else {
+            value
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +66,7 @@ pub enum TunnelControlClientMessage {
         control_protocol: String,
         agent_version: String,
         capabilities: Vec<String>,
+        data_transports: Vec<String>,
         data_plane: bool,
     },
     Heartbeat {
@@ -109,8 +125,20 @@ pub fn build_hello(agent_version: &str) -> TunnelControlClientMessage {
             "rule_sync".to_string(),
             "status_report".to_string(),
         ],
+        data_transports: supported_tunnel_data_transports(),
         data_plane: false,
     }
+}
+
+pub fn supported_tunnel_data_transports() -> Vec<String> {
+    vec![
+        TUNNEL_DATA_TRANSPORT_WEBSOCKET.to_string(),
+        TUNNEL_DATA_TRANSPORT_KTP_TCP.to_string(),
+    ]
+}
+
+fn default_tunnel_data_transport() -> String {
+    TUNNEL_DATA_TRANSPORT_WEBSOCKET.to_string()
 }
 
 pub fn build_heartbeat(revision: &str, active_rules: &[u64]) -> TunnelControlClientMessage {

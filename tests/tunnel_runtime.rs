@@ -1012,5 +1012,6 @@ fn selected_rule(id: u64, protocol: &str, role: &str, enabled: bool) -> Selected
         source_allowlist: "127.0.0.0/8".to_string(),
         max_concurrent_sessions: 32,
         last_revision: 1,
+        data_transport: "websocket".to_string(),
     }
 }
