@@ -803,6 +803,22 @@ Tunnel-data receive batch foundation:
 - This does not change the KTP frame format or backend schema. It reduces
   per-frame loop overhead on the dedicated KTP TCP carrier and should be paired
   with future before/after benchmark evidence before claiming throughput gains.
+- `ktp-tunnel-bench --direction relay-to-client-batch-read` exercises the
+  dedicated KTP TCP relay-to-agent path through the tunnel-data socket's batch
+  read interface and reports `read_batch_frames=64`.
+- `scripts/tunnel-relay-local-smoke.sh` runs a small batch-read carrier sample
+  by default. Use `KTP_SMOKE_BATCH_READ_FRAMES` and
+  `KTP_SMOKE_BATCH_READ_PAYLOAD_BYTES` to adjust that smoke workload.
+
+Linux debug smoke sample:
+
+```text
+ktp_tunnel_bench carrier=encrypted_tcp direction=relay_to_client_batch_read runs=1 frames=512 payload_bytes=4096 bytes=2097152 bytes_per_run=2097152 total_bytes=2097152 read_batch_frames=64 elapsed_ms=976.214 throughput_mib_s=2.049
+```
+
+This sample proves the smoke path and metric shape on the release host. It is
+not a release throughput baseline because the smoke uses a debug build and a
+small workload.
 
 ## 2026-06-18 KTP Local Backend Smoke
 
