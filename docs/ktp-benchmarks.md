@@ -281,9 +281,66 @@ Observations:
   from the runtime ingress-to-egress path. The p95/p99 gap shows why live canary
   traffic should capture latency and runtime queue diagnostics together.
 
+## 2026-06-18 KTP Local Backend Smoke
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Commit: `bb06992`
+- Backend ref: `keli-123456/kelicloud@main`
+- Frontend ref: `keli-123456/kelicloud-web@main`
+
+Host:
+
+- OS: Debian GNU/Linux 12
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- Go: `go1.24.11`
+- Node: `v22.22.3`
+
+Command shape:
+
+```bash
+KELICLOUD_SMOKE_KTP_TCP=true \
+KOMARI_DB_USER=komari_smoke \
+KOMARI_DB_PASS=komari-smoke-pass \
+KOMARI_DB_NAME=komari_ktp-smoke-20260617134406 \
+BACKEND_LISTEN=127.0.0.1:26776 \
+BACKEND_ENDPOINT=http://127.0.0.1:26776 \
+scripts/smoke-local-backend.sh
+```
+
+Result:
+
+- Backend KTP TCP relay listened on `127.0.0.1:40699`.
+- Tunnel rule echo succeeded through `127.0.0.1:51529`.
+- `smoke-summary --require-pass` passed startup, basic info, report WebSocket,
+  report send, ping upload, exec upload, terminal, and CN connectivity checks.
+- KTP evidence was generated at
+  `/tmp/kelicloud-agent-rs-ktp-smoke-20260617134406/smoke-logs/ktp-live-canary.evidence.md`.
+
+Latest observed diagnostics:
+
+```text
+tunnel data diagnostics: runtime_wait_attempts=9350 runtime_wait_hits=1 runtime_wait_elapsed_micros_total=5649352 runtime_wait_elapsed_micros_max=19949 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=5000 runtime_wait_elapsed_p99_micros=10000 outbound_runtime_frames=5 outbound_queue_dwell_frames=5 outbound_queue_dwell_micros_total=11385 outbound_queue_dwell_micros_max=5494 outbound_queue_dwell_p50_micros=250 outbound_queue_dwell_p95_micros=10000 outbound_queue_dwell_p99_micros=10000 socket_idle_reads=9350 socket_idle_empty_reads=9345
+```
+
+Notes:
+
+- The first real KTP local-backend smoke on `c61617c` reached rule creation but
+  failed with `relay_unavailable`. Agent logs showed a panic at
+  `src/tunnel_data.rs:568`: `there is no reactor running`. The `bb06992` fix
+  moved the KTP idle `tokio::time::timeout` creation inside the socket's Tokio
+  runtime and the same smoke then passed.
+- The successful smoke proves the current KTP TCP carrier can run the existing
+  control-plane compatibility suite and a loopback tunnel echo against a real
+  backend. It is not yet a high-throughput production capacity claim.
+
 Next evidence to collect:
 
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Before/after diagnostics for production data carrier scheduling changes.
-- Live KTP canary traffic captured with `scripts/ktp-live-canary-evidence.sh`
-  and paired with RTT/throughput evidence from the same observation window.
+- Repeat KTP local-backend smoke from GitHub Actions or a self-hosted runner so
+  the evidence is attached to CI artifacts, not only a one-off remote host.
+- Live KTP canary traffic with real RDP-like forwarding and paired RTT or
+  throughput evidence from the same observation window.
