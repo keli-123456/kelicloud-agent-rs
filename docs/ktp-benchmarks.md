@@ -473,6 +473,50 @@ Notes:
   The next runtime optimization should focus on relay scheduling and fairness
   under bursty multi-session load, not on lowering the default batch cap.
 
+## 2026-06-18 Fair Drain Scheduling Experiment
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Base runtime commit: `f960a42` (`9dde393` only added benchmark notes and did
+  not change runtime code)
+- Experiment: change `AsyncTunnelCore::next_frames` from FIFO batch drain to a
+  session-rotating fair drain that preserves per-session frame order.
+- Result: not adopted. The experiment was removed before commit because it
+  regressed the current batch 64 default under multi-client load.
+
+Command:
+
+```bash
+KTP_BATCH_MATRIX_CLIENTS="1 2 4 8" \
+KTP_BATCH_MATRIX_BATCHES="16 32 64" \
+KTP_BATCH_MATRIX_RUNS=5 \
+KTP_BATCH_MATRIX_FRAMES=64 \
+KTP_BATCH_MATRIX_PAYLOAD_BYTES=8192 \
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-batch-matrix-fair-drain.csv \
+  bash scripts/ktp-relay-batch-matrix.sh
+```
+
+Key comparison against the FIFO matrix above:
+
+| Clients | Batch | FIFO Throughput Median | Fair Throughput Median | FIFO RTT p95 | Fair RTT p95 | FIFO RTT Max | Fair RTT Max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 64 | 6.155 MiB/s | 6.217 MiB/s | 670 us | 766 us | 3870 us | 3648 us |
+| 4 | 64 | 9.567 MiB/s | 4.957 MiB/s | 1212 us | 2141 us | 10334 us | 12366 us |
+| 8 | 64 | 15.154 MiB/s | 13.561 MiB/s | 1184 us | 1416 us | 5242 us | 4949 us |
+
+Notes:
+
+- Session-rotating fair drain improved some smaller-batch samples, but it hurt
+  the production candidate path: batch 64 with four and eight clients.
+- The four-client batch 64 sample is the clearest rejection signal: median
+  throughput dropped from 9.567 MiB/s to 4.957 MiB/s and p95 latency rose from
+  1212 us to 2141 us.
+- Do not replace FIFO batch drain with naive per-session round-robin drain.
+  The next scheduling attempt should first add per-session latency or queue
+  dwell diagnostics, then test an adaptive policy that avoids reordering the
+  entire outbound queue under high batch caps.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
