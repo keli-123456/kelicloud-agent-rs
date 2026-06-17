@@ -23,7 +23,13 @@ struct PolicyPair {
 
 fn main() {
     match run(std::env::args().skip(1)) {
-        Ok(output) => println!("{output}"),
+        Ok(report) => {
+            println!("{}", report.output);
+            if report.fixed_better_gate_failed {
+                eprintln!("fixed_better verdict failed KTP policy gate");
+                std::process::exit(3);
+            }
+        }
         Err(error) => {
             eprintln!("{error}");
             print_usage();
@@ -32,17 +38,31 @@ fn main() {
     }
 }
 
-fn run(mut args: impl Iterator<Item = String>) -> SummaryResult<String> {
-    let path = args
-        .next()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or("CSV path is required")?;
-    if args.next().is_some() {
-        return Err("unexpected extra argument".into());
+#[derive(Clone, Debug)]
+struct SummaryReport {
+    output: String,
+    fixed_better_gate_failed: bool,
+}
+
+fn run(args: impl Iterator<Item = String>) -> SummaryResult<SummaryReport> {
+    let mut fail_on_fixed_better = false;
+    let mut path = None::<String>;
+    for arg in args {
+        match arg.as_str() {
+            "--fail-on-fixed-better" => fail_on_fixed_better = true,
+            _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
+            _ if path.is_none() => path = Some(arg),
+            _ => return Err("unexpected extra argument".into()),
+        }
     }
 
+    let path = path.ok_or("CSV path is required")?;
     let content = fs::read_to_string(&path)?;
-    summarize_csv(&content)
+    let output = summarize_csv(&content)?;
+    Ok(SummaryReport {
+        fixed_better_gate_failed: fail_on_fixed_better && output.contains("verdict=fixed_better"),
+        output,
+    })
 }
 
 fn summarize_csv(content: &str) -> SummaryResult<String> {
@@ -206,5 +226,5 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-policy-summary <ktp-relay-batch-matrix.csv>");
+    eprintln!("usage: ktp-policy-summary [--fail-on-fixed-better] <ktp-relay-batch-matrix.csv>");
 }

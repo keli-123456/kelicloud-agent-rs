@@ -709,6 +709,19 @@ ktp_policy_summary rows=2 pairs=1
 clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=32 throughput_delta_pct=-39.94 rtt_p95_delta_pct=53.42 client_p95_spread_delta_pct=729.84 verdict=fixed_better
 ```
 
+Gate command:
+
+```bash
+cargo run --release --bin ktp-policy-summary -- \
+  --fail-on-fixed-better /tmp/ktp-policy-compare-smoke.csv
+```
+
+The gate still prints the summary, then exits non-zero if any pair is
+`verdict=fixed_better`. The validation sample above produced
+`gate_exit_code=3`, so this gate can be used to prevent a candidate scheduling
+policy from being promoted when it loses throughput, RTT p95, and client p95
+fairness at the same time.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
