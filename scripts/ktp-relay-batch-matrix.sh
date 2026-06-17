@@ -16,6 +16,7 @@ RELAY_BATCH_POLICIES="${KTP_BATCH_MATRIX_BATCH_POLICIES:-${KTP_BATCH_MATRIX_BATC
 RELAY_WAIT_TIMEOUT_US="${KTP_BATCH_MATRIX_RELAY_WAIT_TIMEOUT_US:-100}"
 DRY_RUN="${KTP_BATCH_MATRIX_DRY_RUN:-0}"
 CSV_PATH="${KTP_BATCH_MATRIX_CSV:-}"
+FAIL_ON_FIXED_BETTER="${KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER:-0}"
 
 csv_header() {
   printf '%s\n' "profile,runs,clients,frames,payload_bytes,relay_batch_frames,relay_batch_policy,relay_batch_frames_effective,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max,rtt_micros_p50,rtt_micros_p95,rtt_micros_p99,rtt_micros_max,rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max,relay_turns,relay_wait_turns,ingress_batches,egress_batches,ingress_max_batch_frames,egress_max_batch_frames"
@@ -123,6 +124,11 @@ echo "== ktp relay batch matrix =="
 echo "profile=${PROFILE} runs=${RUNS} clients=${CLIENTS} frames=${FRAMES} payload_bytes=${PAYLOAD_BYTES} relay_batch_policies=${RELAY_BATCH_POLICIES} relay_wait_timeout_us=${RELAY_WAIT_TIMEOUT_US}"
 echo "batches=${BATCHES}"
 
+if [[ "${FAIL_ON_FIXED_BETTER}" == "1" && "${DRY_RUN}" != "1" && -z "${CSV_PATH}" ]]; then
+  echo "KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER requires KTP_BATCH_MATRIX_CSV" >&2
+  exit 2
+fi
+
 if [[ -n "${CSV_PATH}" ]]; then
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "csv=${CSV_PATH} (dry-run; not writing)"
@@ -177,3 +183,12 @@ for policy in ${RELAY_BATCH_POLICIES}; do
     done
   done
 done
+
+if [[ "${FAIL_ON_FIXED_BETTER}" == "1" ]]; then
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    echo "ktp policy summary gate skipped in dry-run"
+  else
+    echo "== ktp policy summary gate =="
+    cargo run --release --bin ktp-policy-summary -- --fail-on-fixed-better "${CSV_PATH}"
+  fi
+fi

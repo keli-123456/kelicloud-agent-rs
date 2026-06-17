@@ -722,6 +722,20 @@ The gate still prints the summary, then exits non-zero if any pair is
 policy from being promoted when it loses throughput, RTT p95, and client p95
 fairness at the same time.
 
+The matrix script can run the same gate automatically after all CSV rows are
+written:
+
+```bash
+KTP_BATCH_MATRIX_BATCH_POLICIES="fixed adaptive" \
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-policy-compare.csv \
+KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1 \
+bash scripts/ktp-relay-batch-matrix.sh
+```
+
+`KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1` requires `KTP_BATCH_MATRIX_CSV` in
+non-dry-run mode. The script runs `ktp-policy-summary --fail-on-fixed-better`
+against that CSV and returns the summary exit code.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:

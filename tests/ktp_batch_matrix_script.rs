@@ -22,6 +22,9 @@ fn ktp_batch_matrix_script_sweeps_relay_batch_frames_with_rdp_like_defaults() {
     assert!(script.contains("throughput_mib_s_median"));
     assert!(script.contains("rtt_client_p95_spread_micros"));
     assert!(script.contains("relay_batch_frames_effective"));
+    assert!(script.contains("KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER"));
+    assert!(script.contains("ktp-policy-summary"));
+    assert!(script.contains("--fail-on-fixed-better"));
 }
 
 #[test]
@@ -220,6 +223,113 @@ fn ktp_batch_matrix_script_writes_csv_for_each_policy_on_linux() {
 }
 
 #[test]
+fn ktp_batch_matrix_script_runs_policy_gate_after_csv_on_linux() {
+    if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+
+    let fake_bin_dir = unique_temp_path("ktp-policy-gate-fake-bin", "");
+    let _ = std::fs::remove_dir_all(&fake_bin_dir);
+    std::fs::create_dir_all(&fake_bin_dir).expect("fake bin dir should be created");
+    let fake_cargo = fake_bin_dir.join("cargo");
+    std::fs::write(&fake_cargo, fake_cargo_script()).expect("fake cargo should be written");
+    let chmod_status = Command::new("chmod")
+        .args([
+            "+x",
+            fake_cargo
+                .to_str()
+                .expect("fake cargo path should be utf-8"),
+        ])
+        .status()
+        .expect("chmod should run");
+    assert!(chmod_status.success());
+
+    let csv_path = unique_temp_path("ktp-policy-gate", "csv");
+    let _ = std::fs::remove_file(&csv_path);
+    let original_path = std::env::var("PATH").expect("PATH should be set");
+    let test_path = format!("{}:{original_path}", fake_bin_dir.display());
+    let output = Command::new("bash")
+        .env("PATH", test_path)
+        .env("KTP_BATCH_MATRIX_BATCH_POLICIES", "fixed adaptive")
+        .env("KTP_BATCH_MATRIX_BATCHES", "64")
+        .env("KTP_BATCH_MATRIX_RUNS", "1")
+        .env("KTP_BATCH_MATRIX_CLIENTS", "4")
+        .env("KTP_BATCH_MATRIX_FRAMES", "8")
+        .env("KTP_BATCH_MATRIX_PAYLOAD_BYTES", "1024")
+        .env("KTP_BATCH_MATRIX_CSV", &csv_path)
+        .env("KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER", "1")
+        .env("KTP_FAKE_POLICY_SUMMARY_VERDICT", "adaptive_better")
+        .args(["scripts/ktp-relay-batch-matrix.sh"])
+        .output()
+        .expect("batch matrix should run with fake cargo");
+
+    assert!(
+        output.status.success(),
+        "batch matrix policy gate failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("== ktp policy summary gate =="));
+    assert!(stdout.contains("ktp_policy_summary rows=2 pairs=1"));
+    assert!(stdout.contains("verdict=adaptive_better"));
+}
+
+#[test]
+fn ktp_batch_matrix_script_policy_gate_fails_on_fixed_better_on_linux() {
+    if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+
+    let fake_bin_dir = unique_temp_path("ktp-policy-gate-fail-fake-bin", "");
+    let _ = std::fs::remove_dir_all(&fake_bin_dir);
+    std::fs::create_dir_all(&fake_bin_dir).expect("fake bin dir should be created");
+    let fake_cargo = fake_bin_dir.join("cargo");
+    std::fs::write(&fake_cargo, fake_cargo_script()).expect("fake cargo should be written");
+    let chmod_status = Command::new("chmod")
+        .args([
+            "+x",
+            fake_cargo
+                .to_str()
+                .expect("fake cargo path should be utf-8"),
+        ])
+        .status()
+        .expect("chmod should run");
+    assert!(chmod_status.success());
+
+    let csv_path = unique_temp_path("ktp-policy-gate-fail", "csv");
+    let _ = std::fs::remove_file(&csv_path);
+    let original_path = std::env::var("PATH").expect("PATH should be set");
+    let test_path = format!("{}:{original_path}", fake_bin_dir.display());
+    let output = Command::new("bash")
+        .env("PATH", test_path)
+        .env("KTP_BATCH_MATRIX_BATCH_POLICIES", "fixed adaptive")
+        .env("KTP_BATCH_MATRIX_BATCHES", "64")
+        .env("KTP_BATCH_MATRIX_RUNS", "1")
+        .env("KTP_BATCH_MATRIX_CLIENTS", "4")
+        .env("KTP_BATCH_MATRIX_FRAMES", "8")
+        .env("KTP_BATCH_MATRIX_PAYLOAD_BYTES", "1024")
+        .env("KTP_BATCH_MATRIX_CSV", &csv_path)
+        .env("KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER", "1")
+        .env("KTP_FAKE_POLICY_SUMMARY_VERDICT", "fixed_better")
+        .args(["scripts/ktp-relay-batch-matrix.sh"])
+        .output()
+        .expect("batch matrix should run with fake cargo");
+
+    assert!(
+        !output.status.success(),
+        "batch matrix policy gate unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("== ktp policy summary gate =="));
+    assert!(stdout.contains("verdict=fixed_better"));
+    assert!(stderr.contains("fixed_better verdict failed KTP policy gate"));
+}
+
+#[test]
 fn ktp_batch_matrix_script_writes_csv_from_bench_output_on_linux() {
     if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
         return;
@@ -293,6 +403,32 @@ fn unique_temp_path(prefix: &str, extension: &str) -> std::path::PathBuf {
 fn fake_cargo_script() -> &'static str {
     r#"#!/usr/bin/env bash
 set -euo pipefail
+bin=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --bin)
+      bin="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+if [[ "$bin" == "ktp-policy-summary" ]]; then
+  verdict="${KTP_FAKE_POLICY_SUMMARY_VERDICT:-adaptive_better}"
+  echo "ktp_policy_summary rows=2 pairs=1"
+  echo "clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=32 throughput_delta_pct=10.00 rtt_p95_delta_pct=-20.00 client_p95_spread_delta_pct=-50.00 verdict=${verdict}"
+  if [[ "$verdict" == "fixed_better" ]]; then
+    echo "fixed_better verdict failed KTP policy gate" >&2
+    exit 3
+  fi
+  exit 0
+fi
 batch=""
 clients="1"
 policy="fixed"
