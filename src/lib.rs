@@ -4,6 +4,7 @@ pub mod backend_protocol_smoke;
 pub mod cn_connectivity;
 pub mod config;
 pub mod ktp;
+pub mod ktp_transport;
 pub mod linux_proc;
 pub mod net_static;
 pub mod ping;
