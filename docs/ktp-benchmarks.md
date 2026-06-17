@@ -9,7 +9,7 @@ Code:
 
 - Repository: `kelicloud-agent-rs`
 - Commit: `9fe3b83` for carrier results
-- Commit: `a192e72` for end-to-end runtime results
+- Commit: `fcf21a8` for end-to-end runtime results with batched frame drain
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -45,18 +45,21 @@ Runtime ingress-to-egress path:
 
 | Frames | Payload | Bytes | Elapsed | Throughput |
 | ---: | ---: | ---: | ---: | ---: |
-| 1024 | 1024 B | 1048576 | 257.742 ms | 3.880 MiB/s |
-| 256 | 16384 B | 4194304 | 114.293 ms | 34.998 MiB/s |
+| 1024 | 1024 B | 1048576 | 219.557 ms | 4.555 MiB/s |
+| 256 | 16384 B | 4194304 | 113.265 ms | 35.315 MiB/s |
 
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
 - 16 KiB and 64 KiB payloads show much higher encrypted TCP carrier throughput.
-- End-to-end runtime throughput is far below carrier-only throughput, so the
-  next bottleneck is runtime relay scheduling and per-frame session handling,
-  not ChaCha20-Poly1305 encryption itself.
-- Future optimization should focus on frame batching, read/write scheduling,
-  and reducing ingress/egress relay round trips before changing cryptography.
+- End-to-end runtime throughput is still far below carrier-only throughput, so
+  the next bottleneck is runtime relay scheduling and per-frame session
+  handling, not ChaCha20-Poly1305 encryption itself.
+- Batched runtime frame drain keeps the large-payload path around the previous
+  baseline and improves the documented 1 KiB baseline, but it is only the first
+  step. Future optimization should focus on read/write scheduling, multi-session
+  relay fairness, and reducing ingress/egress relay round trips before changing
+  cryptography.
 
 Next evidence to collect:
 
