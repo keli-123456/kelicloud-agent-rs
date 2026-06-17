@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn ktp_local_backend_matrix_script_declares_carrier_matrix_contract() {
@@ -13,6 +14,18 @@ fn ktp_local_backend_matrix_script_declares_carrier_matrix_contract() {
     assert!(script.contains("SMOKE_LOG_DIR="));
     assert!(script.contains("SMOKE_WORK_DIR="));
     assert!(script.contains("scripts/smoke-local-backend.sh"));
+}
+
+#[test]
+fn ktp_local_backend_matrix_script_declares_summary_contract() {
+    let script = std::fs::read_to_string(script_path())
+        .expect("local backend carrier matrix script should be readable");
+
+    assert!(script.contains("KELICLOUD_LOCAL_BACKEND_MATRIX_SUMMARY"));
+    assert!(script.contains("matrix-summary.tsv"));
+    assert!(script.contains("agent.summary.md"));
+    assert!(script.contains("ktp-live-canary.evidence.md"));
+    assert!(script.contains("KELICLOUD_LOCAL_BACKEND_MATRIX_SMOKE_SCRIPT"));
 }
 
 #[test]
@@ -102,10 +115,82 @@ fn ktp_local_backend_matrix_script_rejects_unknown_carrier() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown carrier: udp"));
 }
 
+#[test]
+fn ktp_local_backend_matrix_script_writes_summary_with_fake_smoke_on_linux() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("linux-only fake smoke summary test skipped");
+        return;
+    }
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping fake smoke summary check");
+        return;
+    };
+
+    let temp_dir = unique_temp_dir("ktp-local-backend-matrix");
+    let log_dir = temp_dir.join("logs");
+    let work_dir = temp_dir.join("work");
+    let summary_path = temp_dir.join("matrix-summary.tsv");
+    let fake_smoke = temp_dir.join("fake-smoke.sh");
+    std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+    std::fs::write(&fake_smoke, fake_smoke_script()).expect("fake smoke should be written");
+
+    let output = Command::new(bash)
+        .env(
+            "KELICLOUD_LOCAL_BACKEND_MATRIX_CARRIERS",
+            "websocket ktp_tcp",
+        )
+        .env("KELICLOUD_LOCAL_BACKEND_MATRIX_LOG_DIR", &log_dir)
+        .env("KELICLOUD_LOCAL_BACKEND_MATRIX_WORK_DIR", &work_dir)
+        .env("KELICLOUD_LOCAL_BACKEND_MATRIX_SUMMARY", &summary_path)
+        .env("KELICLOUD_LOCAL_BACKEND_MATRIX_SMOKE_SCRIPT", &fake_smoke)
+        .arg(script_path())
+        .output()
+        .expect("matrix script should run with fake smoke");
+
+    assert!(
+        output.status.success(),
+        "matrix script failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
+    assert!(summary.contains("carrier\tktp_tcp\tstatus\tlog_dir\tsummary_file\tktp_evidence_file"));
+    assert!(summary.contains(&format!(
+        "websocket\tfalse\tpass\t{}\t{}/agent.summary.md\t-",
+        log_dir.join("websocket").display(),
+        log_dir.join("websocket").display()
+    )));
+    assert!(summary.contains(&format!(
+        "ktp_tcp\ttrue\tpass\t{}\t{}/agent.summary.md\t{}/ktp-live-canary.evidence.md",
+        log_dir.join("ktp_tcp").display(),
+        log_dir.join("ktp_tcp").display(),
+        log_dir.join("ktp_tcp").display()
+    )));
+}
+
 fn script_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("scripts")
         .join("ktp-local-backend-matrix.sh")
+}
+
+fn unique_temp_dir(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+}
+
+fn fake_smoke_script() -> &'static str {
+    r#"#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${SMOKE_LOG_DIR}"
+printf '# fake summary\ncarrier=%s\n' "${KELICLOUD_SMOKE_KTP_TCP}" >"${SMOKE_LOG_DIR}/agent.summary.md"
+if [[ "${KELICLOUD_SMOKE_KTP_TCP}" == "true" ]]; then
+    printf '# fake ktp evidence\n' >"${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md"
+fi
+"#
 }
 
 fn find_bash() -> Option<PathBuf> {

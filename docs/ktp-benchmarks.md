@@ -887,6 +887,11 @@ WebSocket tunnel-data carrier and once through the KTP TCP carrier. Each run
 gets an isolated log directory, so the KTP evidence file and `agent.summary.md`
 can be compared without mixing artifacts.
 
+The wrapper also writes `matrix-summary.tsv` under the matrix log directory by
+default. The TSV records `carrier`, whether KTP TCP was enabled, pass/fail
+status, the run log directory, `agent.summary.md`, and the KTP live-canary
+evidence path when that carrier produces one.
+
 Result:
 
 - Backend KTP TCP relay listened on `127.0.0.1:40699`.
