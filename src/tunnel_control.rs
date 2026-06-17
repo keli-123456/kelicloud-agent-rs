@@ -117,6 +117,13 @@ impl fmt::Display for TunnelControlError {
 impl Error for TunnelControlError {}
 
 pub fn build_hello(agent_version: &str) -> TunnelControlClientMessage {
+    build_hello_with_data_transports(agent_version, &supported_tunnel_data_transports())
+}
+
+pub fn build_hello_with_data_transports(
+    agent_version: &str,
+    data_transports: &[String],
+) -> TunnelControlClientMessage {
     TunnelControlClientMessage::Hello {
         control_protocol: TUNNEL_CONTROL_PROTOCOL_V1.to_string(),
         agent_version: agent_version.trim().to_string(),
@@ -125,7 +132,7 @@ pub fn build_hello(agent_version: &str) -> TunnelControlClientMessage {
             "rule_sync".to_string(),
             "status_report".to_string(),
         ],
-        data_transports: supported_tunnel_data_transports(),
+        data_transports: normalize_supported_tunnel_data_transports(data_transports),
         data_plane: false,
     }
 }
@@ -135,6 +142,35 @@ pub fn supported_tunnel_data_transports() -> Vec<String> {
         TUNNEL_DATA_TRANSPORT_WEBSOCKET.to_string(),
         TUNNEL_DATA_TRANSPORT_KTP_TCP.to_string(),
     ]
+}
+
+pub fn supported_tunnel_data_transports_for_ktp_tcp(enabled: bool) -> Vec<String> {
+    if enabled {
+        vec![TUNNEL_DATA_TRANSPORT_KTP_TCP.to_string()]
+    } else {
+        vec![TUNNEL_DATA_TRANSPORT_WEBSOCKET.to_string()]
+    }
+}
+
+fn normalize_supported_tunnel_data_transports(data_transports: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for value in data_transports {
+        let value = value.trim();
+        let normalized = if value.eq_ignore_ascii_case(TUNNEL_DATA_TRANSPORT_KTP_TCP) {
+            TUNNEL_DATA_TRANSPORT_KTP_TCP
+        } else if value.eq_ignore_ascii_case(TUNNEL_DATA_TRANSPORT_WEBSOCKET) {
+            TUNNEL_DATA_TRANSPORT_WEBSOCKET
+        } else {
+            continue;
+        };
+        if !result.iter().any(|existing| existing == normalized) {
+            result.push(normalized.to_string());
+        }
+    }
+    if result.is_empty() {
+        result.push(TUNNEL_DATA_TRANSPORT_WEBSOCKET.to_string());
+    }
+    result
 }
 
 fn default_tunnel_data_transport() -> String {
@@ -248,13 +284,38 @@ where
     T: TunnelControlTransport,
     S: TunnelRuleStateSink,
 {
+    run_tunnel_control_once_with_rule_sink_and_data_transports(
+        url,
+        headers,
+        agent_version,
+        transport,
+        rule_sink,
+        &supported_tunnel_data_transports(),
+    )
+}
+
+pub fn run_tunnel_control_once_with_rule_sink_and_data_transports<T, S>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_version: &str,
+    transport: &mut T,
+    rule_sink: &S,
+    data_transports: &[String],
+) -> Result<(), TransportError>
+where
+    T: TunnelControlTransport,
+    S: TunnelRuleStateSink,
+{
     let mut socket = match transport.connect_tunnel_control(url, headers) {
         Ok(socket) => socket,
         Err(error) if is_non_fatal_tunnel_control_error(&error) => return Ok(()),
         Err(error) => return Err(error),
     };
 
-    socket.send_message(&build_hello(agent_version))?;
+    socket.send_message(&build_hello_with_data_transports(
+        agent_version,
+        data_transports,
+    ))?;
     let mut latest_revision = String::new();
     let mut accepted_rules = Vec::new();
     let mut heartbeat_interval = Duration::from_secs(15);
@@ -306,13 +367,38 @@ where
     T: TunnelControlTransport,
     S: TunnelRuleStateSink,
 {
+    run_tunnel_control_session_with_rule_sink_and_data_transports(
+        url,
+        headers,
+        agent_version,
+        transport,
+        rule_sink,
+        &supported_tunnel_data_transports(),
+    )
+}
+
+pub fn run_tunnel_control_session_with_rule_sink_and_data_transports<T, S>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_version: &str,
+    transport: &mut T,
+    rule_sink: &S,
+    data_transports: &[String],
+) -> Result<(), TransportError>
+where
+    T: TunnelControlTransport,
+    S: TunnelRuleStateSink,
+{
     let mut socket = match transport.connect_tunnel_control(url, headers) {
         Ok(socket) => socket,
         Err(error) if is_non_fatal_tunnel_control_error(&error) => return Ok(()),
         Err(error) => return Err(error),
     };
 
-    socket.send_message(&build_hello(agent_version))?;
+    socket.send_message(&build_hello_with_data_transports(
+        agent_version,
+        data_transports,
+    ))?;
     let mut latest_revision = String::new();
     let mut accepted_rules = Vec::new();
     let mut heartbeat_interval = Duration::from_secs(15);

@@ -67,6 +67,33 @@ fn config_can_enable_tunnel_data_from_environment() {
 }
 
 #[test]
+fn config_reads_ktp_tcp_tunnel_data_address_from_environment_and_cli() {
+    let config = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--tunnel-ktp-tcp-address",
+            "127.0.0.1:25775",
+        ],
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(config.tunnel_ktp_tcp_address, "127.0.0.1:25775");
+
+    let config = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_TUNNEL_KTP_TCP_ADDRESS" => Some("10.0.0.10:25775".to_string()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(config.tunnel_ktp_tcp_address, "10.0.0.10:25775");
+}
+
+#[test]
 fn config_environment_overrides_command_line_like_go_agent() {
     let args = [
         "kelicloud-agent-rs",

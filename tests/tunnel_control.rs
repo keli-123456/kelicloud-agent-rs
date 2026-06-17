@@ -1,9 +1,10 @@
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_control::{
     build_heartbeat, build_hello, build_rule_ack, parse_server_message, run_tunnel_control_once,
-    run_tunnel_control_once_with_rule_sink, run_tunnel_control_session, RejectedTunnelRule,
-    SelectedTunnelRule, TunnelControlClientMessage, TunnelControlServerMessage,
-    TunnelControlSocket, TunnelControlTransport, TUNNEL_CONTROL_PROTOCOL_V1,
+    run_tunnel_control_once_with_rule_sink, run_tunnel_control_session,
+    supported_tunnel_data_transports_for_ktp_tcp, RejectedTunnelRule, SelectedTunnelRule,
+    TunnelControlClientMessage, TunnelControlServerMessage, TunnelControlSocket,
+    TunnelControlTransport, TUNNEL_CONTROL_PROTOCOL_V1,
 };
 use kelicloud_agent_rs::tunnel_data::SharedTunnelDataReadyState;
 use std::cell::RefCell;
@@ -21,6 +22,18 @@ fn tunnel_control_hello_declares_capability_without_data_plane() {
     assert!(json.contains(r#""status_report""#));
     assert!(json.contains(r#""data_transports":["websocket","ktp_tcp"]"#));
     assert!(json.contains(r#""data_plane":false"#));
+}
+
+#[test]
+fn tunnel_control_data_transports_follow_ktp_tcp_configuration() {
+    assert_eq!(
+        supported_tunnel_data_transports_for_ktp_tcp(false),
+        vec!["websocket".to_string()]
+    );
+    assert_eq!(
+        supported_tunnel_data_transports_for_ktp_tcp(true),
+        vec!["ktp_tcp".to_string()]
+    );
 }
 
 #[test]

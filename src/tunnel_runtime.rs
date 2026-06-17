@@ -4,7 +4,8 @@ use crate::tunnel_async_runtime::{
     AsyncTunnelCore, TunnelIngressListenerSpec, TunnelRuntimeError, TunnelRuntimeLimits,
 };
 use crate::tunnel_control::{
-    SelectedTunnelRule, TunnelRuleStateSink, TUNNEL_DATA_TRANSPORT_WEBSOCKET,
+    SelectedTunnelRule, TunnelRuleStateSink, TUNNEL_DATA_TRANSPORT_KTP_TCP,
+    TUNNEL_DATA_TRANSPORT_WEBSOCKET,
 };
 use crate::tunnel_data::{TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure};
 use crate::tunnel_preflight::{
@@ -28,6 +29,12 @@ pub struct SharedTunnelRuleState {
 pub struct TunnelRuleSnapshot {
     pub revision: String,
     pub rules: Vec<SelectedTunnelRule>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TransportTunnelRuleStateReadySource {
+    state: SharedTunnelRuleState,
+    data_transport: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,6 +117,13 @@ impl SharedTunnelRuleState {
 
     pub fn tcp_listener_plan(&self) -> Vec<TunnelTcpListenerSpec> {
         build_tcp_listener_plan(&self.snapshot().rules)
+    }
+
+    pub fn tcp_listener_plan_for_data_transport(
+        &self,
+        data_transport: &str,
+    ) -> Vec<TunnelTcpListenerSpec> {
+        build_tcp_listener_plan_for_data_transport(&self.snapshot().rules, data_transport)
     }
 
     fn ready_snapshot(
@@ -235,13 +249,37 @@ impl TunnelRuleStateSink for SharedTunnelRuleState {
 
 impl TunnelDataReadySource for SharedTunnelRuleState {
     fn current_ready(&self) -> TunnelDataReadyState {
+        self.current_ready_for_data_transport(TUNNEL_DATA_TRANSPORT_WEBSOCKET)
+    }
+}
+
+impl SharedTunnelRuleState {
+    pub fn current_ready_for_data_transport(&self, data_transport: &str) -> TunnelDataReadyState {
         let (snapshot, active_listeners, listener_health) = self.ready_snapshot();
-        build_tunnel_ready_state_with_listener_health(
+        build_tunnel_ready_state_with_listener_health_for_data_transport(
             &snapshot.revision,
             &snapshot.rules,
             &active_listeners,
             &listener_health,
+            data_transport,
         )
+    }
+
+    pub fn ready_source_for_data_transport(
+        &self,
+        data_transport: &str,
+    ) -> TransportTunnelRuleStateReadySource {
+        TransportTunnelRuleStateReadySource {
+            state: self.clone(),
+            data_transport: normalize_data_transport_filter(data_transport),
+        }
+    }
+}
+
+impl TunnelDataReadySource for TransportTunnelRuleStateReadySource {
+    fn current_ready(&self) -> TunnelDataReadyState {
+        self.state
+            .current_ready_for_data_transport(&self.data_transport)
     }
 }
 
@@ -266,6 +304,7 @@ impl TunnelSessionRuntime for NoopTunnelSessionRuntime {}
 
 pub struct TunnelTcpRuntime {
     rule_state: SharedTunnelRuleState,
+    data_transport: String,
     async_runtime: tokio::runtime::Runtime,
     core: AsyncTunnelCore,
     listeners: HashMap<u64, TcpListenerHandle>,
@@ -289,7 +328,27 @@ impl TunnelTcpRuntime {
         Self::new_with_limits(rule_state, TunnelRuntimeLimits::default())
     }
 
+    pub fn new_for_data_transport(rule_state: SharedTunnelRuleState, data_transport: &str) -> Self {
+        Self::new_with_limits_for_data_transport(
+            rule_state,
+            TunnelRuntimeLimits::default(),
+            data_transport,
+        )
+    }
+
     pub fn new_with_limits(rule_state: SharedTunnelRuleState, limits: TunnelRuntimeLimits) -> Self {
+        Self::new_with_limits_for_data_transport(
+            rule_state,
+            limits,
+            TUNNEL_DATA_TRANSPORT_WEBSOCKET,
+        )
+    }
+
+    pub fn new_with_limits_for_data_transport(
+        rule_state: SharedTunnelRuleState,
+        limits: TunnelRuntimeLimits,
+        data_transport: &str,
+    ) -> Self {
         let (listener_event_tx, listener_event_rx) = mpsc::channel();
         #[cfg(not(test))]
         let _ = listener_event_tx;
@@ -301,6 +360,7 @@ impl TunnelTcpRuntime {
             .expect("build tunnel tcp async runtime");
         Self {
             rule_state,
+            data_transport: normalize_data_transport_filter(data_transport),
             async_runtime,
             core: AsyncTunnelCore::new(limits),
             listeners: HashMap::new(),
@@ -312,7 +372,9 @@ impl TunnelTcpRuntime {
 
     pub fn refresh_listeners(&mut self) -> Result<(), TransportError> {
         let terminal_specs = self.drain_listener_runtime_events();
-        let plan = self.rule_state.tcp_listener_plan();
+        let plan = self
+            .rule_state
+            .tcp_listener_plan_for_data_transport(&self.data_transport);
         self.rule_state.retain_listener_health_for_specs(&plan);
         let desired_rule_ids = plan.iter().map(|spec| spec.rule_id).collect::<HashSet<_>>();
 
@@ -453,7 +515,7 @@ impl TunnelTcpRuntime {
             rule.id == rule_id
                 && rule.enabled
                 && rule.protocol.trim().eq_ignore_ascii_case("tcp")
-                && rule_uses_websocket_data_transport(rule)
+                && rule_uses_data_transport(rule, &self.data_transport)
                 && matches!(rule.role.trim(), "egress" | "both")
         })
     }
@@ -605,13 +667,32 @@ fn build_tunnel_ready_state_with_listener_health(
     active_listeners: &[TunnelTcpListenerSpec],
     listener_health: &[TunnelListenerHealth],
 ) -> TunnelDataReadyState {
+    build_tunnel_ready_state_with_listener_health_for_data_transport(
+        revision,
+        rules,
+        active_listeners,
+        listener_health,
+        TUNNEL_DATA_TRANSPORT_WEBSOCKET,
+    )
+}
+
+fn build_tunnel_ready_state_with_listener_health_for_data_transport(
+    revision: &str,
+    rules: &[SelectedTunnelRule],
+    active_listeners: &[TunnelTcpListenerSpec],
+    listener_health: &[TunnelListenerHealth],
+    data_transport: &str,
+) -> TunnelDataReadyState {
+    let data_transport = normalize_data_transport_filter(data_transport);
     let mut ready = TunnelDataReadyState::empty(revision);
     for rule in rules {
         if !rule.enabled || rule.protocol.trim().to_ascii_lowercase() != "tcp" {
             continue;
         }
-        if !rule_uses_websocket_data_transport(rule) {
-            push_unsupported_data_transport_failure_once(&mut ready, rule);
+        if !rule_uses_data_transport(rule, &data_transport) {
+            if data_transport == TUNNEL_DATA_TRANSPORT_WEBSOCKET {
+                push_unsupported_data_transport_failure_once(&mut ready, rule);
+            }
             continue;
         }
         match rule.role.trim().to_ascii_lowercase().as_str() {
@@ -847,11 +928,19 @@ fn listener_spec_for_rule(rule: &SelectedTunnelRule) -> TunnelTcpListenerSpec {
 }
 
 pub fn build_tcp_listener_plan(rules: &[SelectedTunnelRule]) -> Vec<TunnelTcpListenerSpec> {
+    build_tcp_listener_plan_for_data_transport(rules, TUNNEL_DATA_TRANSPORT_WEBSOCKET)
+}
+
+pub fn build_tcp_listener_plan_for_data_transport(
+    rules: &[SelectedTunnelRule],
+    data_transport: &str,
+) -> Vec<TunnelTcpListenerSpec> {
+    let data_transport = normalize_data_transport_filter(data_transport);
     let mut listeners = rules
         .iter()
         .filter(|rule| rule.enabled)
         .filter(|rule| rule.protocol.trim().eq_ignore_ascii_case("tcp"))
-        .filter(|rule| rule_uses_websocket_data_transport(rule))
+        .filter(|rule| rule_uses_data_transport(rule, &data_transport))
         .filter(|rule| matches!(rule.role.trim(), "ingress" | "both"))
         .map(listener_spec_for_rule)
         .collect::<Vec<_>>();
@@ -859,10 +948,19 @@ pub fn build_tcp_listener_plan(rules: &[SelectedTunnelRule]) -> Vec<TunnelTcpLis
     listeners
 }
 
-fn rule_uses_websocket_data_transport(rule: &SelectedTunnelRule) -> bool {
+fn rule_uses_data_transport(rule: &SelectedTunnelRule, data_transport: &str) -> bool {
     rule.data_transport()
         .trim()
-        .eq_ignore_ascii_case(TUNNEL_DATA_TRANSPORT_WEBSOCKET)
+        .eq_ignore_ascii_case(data_transport.trim())
+}
+
+fn normalize_data_transport_filter(data_transport: &str) -> String {
+    match data_transport.trim() {
+        value if value.eq_ignore_ascii_case(TUNNEL_DATA_TRANSPORT_KTP_TCP) => {
+            TUNNEL_DATA_TRANSPORT_KTP_TCP.to_string()
+        }
+        _ => TUNNEL_DATA_TRANSPORT_WEBSOCKET.to_string(),
+    }
 }
 
 pub fn source_addr_allowed(source_addr: &str, allowlist: &str) -> bool {

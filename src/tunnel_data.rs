@@ -5,10 +5,13 @@ use crate::ktp_transport::{
 use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
 use crate::tunnel_control::SelectedTunnelRule;
 use crate::tunnel_runtime::{NoopTunnelSessionRuntime, TunnelSessionRuntime};
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
 use std::io::ErrorKind;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio::runtime::Runtime;
 use tokio::time::timeout;
@@ -131,16 +134,31 @@ pub trait TunnelDataTransport {
 
 #[derive(Debug, Clone)]
 pub struct KtpEncryptedTcpTunnelDataTransport {
-    key: KtpCryptoKey,
+    auth: KtpEncryptedTcpTunnelDataAuth,
     read_timeout: Duration,
     max_payload_len: usize,
     max_buffer_len: usize,
 }
 
+#[derive(Debug, Clone)]
+enum KtpEncryptedTcpTunnelDataAuth {
+    StaticKey(KtpCryptoKey),
+    Token(String),
+}
+
 impl KtpEncryptedTcpTunnelDataTransport {
     pub fn new(key: KtpCryptoKey) -> Self {
         Self {
-            key,
+            auth: KtpEncryptedTcpTunnelDataAuth::StaticKey(key),
+            read_timeout: Duration::from_secs(2),
+            max_payload_len: KTP_MAX_PAYLOAD_LEN,
+            max_buffer_len: 1024 * 1024,
+        }
+    }
+
+    pub fn new_with_token(token: &str) -> Self {
+        Self {
+            auth: KtpEncryptedTcpTunnelDataAuth::Token(token.trim().to_string()),
             read_timeout: Duration::from_secs(2),
             max_payload_len: KTP_MAX_PAYLOAD_LEN,
             max_buffer_len: 1024 * 1024,
@@ -170,9 +188,21 @@ impl TunnelDataTransport for KtpEncryptedTcpTunnelDataTransport {
         let stream = runtime
             .block_on(TokioTcpStream::connect(&address))
             .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        let (stream, key) = match &self.auth {
+            KtpEncryptedTcpTunnelDataAuth::StaticKey(key) => (stream, key.clone()),
+            KtpEncryptedTcpTunnelDataAuth::Token(token) => {
+                let nonce = random_ktp_tcp_auth_nonce()?;
+                let preface = build_ktp_tcp_auth_preface(token, nonce)?;
+                let mut stream = stream;
+                runtime
+                    .block_on(stream.write_all(&preface))
+                    .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+                (stream, derive_ktp_tcp_crypto_key(token, nonce))
+            }
+        };
         let stream = KtpEncryptedTcpStream::from_stream(
             stream,
-            self.key.clone(),
+            key,
             KtpCryptoDirection::ClientToRelay,
             KtpCryptoDirection::RelayToClient,
             self.max_payload_len,
@@ -185,6 +215,44 @@ impl TunnelDataTransport for KtpEncryptedTcpTunnelDataTransport {
             max_payload_len: self.max_payload_len,
         })
     }
+}
+
+pub fn build_ktp_tcp_auth_preface(token: &str, nonce: [u8; 16]) -> Result<Vec<u8>, TransportError> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(TransportError::EmptyToken);
+    }
+
+    let fingerprint = Sha256::digest(token.as_bytes());
+    let mut preface = Vec::with_capacity(84);
+    preface.extend_from_slice(b"KTA1");
+    preface.extend_from_slice(&nonce);
+    preface.extend_from_slice(&fingerprint);
+    let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes())
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    mac.update(b"kelicloud ktp tcp auth v1");
+    mac.update(&nonce);
+    mac.update(&fingerprint);
+    preface.extend_from_slice(&mac.finalize().into_bytes());
+    Ok(preface)
+}
+
+pub fn derive_ktp_tcp_crypto_key(token: &str, nonce: [u8; 16]) -> KtpCryptoKey {
+    let mut hash = Sha256::new();
+    hash.update(b"kelicloud ktp tcp data v1");
+    hash.update(token.trim().as_bytes());
+    hash.update(nonce);
+    let digest = hash.finalize();
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&digest);
+    KtpCryptoKey::from_bytes(bytes)
+}
+
+fn random_ktp_tcp_auth_nonce() -> Result<[u8; 16], TransportError> {
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+    Ok(nonce)
 }
 
 pub struct KtpEncryptedTcpTunnelDataSocket {

@@ -44,6 +44,17 @@ pub fn build_tunnel_data_ws_url(endpoint: &str, token: &str) -> Result<String, P
     build_ws_url(endpoint, "/api/clients/tunnel/data", &[("token", token)])
 }
 
+pub fn build_tunnel_data_ktp_tcp_url(address: &str) -> Result<String, ProtocolError> {
+    let address = require_non_empty(address, ProtocolError::EmptyEndpoint)?;
+    if address.starts_with("ktp+tcp://") {
+        return Ok(address.to_string());
+    }
+    if address.starts_with("tcp://") {
+        return Ok(format!("ktp+tcp://{}", &address["tcp://".len()..]));
+    }
+    Ok(format!("ktp+tcp://{address}"))
+}
+
 pub fn build_terminal_ws_url(
     endpoint: &str,
     token: &str,

@@ -13,6 +13,7 @@ pub struct AgentConfig {
     pub disable_web_ssh: bool,
     pub tunnel_control_enabled: bool,
     pub tunnel_data_enabled: bool,
+    pub tunnel_ktp_tcp_address: String,
     pub interval_seconds: f64,
     pub max_retries: u32,
     pub reconnect_interval_seconds: u64,
@@ -89,6 +90,8 @@ impl AgentConfig {
             .and_then(parse_tunnel_control_enabled)
             .unwrap_or(true);
         let mut tunnel_data_enabled = false;
+        let mut tunnel_ktp_tcp_address =
+            clean_optional(env_lookup("AGENT_TUNNEL_KTP_TCP_ADDRESS")).unwrap_or_default();
         let mut interval_seconds = parse_env_f64(&env_lookup, "AGENT_INTERVAL", 1.0)?;
         let mut max_retries = parse_env_u32(&env_lookup, "AGENT_MAX_RETRIES", 3)?;
         let mut reconnect_interval_seconds =
@@ -164,6 +167,9 @@ impl AgentConfig {
                 }
                 "--once" => {
                     once = true;
+                }
+                "--tunnel-ktp-tcp-address" | "--ktp-tcp-address" => {
+                    tunnel_ktp_tcp_address = next_value(&mut iter, "--tunnel-ktp-tcp-address")?;
                 }
                 "--interval" => {
                     interval_seconds =
@@ -342,6 +348,18 @@ impl AgentConfig {
                 _ if arg.starts_with("--config=") => {
                     config_file = clean_required(&arg["--config=".len()..], "--config")?.unwrap();
                 }
+                _ if arg.starts_with("--tunnel-ktp-tcp-address=") => {
+                    tunnel_ktp_tcp_address = clean_required(
+                        &arg["--tunnel-ktp-tcp-address=".len()..],
+                        "--tunnel-ktp-tcp-address",
+                    )?
+                    .unwrap();
+                }
+                _ if arg.starts_with("--ktp-tcp-address=") => {
+                    tunnel_ktp_tcp_address =
+                        clean_required(&arg["--ktp-tcp-address=".len()..], "--ktp-tcp-address")?
+                            .unwrap();
+                }
                 _ => {}
             }
         }
@@ -361,6 +379,11 @@ impl AgentConfig {
             &env_lookup,
             "AGENT_TUNNEL_DATA_ENABLED",
             &mut tunnel_data_enabled,
+        );
+        apply_string_env(
+            &env_lookup,
+            "AGENT_TUNNEL_KTP_TCP_ADDRESS",
+            &mut tunnel_ktp_tcp_address,
         );
         apply_f64_env(&env_lookup, "AGENT_INTERVAL", &mut interval_seconds);
         apply_u32_env(&env_lookup, "AGENT_MAX_RETRIES", &mut max_retries);
@@ -438,6 +461,9 @@ impl AgentConfig {
             if let Some(value) = file_config.tunnel_data_enabled {
                 tunnel_data_enabled = value;
             }
+            if let Some(value) = file_config.tunnel_ktp_tcp_address {
+                tunnel_ktp_tcp_address = clean_config_string(value);
+            }
             if let Some(value) = file_config.interval {
                 interval_seconds = validate_positive_f64("interval", value)?;
             }
@@ -509,6 +535,7 @@ impl AgentConfig {
             disable_web_ssh,
             tunnel_control_enabled,
             tunnel_data_enabled,
+            tunnel_ktp_tcp_address,
             interval_seconds,
             max_retries,
             reconnect_interval_seconds,
@@ -541,6 +568,7 @@ struct FileConfig {
     disable_web_ssh: Option<bool>,
     tunnel_control_enabled: Option<bool>,
     tunnel_data_enabled: Option<bool>,
+    tunnel_ktp_tcp_address: Option<String>,
     interval: Option<f64>,
     max_retries: Option<u32>,
     reconnect_interval: Option<u64>,

@@ -16,6 +16,7 @@ fn config_with_cf(id: &str, secret: &str) -> AgentConfig {
         disable_web_ssh: false,
         tunnel_control_enabled: true,
         tunnel_data_enabled: false,
+        tunnel_ktp_tcp_address: String::new(),
         interval_seconds: 1.0,
         max_retries: 3,
         reconnect_interval_seconds: 5,

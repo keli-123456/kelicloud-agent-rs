@@ -1,6 +1,6 @@
 use kelicloud_agent_rs::protocol::{
     build_report_ws_url, build_terminal_ws_url, build_tunnel_control_ws_url,
-    build_tunnel_data_ws_url, parse_backend_message, BackendMessage,
+    build_tunnel_data_ktp_tcp_url, build_tunnel_data_ws_url, parse_backend_message, BackendMessage,
 };
 
 #[test]
@@ -70,6 +70,18 @@ fn tunnel_data_ws_url_adds_token() {
     assert_eq!(
         url,
         "wss://panel.example.com/base/api/clients/tunnel/data?token=tok"
+    );
+}
+
+#[test]
+fn tunnel_data_ktp_tcp_url_accepts_address_or_url() {
+    assert_eq!(
+        build_tunnel_data_ktp_tcp_url("127.0.0.1:25775").unwrap(),
+        "ktp+tcp://127.0.0.1:25775"
+    );
+    assert_eq!(
+        build_tunnel_data_ktp_tcp_url(" ktp+tcp://panel.example.com:25775 ").unwrap(),
+        "ktp+tcp://panel.example.com:25775"
     );
 }
 

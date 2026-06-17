@@ -3,8 +3,8 @@ use kelicloud_agent_rs::tunnel_async_runtime::TunnelRuntimeLimits;
 use kelicloud_agent_rs::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
 use kelicloud_agent_rs::tunnel_data::TunnelDataReadySource;
 use kelicloud_agent_rs::tunnel_runtime::{
-    build_tcp_listener_plan, source_addr_allowed, SharedTunnelRuleState, TunnelSessionRuntime,
-    TunnelTcpRuntime,
+    build_tcp_listener_plan, build_tcp_listener_plan_for_data_transport, source_addr_allowed,
+    SharedTunnelRuleState, TunnelSessionRuntime, TunnelTcpRuntime,
 };
 use kelicloud_agent_rs::tunnel_session::{
     decode_session_error_payload, encode_session_open_payload,
@@ -55,6 +55,23 @@ fn tcp_listener_plan_skips_ktp_tcp_rules_until_ktp_runtime_owns_them() {
 }
 
 #[test]
+fn ktp_tcp_listener_plan_includes_ktp_tcp_rules_only() {
+    let mut websocket_rule = selected_rule(7, "tcp", "ingress", true);
+    websocket_rule.data_transport = "websocket".to_string();
+    let mut ktp_rule = selected_rule(8, "tcp", "both", true);
+    ktp_rule.data_transport = "ktp_tcp".to_string();
+
+    let plan = build_tcp_listener_plan_for_data_transport(&[websocket_rule, ktp_rule], "ktp_tcp");
+
+    assert_eq!(
+        plan.iter()
+            .map(|listener| listener.rule_id)
+            .collect::<Vec<_>>(),
+        vec![8]
+    );
+}
+
+#[test]
 fn shared_tunnel_rule_state_reports_ktp_tcp_rules_as_transport_pending() {
     let state = SharedTunnelRuleState::new();
     let mut rule = selected_rule(81, "tcp", "both", true);
@@ -75,6 +92,31 @@ fn shared_tunnel_rule_state_reports_ktp_tcp_rules_as_transport_pending() {
         "expected unsupported_data_transport failure, got {:?}",
         ready.failed_rules
     );
+}
+
+#[test]
+fn shared_tunnel_rule_state_reports_ktp_tcp_ready_for_ktp_runtime() {
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(81, "tcp", "both", true);
+    rule.data_transport = "ktp_tcp".to_string();
+
+    state.update_rules("rev-ktp-ready", &[rule]);
+    let ready = state.current_ready_for_data_transport("ktp_tcp");
+
+    assert_eq!(ready.revision, "rev-ktp-ready");
+    if cfg!(target_os = "linux") {
+        assert_eq!(ready.egress_rule_ids, vec![81]);
+    } else {
+        assert!(ready.egress_rule_ids.is_empty());
+        assert!(ready
+            .failed_rules
+            .iter()
+            .any(|failure| failure.status == "unsupported_os"));
+    }
+    assert!(ready
+        .failed_rules
+        .iter()
+        .all(|failure| failure.status != "unsupported_data_transport"));
 }
 
 #[test]

@@ -3,7 +3,9 @@ use kelicloud_agent_rs::cn_connectivity::{
 };
 use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::ping::LinuxPingExecutor;
-use kelicloud_agent_rs::protocol::{build_tunnel_control_ws_url, build_tunnel_data_ws_url};
+use kelicloud_agent_rs::protocol::{
+    build_tunnel_control_ws_url, build_tunnel_data_ktp_tcp_url, build_tunnel_data_ws_url,
+};
 use kelicloud_agent_rs::runtime::{
     run_once_with_ping, run_once_with_ping_and_token_recovery, run_report_cycles_with_ping_delay,
     run_report_cycles_with_ping_delay_and_token_recovery, startup_summary,
@@ -19,12 +21,14 @@ use kelicloud_agent_rs::transport::{
     access_headers, ReqwestHttpTransport, TungsteniteWebSocketTransport,
 };
 use kelicloud_agent_rs::tunnel_control::{
-    run_tunnel_control_once_with_rule_sink, run_tunnel_control_session_with_rule_sink,
-    tunnel_control_startup_line, TungsteniteTunnelControlTransport,
+    run_tunnel_control_once_with_rule_sink_and_data_transports,
+    run_tunnel_control_session_with_rule_sink_and_data_transports,
+    supported_tunnel_data_transports_for_ktp_tcp, tunnel_control_startup_line,
+    TungsteniteTunnelControlTransport, TUNNEL_DATA_TRANSPORT_KTP_TCP,
 };
 use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_session_with_ready_source_and_runtime, tunnel_data_startup_line,
-    TungsteniteTunnelDataTransport,
+    KtpEncryptedTcpTunnelDataTransport, TungsteniteTunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::{SharedTunnelRuleState, TunnelTcpRuntime};
 
@@ -52,6 +56,8 @@ fn main() {
     println!("{}", startup_summary(&config));
     let shared_token = SharedAgentToken::new(config.token.clone());
     let tunnel_ready_state = SharedTunnelRuleState::new();
+    let ktp_tcp_enabled = !config.tunnel_ktp_tcp_address.trim().is_empty();
+    let tunnel_data_transports = supported_tunnel_data_transports_for_ktp_tcp(ktp_tcp_enabled);
     let tunnel_control_url =
         build_tunnel_control_ws_url(&config.endpoint, &shared_token.get()).ok();
     if let Some(url) = tunnel_control_url.as_deref() {
@@ -64,7 +70,11 @@ fn main() {
     } else {
         println!("{}", tunnel_control_startup_line("", false));
     }
-    let tunnel_data_url = build_tunnel_data_ws_url(&config.endpoint, &shared_token.get()).ok();
+    let tunnel_data_url = if ktp_tcp_enabled {
+        build_tunnel_data_ktp_tcp_url(&config.tunnel_ktp_tcp_address).ok()
+    } else {
+        build_tunnel_data_ws_url(&config.endpoint, &shared_token.get()).ok()
+    };
     if let Some(url) = tunnel_data_url.as_deref() {
         println!(
             "{}",
@@ -124,12 +134,13 @@ fn main() {
             if let Ok(url) = build_tunnel_control_ws_url(&tunnel_endpoint, &shared_token.get()) {
                 let mut tunnel_transport =
                     TungsteniteTunnelControlTransport::new_with_custom_dns(&tunnel_custom_dns);
-                if let Err(error) = run_tunnel_control_once_with_rule_sink(
+                if let Err(error) = run_tunnel_control_once_with_rule_sink_and_data_transports(
                     &url,
                     &tunnel_headers,
                     &tunnel_agent_version,
                     &mut tunnel_transport,
                     &tunnel_ready_state,
+                    &tunnel_data_transports,
                 ) {
                     eprintln!("tunnel control warning: {error}");
                 }
@@ -137,6 +148,7 @@ fn main() {
         } else {
             let tunnel_shared_token = shared_token.clone();
             let tunnel_control_ready_state = tunnel_ready_state.clone();
+            let tunnel_control_data_transports = tunnel_data_transports.clone();
             std::thread::spawn(move || {
                 let mut retry_delay = std::time::Duration::from_secs(5);
                 loop {
@@ -147,12 +159,13 @@ fn main() {
                                 TungsteniteTunnelControlTransport::new_with_custom_dns(
                                     &tunnel_custom_dns,
                                 );
-                            match run_tunnel_control_session_with_rule_sink(
+                            match run_tunnel_control_session_with_rule_sink_and_data_transports(
                                 &url,
                                 &tunnel_headers,
                                 &tunnel_agent_version,
                                 &mut tunnel_transport,
                                 &tunnel_control_ready_state,
+                                &tunnel_control_data_transports,
                             ) {
                                 Ok(()) => retry_delay = std::time::Duration::from_secs(15),
                                 Err(error) => eprintln!("tunnel control warning: {error}"),
@@ -172,30 +185,63 @@ fn main() {
         let tunnel_data_headers = access_headers(&config);
         let tunnel_data_endpoint = config.endpoint.clone();
         let tunnel_data_custom_dns = config.custom_dns.clone();
+        let tunnel_ktp_tcp_address = config.tunnel_ktp_tcp_address.clone();
         let tunnel_data_agent_version = env!("CARGO_PKG_VERSION").to_string();
         let tunnel_data_shared_token = shared_token.clone();
         let tunnel_data_ready_state = tunnel_ready_state.clone();
         std::thread::spawn(move || {
-            let mut tunnel_runtime = TunnelTcpRuntime::new(tunnel_data_ready_state.clone());
+            let mut tunnel_runtime = if ktp_tcp_enabled {
+                TunnelTcpRuntime::new_for_data_transport(
+                    tunnel_data_ready_state.clone(),
+                    TUNNEL_DATA_TRANSPORT_KTP_TCP,
+                )
+            } else {
+                TunnelTcpRuntime::new(tunnel_data_ready_state.clone())
+            };
+            let ktp_ready_source = tunnel_data_ready_state
+                .ready_source_for_data_transport(TUNNEL_DATA_TRANSPORT_KTP_TCP);
             loop {
-                match build_tunnel_data_ws_url(
-                    &tunnel_data_endpoint,
-                    &tunnel_data_shared_token.get(),
-                ) {
+                let url_result = if ktp_tcp_enabled {
+                    build_tunnel_data_ktp_tcp_url(&tunnel_ktp_tcp_address)
+                } else {
+                    build_tunnel_data_ws_url(&tunnel_data_endpoint, &tunnel_data_shared_token.get())
+                };
+                match url_result {
                     Ok(url) => {
-                        let mut transport = TungsteniteTunnelDataTransport::new_with_custom_dns(
-                            &tunnel_data_custom_dns,
-                        );
-                        if let Err(error) = run_tunnel_data_session_with_ready_source_and_runtime(
-                            &url,
-                            &tunnel_data_headers,
-                            "",
-                            &tunnel_data_agent_version,
-                            &tunnel_data_ready_state,
-                            &mut transport,
-                            &mut tunnel_runtime,
-                        ) {
-                            eprintln!("tunnel data warning: {error}");
+                        if ktp_tcp_enabled {
+                            let mut transport = KtpEncryptedTcpTunnelDataTransport::new_with_token(
+                                &tunnel_data_shared_token.get(),
+                            );
+                            if let Err(error) =
+                                run_tunnel_data_session_with_ready_source_and_runtime(
+                                    &url,
+                                    &[],
+                                    "",
+                                    &tunnel_data_agent_version,
+                                    &ktp_ready_source,
+                                    &mut transport,
+                                    &mut tunnel_runtime,
+                                )
+                            {
+                                eprintln!("tunnel data warning: {error}");
+                            }
+                        } else {
+                            let mut transport = TungsteniteTunnelDataTransport::new_with_custom_dns(
+                                &tunnel_data_custom_dns,
+                            );
+                            if let Err(error) =
+                                run_tunnel_data_session_with_ready_source_and_runtime(
+                                    &url,
+                                    &tunnel_data_headers,
+                                    "",
+                                    &tunnel_data_agent_version,
+                                    &tunnel_data_ready_state,
+                                    &mut transport,
+                                    &mut tunnel_runtime,
+                                )
+                            {
+                                eprintln!("tunnel data warning: {error}");
+                            }
                         }
                     }
                     Err(error) => eprintln!("tunnel data warning: {error}"),
