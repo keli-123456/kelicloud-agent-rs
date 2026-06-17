@@ -323,8 +323,15 @@ async fn run_relay_to_client_batch_read_benchmark_once(
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let server_key = key.clone();
-    let frames = config.frames;
     let payload_bytes = config.payload_bytes;
+    let frame = KtpFrame {
+        frame_type: FrameType::SessionData,
+        leg: FrameLeg::Egress,
+        flags: 0,
+        session_id: 1,
+        payload: vec![0x5a; payload_bytes],
+    };
+    let batches = reusable_frame_batches(&frame, config.frames, READ_BATCH_FRAMES);
 
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await?;
@@ -336,19 +343,8 @@ async fn run_relay_to_client_batch_read_benchmark_once(
             KTP_MAX_PAYLOAD_LEN,
             4 * 1024 * 1024,
         );
-        let frame = KtpFrame {
-            frame_type: FrameType::SessionData,
-            leg: FrameLeg::Egress,
-            flags: 0,
-            session_id: 1,
-            payload: vec![0x5a; payload_bytes],
-        };
-        let mut remaining = frames;
-        while remaining > 0 {
-            let chunk = remaining.min(READ_BATCH_FRAMES);
-            let batch = (0..chunk).map(|_| frame.clone()).collect::<Vec<_>>();
-            stream.send_frames(&batch).await?;
-            remaining -= chunk;
+        for batch in &batches {
+            stream.send_frames(batch).await?;
         }
         BenchResult::Ok(())
     });
@@ -401,7 +397,7 @@ fn batch_direction_suffix(direction: BenchDirection) -> String {
             format!(" write_batch_frames={WRITE_BATCH_FRAMES} write_batch_reused=1")
         }
         BenchDirection::RelayToClientBatchRead => {
-            format!(" read_batch_frames={READ_BATCH_FRAMES}")
+            format!(" read_batch_frames={READ_BATCH_FRAMES} read_batch_reused=1")
         }
     }
 }

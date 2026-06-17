@@ -844,18 +844,19 @@ min/median/max elapsed and throughput fields. The default direction sweep
 compares one-frame client writes, client-to-relay batch writes, and
 relay-to-client batch reads. Use this for carrier-layer before/after
 comparisons; keep runtime/RDP fairness comparisons in
-`scripts/ktp-relay-batch-matrix.sh`. The client-to-relay batch-write benchmark
-prebuilds reusable frame batches before the timed section; the direct
-`ktp-tunnel-bench` output includes `write_batch_reused=1` for that direction so
-the carrier sample is not dominated by per-batch payload cloning.
+`scripts/ktp-relay-batch-matrix.sh`. The client-to-relay batch-write and
+relay-to-client batch-read benchmarks prebuild reusable frame batches before
+the timed section; the direct `ktp-tunnel-bench` output includes
+`write_batch_reused=1` or `read_batch_reused=1` for those directions so carrier
+samples are not dominated by per-batch payload cloning.
 
 Linux release smoke sample:
 
 ```text
-direction,runs,frames,payload_bytes,write_batch_frames,write_batch_reused,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max
-client_to_relay,2,64,1024,0,0,0,1.104,1.173,1.241,50.348,53.471,56.594
-client_to_relay_batch_write,2,64,1024,64,1,0,0.831,0.988,1.146,54.546,64.895,75.245
-relay_to_client_batch_read,2,64,1024,0,0,64,1.426,1.929,2.432,25.698,34.769,43.840
+direction,runs,frames,payload_bytes,write_batch_frames,write_batch_reused,read_batch_frames,read_batch_reused,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max
+client_to_relay,2,64,1024,0,0,0,0,2.137,2.298,2.458,25.428,27.337,29.245
+client_to_relay_batch_write,2,64,1024,64,1,0,0,1.177,1.283,1.390,44.970,49.034,53.099
+relay_to_client_batch_read,2,64,1024,0,0,64,1,0.437,0.484,0.532,117.533,130.262,142.990
 ```
 
 This sample was intentionally small so it can run as a quick release-mode

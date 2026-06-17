@@ -80,6 +80,7 @@ fn ktp_tunnel_bench_cli_reports_relay_to_client_batch_read() {
     assert!(stdout.contains("ktp_tunnel_bench"));
     assert!(stdout.contains("direction=relay_to_client_batch_read"));
     assert!(stdout.contains("read_batch_frames=64"));
+    assert!(stdout.contains("read_batch_reused=1"));
     assert!(stdout.contains("frames=4"));
     assert!(stdout.contains("bytes=512"));
     assert!(stdout.contains("elapsed_ms="));
