@@ -14,6 +14,7 @@ Code:
 - Commit: `a06916c` for repeated-run end-to-end runtime statistics
 - Commit: `c86a832` for relay-loop diagnostic counters
 - Commit: `d1355da` for condition-wait relay prototype
+- Commit: `ca46474` for shared relay readiness notification
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -100,6 +101,18 @@ Runtime relay-loop condition-wait prototype:
 | 3 | 4 | 1024 B | 186.541 ms | 5.361 MiB/s | 5045 | 807 | 5042 | 3485 | 3093 | 3084 |
 | 3 | 4 | 16384 B | 217.487 ms | 73.568 MiB/s | 5065 | 1348 | 5062 | 3311 | 3093 | 3084 |
 
+Runtime relay-loop shared-readiness wait:
+
+```bash
+./target/release/ktp-e2e-bench --diagnostics --relay-wait-timeout-us 100 --runs 3 --clients <N> --frames <N> --payload-bytes <BYTES>
+```
+
+| Runs | Clients | Payload | Elapsed Median | Throughput Median | Relay Turns | Empty Turns | Yield Turns | Wait Turns | Ingress Frames | Egress Frames |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | 1024 B | 368.920 ms | 2.711 MiB/s | 8017 | 1873 | 8014 | 7913 | 3075 | 3074 |
+| 3 | 4 | 1024 B | 217.181 ms | 4.604 MiB/s | 4382 | 982 | 4379 | 3271 | 3093 | 3083 |
+| 3 | 4 | 16384 B | 187.193 ms | 85.473 MiB/s | 5062 | 933 | 5059 | 3850 | 3093 | 3084 |
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
@@ -135,11 +148,17 @@ Observations:
   repeated run and timed out before all bytes relayed. The production design
   should avoid blind long waits and prefer readiness notification across both
   ingress and egress queues.
+- Shared relay readiness replaces that blind one-sided wait in the benchmark:
+  both ingress and egress runtimes attach to one notifier, and the relay loop
+  waits only after both queues are empty. On the same Linux host, the 100
+  microsecond 4-client small-frame repeated run completed without the earlier
+  timeout and kept relay turns near the 10 microsecond prototype range.
 
 Next evidence to collect:
 
 - Same benchmark on a release Linux host with CPU details captured.
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Latency distribution for small frames.
-- Production-ready readiness notification across both ingress and egress queues.
+- Integrating shared readiness into the production data carrier scheduling path,
+  not only the benchmark relay.
 - Before/after diagnostics for production data carrier scheduling changes.
