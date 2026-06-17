@@ -10,6 +10,7 @@ Code:
 - Repository: `kelicloud-agent-rs`
 - Commit: `9fe3b83` for carrier results
 - Commit: `fcf21a8` for end-to-end runtime results with batched frame drain
+- Commit: `12fc85c` for multi-client end-to-end runtime results
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -48,10 +49,26 @@ Runtime ingress-to-egress path:
 | 1024 | 1024 B | 1048576 | 219.557 ms | 4.555 MiB/s |
 | 256 | 16384 B | 4194304 | 113.265 ms | 35.315 MiB/s |
 
+Runtime ingress-to-egress multi-client path:
+
+```bash
+./target/release/ktp-e2e-bench --clients <N> --frames <N> --payload-bytes <BYTES>
+```
+
+| Clients | Frames / Client | Payload | Bytes | Elapsed | Throughput |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1024 | 1024 B | 1048576 | 370.949 ms | 2.696 MiB/s |
+| 4 | 256 | 1024 B | 1048576 | 159.376 ms | 6.274 MiB/s |
+| 4 | 256 | 16384 B | 16777216 | 175.639 ms | 91.096 MiB/s |
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
 - 16 KiB and 64 KiB payloads show much higher encrypted TCP carrier throughput.
+- Multi-client e2e measurement now has explicit aggregate bytes and client
+  counts. On this host, four concurrent 1 KiB clients improved aggregate
+  throughput over the one-client sample, which suggests relay scheduling should
+  be evaluated with concurrent sessions instead of single-client numbers only.
 - End-to-end runtime throughput is still far below carrier-only throughput, so
   the next bottleneck is runtime relay scheduling and per-frame session
   handling, not ChaCha20-Poly1305 encryption itself.
@@ -60,9 +77,12 @@ Observations:
   step. Future optimization should focus on read/write scheduling, multi-session
   relay fairness, and reducing ingress/egress relay round trips before changing
   cryptography.
+- Run-to-run variance is visible on this small Linux host, so later performance
+  gates should use repeated runs or percentile summaries instead of one-off
+  wall-clock samples.
 
 Next evidence to collect:
 
 - Same benchmark on a release Linux host with CPU details captured.
-- Multi-connection end-to-end ingress-to-egress throughput.
+- Repeated multi-client runs with min/median/max or percentile summaries.
 - Latency distribution for small frames.
