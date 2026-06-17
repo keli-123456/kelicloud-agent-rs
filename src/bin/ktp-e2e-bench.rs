@@ -1,5 +1,5 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
-use kelicloud_agent_rs::tunnel_async_runtime::TunnelFrameReadyNotifier;
+use kelicloud_agent_rs::tunnel_async_runtime::{TunnelFrameReadyNotifier, TunnelRelayBatchPolicy};
 use kelicloud_agent_rs::tunnel_control::{
     SelectedTunnelRule, TunnelRuleStateSink, TUNNEL_DATA_TRANSPORT_KTP_TCP,
 };
@@ -60,38 +60,6 @@ impl BenchProfile {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RelayBatchPolicy {
-    Fixed,
-    Adaptive,
-}
-
-impl RelayBatchPolicy {
-    fn parse(raw: &str) -> BenchResult<Self> {
-        match raw {
-            "fixed" => Ok(Self::Fixed),
-            "adaptive" => Ok(Self::Adaptive),
-            _ => Err("--relay-batch-policy must be fixed or adaptive".into()),
-        }
-    }
-
-    fn report_value(self) -> &'static str {
-        match self {
-            Self::Fixed => "fixed",
-            Self::Adaptive => "adaptive",
-        }
-    }
-
-    fn effective_batch_frames(self, configured_batch_frames: usize, clients: usize) -> usize {
-        match self {
-            Self::Fixed => configured_batch_frames,
-            Self::Adaptive if clients >= 16 => configured_batch_frames.min(16),
-            Self::Adaptive if clients >= 8 => configured_batch_frames.min(32),
-            Self::Adaptive => configured_batch_frames,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 struct BenchConfig {
     profile: BenchProfile,
@@ -101,7 +69,7 @@ struct BenchConfig {
     payload_bytes: usize,
     diagnostics: bool,
     latency: bool,
-    relay_batch_policy: RelayBatchPolicy,
+    relay_batch_policy: TunnelRelayBatchPolicy,
     relay_batch_frames: usize,
     relay_wait_timeout: Duration,
 }
@@ -189,7 +157,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
     let mut profile = BenchProfile::Fixed;
     let mut diagnostics = false;
     let mut latency = false;
-    let mut relay_batch_policy = RelayBatchPolicy::Fixed;
+    let mut relay_batch_policy = TunnelRelayBatchPolicy::Fixed;
     let mut relay_batch_frames = RELAY_BATCH_FRAMES;
     let mut relay_wait_timeout = Duration::ZERO;
     let mut args = args.peekable();
@@ -211,8 +179,11 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
                 )?
             }
             "--relay-batch-policy" => {
-                relay_batch_policy =
-                    RelayBatchPolicy::parse(&next_value(&mut args, "--relay-batch-policy")?)?
+                relay_batch_policy = TunnelRelayBatchPolicy::parse_config_value(&next_value(
+                    &mut args,
+                    "--relay-batch-policy",
+                )?)
+                .ok_or("--relay-batch-policy must be fixed or adaptive")?
             }
             "--runs" => runs = parse_positive_usize(next_value(&mut args, "--runs")?, "--runs")?,
             "--clients" => {
@@ -490,7 +461,7 @@ fn diagnostics_suffix(config: BenchConfig, samples: &[BenchSample]) -> String {
     }
     format!(
         " relay_batch_policy={} relay_batch_frames={} relay_batch_frames_effective={} relay_turns={} relay_empty_turns={} relay_yield_turns={} relay_wait_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={} ingress_batches={} egress_batches={} ingress_max_batch_frames={} egress_max_batch_frames={}",
-        config.relay_batch_policy.report_value(),
+        config.relay_batch_policy.config_value(),
         config.relay_batch_frames,
         config.effective_relay_batch_frames(),
         total.relay_turns,

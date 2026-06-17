@@ -812,6 +812,11 @@ Tunnel-data receive batch foundation:
 - KTP encrypted TCP streams enable `TCP_NODELAY` by default. That keeps
   interactive RDP-like payloads from waiting behind Nagle coalescing while the
   existing batched write path still coalesces intentional KTP frame batches.
+- The conservative `fixed|adaptive` relay batch policy is now shared by
+  benchmark tooling and the production tunnel runtime. Production defaults stay
+  `fixed`; `adaptive` is an explicit runtime-limit choice so it can be tested or
+  rolled back without changing the KTP frame format, backend schema, or default
+  WebSocket behavior.
 
 Linux debug smoke sample:
 

@@ -1179,8 +1179,9 @@ where
     R: TunnelSessionRuntime,
 {
     let mut sent_count = 0usize;
+    let max_frames = tunnel_session_runtime_frame_batch_limit(runtime);
     loop {
-        let frames = runtime.next_client_frames(64)?;
+        let frames = runtime.next_client_frames(max_frames)?;
         if frames.is_empty() {
             return Ok(sent_count);
         }
@@ -1198,13 +1199,23 @@ where
     S: TunnelDataSocket,
     R: TunnelSessionRuntime,
 {
-    let frames = runtime.next_client_frames_after_wait(64, timeout)?;
+    let max_frames = tunnel_session_runtime_frame_batch_limit(runtime);
+    let frames = runtime.next_client_frames_after_wait(max_frames, timeout)?;
     if frames.is_empty() {
         return Ok(0);
     }
     let frame_count = frames.len();
     send_tunnel_session_runtime_frame_batch(socket, frames)?;
     Ok(frame_count + drain_tunnel_session_runtime_frames(socket, runtime)?)
+}
+
+fn tunnel_session_runtime_frame_batch_limit<R>(runtime: &R) -> usize
+where
+    R: TunnelSessionRuntime,
+{
+    runtime
+        .client_frame_batch_limit(TUNNEL_DATA_FRAME_BATCH_LIMIT)
+        .clamp(1, TUNNEL_DATA_FRAME_BATCH_LIMIT)
 }
 
 fn send_tunnel_session_runtime_frame_batch<S>(

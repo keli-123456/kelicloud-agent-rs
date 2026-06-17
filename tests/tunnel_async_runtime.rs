@@ -1,7 +1,7 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
 use kelicloud_agent_rs::tunnel_async_runtime::{
     AsyncTunnelCore, AsyncTunnelFrameQueue, TunnelFrameReadyNotifier, TunnelIngressListenerSpec,
-    TunnelRuntimeLimits, TunnelRuntimeStats,
+    TunnelRelayBatchPolicy, TunnelRuntimeLimits, TunnelRuntimeStats,
 };
 use kelicloud_agent_rs::tunnel_session::{
     decode_session_open_payload, encode_session_open_payload, TunnelSessionOpenPayload,
@@ -24,6 +24,31 @@ fn async_runtime_limits_have_bounded_defaults() {
     assert_eq!(limits.tcp_read_chunk_size, 16 * 1024);
     assert!(limits.target_dial_timeout.as_secs() <= 5);
     assert!(limits.idle_timeout.as_secs() >= 600);
+    assert_eq!(limits.relay_batch_policy, TunnelRelayBatchPolicy::Fixed);
+}
+
+#[test]
+fn relay_batch_policy_keeps_default_fixed_and_caps_adaptive_only_at_high_concurrency() {
+    assert_eq!(
+        TunnelRelayBatchPolicy::Fixed.effective_batch_frames(64, 32),
+        64
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames(64, 4),
+        64
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames(64, 8),
+        32
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames(64, 16),
+        16
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames(8, 16),
+        8
+    );
 }
 
 #[test]

@@ -369,6 +369,29 @@ impl TunnelSessionRuntime for MultiClientFrameRuntime {
     }
 }
 
+struct BatchLimitRuntime {
+    events: Rc<RefCell<Vec<String>>>,
+    frames: VecDeque<KtpFrame>,
+    limit: usize,
+}
+
+impl TunnelSessionRuntime for BatchLimitRuntime {
+    fn client_frame_batch_limit(&self, requested_max_frames: usize) -> usize {
+        self.events.borrow_mut().push(format!(
+            "runtime_batch_limit:{requested_max_frames}->{}",
+            self.limit
+        ));
+        self.limit
+    }
+
+    fn next_client_frames(&mut self, max_frames: usize) -> Result<Vec<KtpFrame>, TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("runtime_next_batch:{max_frames}"));
+        Ok(take_frames(&mut self.frames, max_frames))
+    }
+}
+
 struct RecordingServerFrameRuntime {
     handled: Rc<RefCell<Vec<KtpFrame>>>,
 }
@@ -540,6 +563,53 @@ fn tunnel_data_session_batches_runtime_frames_when_socket_supports_it() {
 }
 
 #[test]
+fn tunnel_data_session_uses_runtime_batch_limit_for_runtime_frames() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = BatchOnlyTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+    };
+    let mut runtime = BatchLimitRuntime {
+        events: Rc::clone(&events),
+        frames: VecDeque::from([
+            session_data_frame(91, b"first"),
+            session_data_frame(92, b"second"),
+            session_data_frame(93, b"third"),
+        ]),
+        limit: 2,
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-batch-limit"),
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should honor runtime batch limit");
+
+    let events = events.borrow();
+    assert!(
+        events
+            .iter()
+            .any(|event| event == "runtime_batch_limit:64->2"),
+        "runtime should receive the configured tunnel-data batch cap: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| event == "runtime_next_batch:2"),
+        "runtime frames should be drained using the effective batch cap: {events:?}"
+    );
+    let batches = events
+        .iter()
+        .filter(|event| event.starts_with("batch:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(batches, vec!["batch:2", "batch:1"]);
+}
+
+#[test]
 fn tunnel_data_session_reads_server_frames_in_batch_when_socket_supports_it() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let handled = Rc::new(RefCell::new(Vec::new()));
@@ -581,6 +651,17 @@ fn tunnel_data_session_reads_server_frames_in_batch_when_socket_supports_it() {
         .map(|frame| frame.session_id)
         .collect::<Vec<_>>();
     assert_eq!(handled_ids, vec![181, 182]);
+}
+
+fn take_frames(frames: &mut VecDeque<KtpFrame>, max_frames: usize) -> Vec<KtpFrame> {
+    let mut batch = Vec::new();
+    for _ in 0..max_frames {
+        let Some(frame) = frames.pop_front() else {
+            break;
+        };
+        batch.push(frame);
+    }
+    batch
 }
 
 #[test]

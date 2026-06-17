@@ -317,6 +317,10 @@ pub trait TunnelSessionRuntime {
         self.next_client_frames(max_frames)
     }
 
+    fn client_frame_batch_limit(&self, requested_max_frames: usize) -> usize {
+        requested_max_frames.max(1)
+    }
+
     fn tunnel_data_client_frame_wait_timeout(&self) -> Option<Duration> {
         None
     }
@@ -630,6 +634,11 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
         Ok(self
             .async_runtime
             .block_on(self.core.next_frames_after_wait(max_frames, timeout)))
+    }
+
+    fn client_frame_batch_limit(&self, requested_max_frames: usize) -> usize {
+        self.core
+            .effective_outbound_batch_frames(requested_max_frames)
     }
 
     fn tunnel_data_client_frame_wait_timeout(&self) -> Option<Duration> {

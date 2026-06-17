@@ -20,6 +20,45 @@ pub struct TunnelRuntimeLimits {
     pub tcp_read_chunk_size: usize,
     pub target_dial_timeout: Duration,
     pub idle_timeout: Duration,
+    pub relay_batch_policy: TunnelRelayBatchPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum TunnelRelayBatchPolicy {
+    #[default]
+    Fixed,
+    Adaptive,
+}
+
+impl TunnelRelayBatchPolicy {
+    pub fn parse_config_value(raw: &str) -> Option<Self> {
+        match raw {
+            "fixed" => Some(Self::Fixed),
+            "adaptive" => Some(Self::Adaptive),
+            _ => None,
+        }
+    }
+
+    pub fn config_value(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Adaptive => "adaptive",
+        }
+    }
+
+    pub fn effective_batch_frames(
+        self,
+        configured_batch_frames: usize,
+        active_sessions: usize,
+    ) -> usize {
+        let configured_batch_frames = configured_batch_frames.max(1);
+        match self {
+            Self::Fixed => configured_batch_frames,
+            Self::Adaptive if active_sessions >= 16 => configured_batch_frames.min(16),
+            Self::Adaptive if active_sessions >= 8 => configured_batch_frames.min(32),
+            Self::Adaptive => configured_batch_frames,
+        }
+    }
 }
 
 impl Default for TunnelRuntimeLimits {
@@ -31,6 +70,7 @@ impl Default for TunnelRuntimeLimits {
             tcp_read_chunk_size: 16 * 1024,
             target_dial_timeout: Duration::from_secs(5),
             idle_timeout: Duration::from_secs(600),
+            relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
         }
     }
 }
@@ -689,6 +729,13 @@ impl AsyncTunnelCore {
         timeout: Duration,
     ) -> Vec<KtpFrame> {
         self.outbound.drain_after_wait(max_frames, timeout)
+    }
+
+    pub fn effective_outbound_batch_frames(&self, configured_batch_frames: usize) -> usize {
+        self.limits.relay_batch_policy.effective_batch_frames(
+            configured_batch_frames,
+            self.stats_snapshot().active_sessions,
+        )
     }
 
     pub async fn close_session(
