@@ -208,6 +208,80 @@ fn encrypted_tcp_stream_round_trips_frame_over_loopback() {
     });
 }
 
+#[test]
+fn encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(4)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let server_key = key.clone();
+        let server = tokio::spawn(async move {
+            let mut handlers = Vec::new();
+            for _ in 0..100 {
+                let (stream, _) = listener.accept().await.expect("accept encrypted tcp");
+                let key = server_key.clone();
+                handlers.push(tokio::spawn(async move {
+                    let mut server = KtpEncryptedTcpStream::from_stream(
+                        stream,
+                        key,
+                        KtpCryptoDirection::RelayToClient,
+                        KtpCryptoDirection::ClientToRelay,
+                        KTP_MAX_PAYLOAD_LEN,
+                        1024 * 1024,
+                    );
+                    let request = server.next_frame().await.expect("read request");
+                    assert_eq!(request.payload, b"ping");
+                    server
+                        .send_frame(&session_data(request.session_id + 1000, b"pong"))
+                        .await
+                        .expect("send response");
+                }));
+            }
+            for handler in handlers {
+                handler.await.expect("server handler");
+            }
+        });
+
+        let mut clients = Vec::new();
+        for index in 0..100u64 {
+            let key = key.clone();
+            clients.push(tokio::spawn(async move {
+                let stream = TcpStream::connect(addr).await.expect("connect client");
+                let mut client = KtpEncryptedTcpStream::from_stream(
+                    stream,
+                    key,
+                    KtpCryptoDirection::ClientToRelay,
+                    KtpCryptoDirection::RelayToClient,
+                    KTP_MAX_PAYLOAD_LEN,
+                    1024 * 1024,
+                );
+                let session_id = 9000 + index;
+                client
+                    .send_frame(&session_data(session_id, b"ping"))
+                    .await
+                    .expect("send request");
+                let response = client.next_frame().await.expect("read response");
+                assert_eq!(response.session_id, session_id + 1000);
+                assert_eq!(response.payload, b"pong");
+            }));
+        }
+
+        for client in clients {
+            client.await.expect("client task");
+        }
+        server.await.expect("server task");
+    });
+}
+
 fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
     KtpFrame {
         frame_type: FrameType::SessionData,
