@@ -673,12 +673,17 @@ where
     S: TunnelDataSocket,
     R: TunnelSessionRuntime,
 {
-    while let Some(frame) = runtime.next_client_frame()? {
-        let bytes = encode_frame(&frame)
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-        let _ = send_tunnel_data_frame(socket, &bytes)?;
+    loop {
+        let frames = runtime.next_client_frames(64)?;
+        if frames.is_empty() {
+            return Ok(());
+        }
+        for frame in frames {
+            let bytes = encode_frame(&frame)
+                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            let _ = send_tunnel_data_frame(socket, &bytes)?;
+        }
     }
-    Ok(())
 }
 
 fn handle_tunnel_data_session_frame<S, R>(

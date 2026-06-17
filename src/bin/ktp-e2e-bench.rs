@@ -13,6 +13,9 @@ use std::time::{Duration, Instant};
 
 type BenchResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
+const RELAY_BATCH_FRAMES: usize = 64;
+const CLIENT_WINDOW_FRAMES: usize = 64;
+
 #[derive(Clone, Copy, Debug)]
 struct BenchConfig {
     frames: usize,
@@ -118,9 +121,16 @@ fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
         let mut stream = connect_with_retry(("127.0.0.1", listen_port))?;
         let payload = vec![0x5a; payload_bytes];
         let mut response = vec![0u8; payload_bytes];
-        for _ in 0..frames {
-            stream.write_all(&payload)?;
-            stream.read_exact(&mut response)?;
+        let mut sent = 0usize;
+        while sent < frames {
+            let batch = CLIENT_WINDOW_FRAMES.min(frames - sent);
+            for _ in 0..batch {
+                stream.write_all(&payload)?;
+            }
+            for _ in 0..batch {
+                stream.read_exact(&mut response)?;
+            }
+            sent += batch;
         }
         Ok(())
     });
@@ -128,9 +138,7 @@ fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
     let bytes = config.frames * config.payload_bytes;
     let started = Instant::now();
     relay_open(&mut ingress_runtime, &mut egress_runtime)?;
-    for _ in 0..config.frames {
-        relay_next_data(&mut ingress_runtime, &mut egress_runtime)?;
-    }
+    relay_data_batches(&mut ingress_runtime, &mut egress_runtime, bytes)?;
     client_thread
         .join()
         .map_err(|_| "client thread panicked")??;
@@ -140,7 +148,7 @@ fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
     let throughput_mib_s = (bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs;
 
     Ok(format!(
-        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
+        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
         config.frames,
         config.payload_bytes,
         bytes,
@@ -161,14 +169,37 @@ fn relay_open(
     Ok(())
 }
 
-fn relay_next_data(
+fn relay_data_batches(
     ingress_runtime: &mut TunnelTcpRuntime,
     egress_runtime: &mut TunnelTcpRuntime,
+    expected_bytes: usize,
 ) -> BenchResult<()> {
-    let data = wait_for_next_runtime_frame(ingress_runtime, FrameType::SessionData)?;
-    egress_runtime.handle_server_frame(to_leg(data, FrameLeg::Egress))?;
-    let response = wait_for_next_runtime_frame(egress_runtime, FrameType::SessionData)?;
-    ingress_runtime.handle_server_frame(to_leg(response, FrameLeg::Ingress))?;
+    let mut ingress_bytes = 0usize;
+    let mut egress_bytes = 0usize;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while egress_bytes < expected_bytes {
+        for frame in ingress_runtime.next_client_frames(RELAY_BATCH_FRAMES)? {
+            if frame.frame_type == FrameType::SessionData {
+                ingress_bytes += frame.payload.len();
+            }
+            egress_runtime.handle_server_frame(to_leg(frame, FrameLeg::Egress))?;
+        }
+        for frame in egress_runtime.next_client_frames(RELAY_BATCH_FRAMES)? {
+            if frame.frame_type == FrameType::SessionData {
+                egress_bytes += frame.payload.len();
+            }
+            ingress_runtime.handle_server_frame(to_leg(frame, FrameLeg::Ingress))?;
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out relaying data: ingress_bytes={ingress_bytes}, egress_bytes={egress_bytes}, expected_bytes={expected_bytes}"
+            )
+            .into());
+        }
+        if ingress_bytes < expected_bytes || egress_bytes < expected_bytes {
+            thread::yield_now();
+        }
+    }
     Ok(())
 }
 

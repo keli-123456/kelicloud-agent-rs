@@ -295,6 +295,17 @@ pub trait TunnelSessionRuntime {
     fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
         Ok(None)
     }
+
+    fn next_client_frames(&mut self, max_frames: usize) -> Result<Vec<KtpFrame>, TransportError> {
+        let mut frames = Vec::new();
+        for _ in 0..max_frames {
+            let Some(frame) = self.next_client_frame()? else {
+                break;
+            };
+            frames.push(frame);
+        }
+        Ok(frames)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -556,6 +567,12 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
 
     fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
         Ok(self.async_runtime.block_on(self.core.next_frame()))
+    }
+
+    fn next_client_frames(&mut self, max_frames: usize) -> Result<Vec<KtpFrame>, TransportError> {
+        Ok(self
+            .async_runtime
+            .block_on(self.core.next_frames(max_frames)))
     }
 }
 

@@ -110,6 +110,17 @@ impl AsyncTunnelFrameQueue {
             .and_then(|mut inner| inner.pop_front())
     }
 
+    pub fn drain(&self, max_frames: usize) -> Vec<KtpFrame> {
+        if max_frames == 0 {
+            return Vec::new();
+        }
+        let Ok(mut inner) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let count = max_frames.min(inner.len());
+        inner.drain(..count).collect()
+    }
+
     pub fn len(&self) -> usize {
         self.inner.lock().map(|inner| inner.len()).unwrap_or(0)
     }
@@ -393,6 +404,10 @@ impl AsyncTunnelCore {
 
     pub async fn next_frame(&self) -> Option<KtpFrame> {
         self.outbound.pop()
+    }
+
+    pub async fn next_frames(&self, max_frames: usize) -> Vec<KtpFrame> {
+        self.outbound.drain(max_frames)
     }
 
     pub async fn close_session(

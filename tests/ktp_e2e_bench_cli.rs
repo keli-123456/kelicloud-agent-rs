@@ -20,6 +20,7 @@ fn ktp_e2e_bench_cli_reports_runtime_ingress_egress_throughput() {
     assert!(stdout.contains("ktp_e2e_bench"));
     assert!(stdout.contains("mode=runtime_ingress_egress"));
     assert!(stdout.contains("transport=ktp_tcp"));
+    assert!(stdout.contains("bridge=batch"));
     assert!(stdout.contains("frames=3"));
     assert!(stdout.contains("payload_bytes=128"));
     assert!(stdout.contains("bytes=384"));

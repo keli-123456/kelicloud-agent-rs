@@ -43,6 +43,36 @@ fn async_frame_queue_enforces_frame_capacity() {
 }
 
 #[test]
+fn async_frame_queue_drains_fifo_batches() {
+    let queue = AsyncTunnelFrameQueue::new(4);
+    queue.try_push(frame(1, b"one")).expect("push first");
+    queue.try_push(frame(2, b"two")).expect("push second");
+    queue.try_push(frame(3, b"three")).expect("push third");
+
+    let first = queue.drain(2);
+
+    assert_eq!(
+        first
+            .iter()
+            .map(|frame| frame.session_id)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(queue.len(), 1);
+
+    let second = queue.drain(8);
+
+    assert_eq!(
+        second
+            .iter()
+            .map(|frame| frame.session_id)
+            .collect::<Vec<_>>(),
+        vec![3]
+    );
+    assert!(queue.is_empty());
+}
+
+#[test]
 fn runtime_stats_snapshot_tracks_session_and_byte_counters() {
     let stats = TunnelRuntimeStats::default();
     stats.session_opened(7);
