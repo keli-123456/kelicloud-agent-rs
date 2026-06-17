@@ -3,6 +3,8 @@ use crate::tunnel_session::{
     encode_session_accept_payload, encode_session_open_payload, TunnelSessionOpenPayload,
 };
 use std::collections::{HashMap, VecDeque};
+use std::error::Error;
+use std::fmt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -57,7 +59,23 @@ impl TunnelRuntimeError {
     pub fn code(&self) -> &'static str {
         self.code
     }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
+
+impl fmt::Display for TunnelRuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.message.trim().is_empty() {
+            write!(f, "{}", self.code)
+        } else {
+            write!(f, "{}: {}", self.code, self.message)
+        }
+    }
+}
+
+impl Error for TunnelRuntimeError {}
 
 #[derive(Clone, Debug)]
 pub struct AsyncTunnelFrameQueue {

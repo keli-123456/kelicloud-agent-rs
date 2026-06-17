@@ -1,5 +1,8 @@
 use crate::ktp::{FrameLeg, FrameType, KtpFrame};
 use crate::transport::TransportError;
+use crate::tunnel_async_runtime::{
+    AsyncTunnelCore, TunnelIngressListenerSpec, TunnelRuntimeError, TunnelRuntimeLimits,
+};
 use crate::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
 use crate::tunnel_data::{TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure};
 use crate::tunnel_preflight::{
@@ -7,16 +10,12 @@ use crate::tunnel_preflight::{
     TunnelPreflightIssueCode, TunnelPreflightSide, TunnelTcpRulePreflightInput,
 };
 use crate::tunnel_session::{
-    decode_session_open_payload, encode_session_accept_payload, encode_session_error_payload,
-    encode_session_open_payload, TunnelSessionErrorPayload, TunnelSessionOpenPayload,
+    decode_session_open_payload, encode_session_error_payload, TunnelSessionErrorPayload,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{ErrorKind, Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug)]
 pub struct SharedTunnelRuleState {
@@ -265,16 +264,12 @@ impl TunnelSessionRuntime for NoopTunnelSessionRuntime {}
 
 pub struct TunnelTcpRuntime {
     rule_state: SharedTunnelRuleState,
-    outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
-    sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
+    async_runtime: tokio::runtime::Runtime,
+    core: AsyncTunnelCore,
     listeners: HashMap<u64, TcpListenerHandle>,
+    #[cfg(test)]
     listener_event_tx: mpsc::Sender<TcpListenerRuntimeEvent>,
     listener_event_rx: mpsc::Receiver<TcpListenerRuntimeEvent>,
-    next_session_id: Arc<AtomicU64>,
-}
-
-struct TcpTunnelSession {
-    to_target: mpsc::Sender<Vec<u8>>,
 }
 
 struct TcpListenerHandle {
@@ -289,15 +284,27 @@ struct TcpListenerRuntimeEvent {
 
 impl TunnelTcpRuntime {
     pub fn new(rule_state: SharedTunnelRuleState) -> Self {
+        Self::new_with_limits(rule_state, TunnelRuntimeLimits::default())
+    }
+
+    pub fn new_with_limits(rule_state: SharedTunnelRuleState, limits: TunnelRuntimeLimits) -> Self {
         let (listener_event_tx, listener_event_rx) = mpsc::channel();
+        #[cfg(not(test))]
+        let _ = listener_event_tx;
+        let async_runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_io()
+            .enable_time()
+            .worker_threads(2)
+            .build()
+            .expect("build tunnel tcp async runtime");
         Self {
             rule_state,
-            outbound: Arc::new(Mutex::new(VecDeque::new())),
-            sessions: Arc::new(Mutex::new(HashMap::new())),
+            async_runtime,
+            core: AsyncTunnelCore::new(limits),
             listeners: HashMap::new(),
+            #[cfg(test)]
             listener_event_tx,
             listener_event_rx,
-            next_session_id: Arc::new(AtomicU64::new(initial_session_id())),
         }
     }
 
@@ -316,6 +323,9 @@ impl TunnelTcpRuntime {
                     .unwrap_or(false);
             if !should_keep {
                 handle.stop.store(true, Ordering::SeqCst);
+                let _ = self
+                    .async_runtime
+                    .block_on(self.core.stop_ingress_listener(*rule_id));
             }
             should_keep
         });
@@ -332,14 +342,9 @@ impl TunnelTcpRuntime {
                 continue;
             }
             let stop = Arc::new(AtomicBool::new(false));
-            match start_tcp_listener(
-                spec.clone(),
-                self.rule_state.clone(),
-                self.listener_event_tx.clone(),
-                Arc::clone(&self.outbound),
-                Arc::clone(&self.sessions),
-                Arc::clone(&self.next_session_id),
-                Arc::clone(&stop),
+            match self.async_runtime.block_on(
+                self.core
+                    .start_ingress_listener(tunnel_async_listener_spec(&spec)),
             ) {
                 Ok(()) => {
                     self.rule_state.set_listener_running(spec.clone());
@@ -348,7 +353,7 @@ impl TunnelTcpRuntime {
                 }
                 Err(error) => {
                     self.rule_state
-                        .set_listener_start_failed(spec.clone(), &error.to_string());
+                        .set_listener_start_failed(spec.clone(), error.message());
                 }
             }
         }
@@ -357,10 +362,7 @@ impl TunnelTcpRuntime {
     }
 
     pub fn active_session_count(&self) -> usize {
-        self.sessions
-            .lock()
-            .map(|sessions| sessions.len())
-            .unwrap_or(0)
+        self.core.stats_snapshot().active_sessions
     }
 
     fn sync_active_listener_snapshot(&self) {
@@ -385,6 +387,9 @@ impl TunnelTcpRuntime {
             }
             if let Some(handle) = self.listeners.remove(&event.spec.rule_id) {
                 handle.stop.store(true, Ordering::SeqCst);
+                let _ = self
+                    .async_runtime
+                    .block_on(self.core.stop_ingress_listener(event.spec.rule_id));
             }
             terminal_specs.push(event.spec);
         }
@@ -417,50 +422,28 @@ impl TunnelTcpRuntime {
             )?]);
         };
 
-        let target = tcp_target_addr(&rule.target_host, rule.target_port);
-        let stream = match TcpStream::connect(&target) {
-            Ok(stream) => stream,
-            Err(error) => {
-                return Ok(vec![session_error_frame(
-                    frame.session_id,
-                    FrameLeg::Egress,
-                    rule.id,
-                    "target_connect_failed",
-                    &error.to_string(),
-                )?]);
-            }
-        };
-        let reader = stream
-            .try_clone()
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-        let writer = stream;
-        let (to_target, from_runtime) = mpsc::channel::<Vec<u8>>();
-        let outbound = Arc::clone(&self.outbound);
-        let sessions = Arc::clone(&self.sessions);
-        let session_id = frame.session_id;
-        let rule_id = rule.id;
-        thread::spawn(move || write_tcp_session(writer, from_runtime));
-        thread::spawn(move || {
-            read_tcp_session(
-                reader,
-                outbound,
-                sessions,
-                session_id,
-                rule_id,
-                FrameLeg::Egress,
-            )
-        });
-        if let Ok(mut sessions) = self.sessions.lock() {
-            sessions.insert(frame.session_id, TcpTunnelSession { to_target });
-        }
-
-        Ok(vec![KtpFrame {
-            frame_type: FrameType::SessionAccept,
-            leg: FrameLeg::Egress,
-            flags: 0,
-            session_id: frame.session_id,
-            payload: encode_session_accept_payload(rule.id),
-        }])
+        self.async_runtime
+            .block_on(self.core.open_egress_session(
+                frame.session_id,
+                rule.id,
+                &rule.target_host,
+                rule.target_port,
+                frame.payload,
+            ))
+            .map_err(runtime_error_to_transport)
+            .or_else(|error| {
+                if let TransportError::RequestFailed(message) = &error {
+                    let (code, detail) = split_runtime_error_message(message);
+                    return Ok(vec![session_error_frame(
+                        frame.session_id,
+                        FrameLeg::Egress,
+                        rule.id,
+                        code,
+                        detail,
+                    )?]);
+                }
+                Err(error)
+            })
     }
 
     fn find_egress_rule(&self, rule_id: u64) -> Option<SelectedTunnelRule> {
@@ -484,17 +467,22 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
                 self.handle_egress_open(frame)
             }
             FrameType::SessionData => {
-                if let Ok(sessions) = self.sessions.lock() {
-                    if let Some(session) = sessions.get(&frame.session_id) {
-                        let _ = session.to_target.send(frame.payload);
+                let result = self.async_runtime.block_on(self.core.handle_session_data(
+                    frame.session_id,
+                    frame.leg,
+                    frame.payload,
+                ));
+                if let Err(error) = result {
+                    if error.code() != "runtime_unavailable" {
+                        return Err(runtime_error_to_transport(error));
                     }
                 }
                 Ok(Vec::new())
             }
             FrameType::SessionClose | FrameType::SessionError => {
-                if let Ok(mut sessions) = self.sessions.lock() {
-                    sessions.remove(&frame.session_id);
-                }
+                let _ = self
+                    .async_runtime
+                    .block_on(self.core.close_session(frame.session_id, "remote close"));
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
@@ -502,12 +490,28 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
     }
 
     fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
-        Ok(self
-            .outbound
-            .lock()
-            .ok()
-            .and_then(|mut frames| frames.pop_front()))
+        Ok(self.async_runtime.block_on(self.core.next_frame()))
     }
+}
+
+fn tunnel_async_listener_spec(spec: &TunnelTcpListenerSpec) -> TunnelIngressListenerSpec {
+    TunnelIngressListenerSpec {
+        rule_id: spec.rule_id,
+        listen_address: spec.listen_address.clone(),
+        listen_port: spec.listen_port,
+        source_allowlist: spec.source_allowlist.clone(),
+    }
+}
+
+fn runtime_error_to_transport(error: TunnelRuntimeError) -> TransportError {
+    TransportError::RequestFailed(error.to_string())
+}
+
+fn split_runtime_error_message(message: &str) -> (&str, &str) {
+    message
+        .split_once(": ")
+        .map(|(code, detail)| (code, detail))
+        .unwrap_or((message, message))
 }
 
 fn tcp_target_addr(host: &str, port: u16) -> String {
@@ -549,206 +553,6 @@ fn sort_listener_health(listener_health: &mut [TunnelListenerHealth]) {
             .then_with(|| left.spec.listen_port.cmp(&right.spec.listen_port))
             .then_with(|| left.spec.source_allowlist.cmp(&right.spec.source_allowlist))
     });
-}
-
-fn initial_session_id() -> u64 {
-    let seed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or(1);
-    seed.max(1)
-}
-
-fn write_tcp_session(mut stream: TcpStream, incoming: mpsc::Receiver<Vec<u8>>) {
-    while let Ok(payload) = incoming.recv() {
-        if stream.write_all(&payload).is_err() {
-            break;
-        }
-    }
-}
-
-fn start_tcp_listener(
-    spec: TunnelTcpListenerSpec,
-    rule_state: SharedTunnelRuleState,
-    listener_events: mpsc::Sender<TcpListenerRuntimeEvent>,
-    outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
-    sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
-    next_session_id: Arc<AtomicU64>,
-    stop: Arc<AtomicBool>,
-) -> Result<(), TransportError> {
-    let listener = TcpListener::bind(tcp_target_addr(&spec.listen_address, spec.listen_port))
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    thread::spawn(move || {
-        let mut terminal_error = String::new();
-        while !stop.load(Ordering::SeqCst) {
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    if stream.set_nonblocking(false).is_err() {
-                        continue;
-                    }
-                    handle_ingress_stream(
-                        spec.clone(),
-                        stream,
-                        Arc::clone(&outbound),
-                        Arc::clone(&sessions),
-                        Arc::clone(&next_session_id),
-                    );
-                }
-                Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                    thread::sleep(std::time::Duration::from_millis(25));
-                }
-                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-                Err(error) => {
-                    terminal_error = error.to_string();
-                    break;
-                }
-            }
-        }
-        if !stop.load(Ordering::SeqCst) {
-            let terminal_spec = spec.clone();
-            if terminal_error.trim().is_empty() {
-                rule_state
-                    .set_listener_stopped(terminal_spec.clone(), "listener stopped unexpectedly");
-            } else {
-                rule_state.set_listener_runtime_error(terminal_spec.clone(), &terminal_error);
-            }
-            let _ = listener_events.send(TcpListenerRuntimeEvent {
-                spec: terminal_spec,
-            });
-        }
-    });
-    Ok(())
-}
-
-fn handle_ingress_stream(
-    spec: TunnelTcpListenerSpec,
-    stream: TcpStream,
-    outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
-    sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
-    next_session_id: Arc<AtomicU64>,
-) {
-    let source_addr = stream
-        .peer_addr()
-        .map(|addr| addr.to_string())
-        .unwrap_or_default();
-    if !source_addr_allowed(&source_addr, &spec.source_allowlist) {
-        return;
-    }
-
-    let session_id = next_session_id.fetch_add(1, Ordering::SeqCst);
-    let Ok(payload) = encode_session_open_payload(&TunnelSessionOpenPayload {
-        rule_id: spec.rule_id,
-        listen_host: spec.listen_address.clone(),
-        listen_port: spec.listen_port,
-        source_addr,
-    }) else {
-        return;
-    };
-    push_outbound_frame(
-        &outbound,
-        KtpFrame {
-            frame_type: FrameType::SessionOpen,
-            leg: FrameLeg::Ingress,
-            flags: 0,
-            session_id,
-            payload,
-        },
-    );
-
-    let Ok(reader) = stream.try_clone() else {
-        return;
-    };
-    let writer = stream;
-    let (to_source, from_runtime) = mpsc::channel::<Vec<u8>>();
-    if let Ok(mut sessions) = sessions.lock() {
-        sessions.insert(
-            session_id,
-            TcpTunnelSession {
-                to_target: to_source,
-            },
-        );
-    }
-    let rule_id = spec.rule_id;
-    let reader_outbound = Arc::clone(&outbound);
-    thread::spawn(move || write_tcp_session(writer, from_runtime));
-    thread::spawn(move || {
-        read_tcp_session(
-            reader,
-            reader_outbound,
-            sessions,
-            session_id,
-            rule_id,
-            FrameLeg::Ingress,
-        )
-    });
-}
-
-fn read_tcp_session(
-    mut stream: TcpStream,
-    outbound: Arc<Mutex<VecDeque<KtpFrame>>>,
-    sessions: Arc<Mutex<HashMap<u64, TcpTunnelSession>>>,
-    session_id: u64,
-    rule_id: u64,
-    leg: FrameLeg,
-) {
-    let mut buffer = [0u8; 16 * 1024];
-    loop {
-        match stream.read(&mut buffer) {
-            Ok(0) => {
-                push_outbound_frame(
-                    &outbound,
-                    KtpFrame {
-                        frame_type: FrameType::SessionClose,
-                        leg,
-                        flags: 0,
-                        session_id,
-                        payload: Vec::new(),
-                    },
-                );
-                remove_tcp_session(&sessions, session_id);
-                return;
-            }
-            Ok(read) => push_outbound_frame(
-                &outbound,
-                KtpFrame {
-                    frame_type: FrameType::SessionData,
-                    leg,
-                    flags: 0,
-                    session_id,
-                    payload: buffer[..read].to_vec(),
-                },
-            ),
-            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(error) => {
-                if let Ok(frame) = session_error_frame(
-                    session_id,
-                    leg,
-                    rule_id,
-                    "target_read_failed",
-                    &error.to_string(),
-                ) {
-                    push_outbound_frame(&outbound, frame);
-                }
-                remove_tcp_session(&sessions, session_id);
-                return;
-            }
-        }
-    }
-}
-
-fn remove_tcp_session(sessions: &Arc<Mutex<HashMap<u64, TcpTunnelSession>>>, session_id: u64) {
-    if let Ok(mut sessions) = sessions.lock() {
-        sessions.remove(&session_id);
-    }
-}
-
-fn push_outbound_frame(outbound: &Arc<Mutex<VecDeque<KtpFrame>>>, frame: KtpFrame) {
-    if let Ok(mut frames) = outbound.lock() {
-        frames.push_back(frame);
-    }
 }
 
 fn session_error_frame(
@@ -1101,6 +905,7 @@ fn prefix_mask_u128(prefix_len: u8) -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{TcpListener, TcpStream};
 
     #[test]
     fn tcp_runtime_terminal_event_removes_handle_and_delays_restart_for_ready_visibility() {

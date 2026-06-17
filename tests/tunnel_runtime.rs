@@ -1,4 +1,5 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
+use kelicloud_agent_rs::tunnel_async_runtime::TunnelRuntimeLimits;
 use kelicloud_agent_rs::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
 use kelicloud_agent_rs::tunnel_data::TunnelDataReadySource;
 use kelicloud_agent_rs::tunnel_runtime::{
@@ -379,6 +380,58 @@ fn tcp_runtime_target_connect_failure_returns_stable_error_code_and_no_session()
     assert_eq!(error.rule_id, 51);
     assert_eq!(error.code, "target_connect_failed");
     assert_eq!(runtime.active_session_count(), 0);
+}
+
+#[test]
+fn tcp_runtime_respects_agent_session_limit_from_async_core() {
+    let target = TcpListener::bind("127.0.0.1:0").expect("bind target listener");
+    let target_addr = target.local_addr().expect("target local addr");
+    let hold_thread = thread::spawn(move || {
+        if let Ok((_stream, _)) = target.accept() {
+            thread::sleep(Duration::from_secs(5));
+        }
+    });
+
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(52, "tcp", "egress", true);
+    rule.target_host = "127.0.0.1".to_string();
+    rule.target_port = target_addr.port();
+    state.update_rules("rev-limit", &[rule]);
+    let mut limits = TunnelRuntimeLimits::default();
+    limits.max_sessions_per_agent = 1;
+    let mut runtime = TunnelTcpRuntime::new_with_limits(state, limits);
+
+    let first = runtime
+        .handle_server_frame(KtpFrame {
+            frame_type: FrameType::SessionOpen,
+            leg: FrameLeg::Egress,
+            flags: 0,
+            session_id: 520,
+            payload: session_open_payload(52),
+        })
+        .expect("first open should be accepted");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].frame_type, FrameType::SessionAccept);
+    assert_eq!(runtime.active_session_count(), 1);
+
+    let second = runtime
+        .handle_server_frame(KtpFrame {
+            frame_type: FrameType::SessionOpen,
+            leg: FrameLeg::Egress,
+            flags: 0,
+            session_id: 521,
+            payload: session_open_payload(52),
+        })
+        .expect("second open should return session error");
+
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].frame_type, FrameType::SessionError);
+    let error = decode_session_error_payload(&second[0].payload).expect("decode session error");
+    assert_eq!(error.rule_id, 52);
+    assert_eq!(error.code, "session_limit");
+    assert_eq!(runtime.active_session_count(), 1);
+    drop(runtime);
+    hold_thread.join().expect("hold thread should finish");
 }
 
 #[test]
@@ -888,6 +941,18 @@ fn wait_for_next_runtime_frame(runtime: &mut TunnelTcpRuntime) -> Option<KtpFram
         thread::sleep(Duration::from_millis(10));
     }
     None
+}
+
+fn session_open_payload(rule_id: u64) -> Vec<u8> {
+    encode_session_open_payload(
+        &kelicloud_agent_rs::tunnel_session::TunnelSessionOpenPayload {
+            rule_id,
+            listen_host: "127.0.0.1".to_string(),
+            listen_port: 10088,
+            source_addr: "127.0.0.1:50123".to_string(),
+        },
+    )
+    .expect("encode session open")
 }
 
 fn free_tcp_port() -> u16 {
