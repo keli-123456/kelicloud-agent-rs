@@ -292,6 +292,52 @@ Observations:
   from the runtime ingress-to-egress path. The p95/p99 gap shows why live canary
   traffic should capture latency and runtime queue diagnostics together.
 
+## 2026-06-18 RDP-Like Profile Sample
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Commit: `016dc13`
+- End-to-end binary: `ktp-e2e-bench`
+- Build mode: `cargo build --release --bin ktp-e2e-bench`
+
+Host:
+
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- CPU: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+- CPU cores: 4
+- Memory: 3.8 GiB
+
+Command:
+
+```bash
+./target/release/ktp-e2e-bench --profile rdp-like --diagnostics --latency --relay-wait-timeout-us 100 --runs 3 --clients 4 --frames 64 --payload-bytes 8192
+```
+
+Runtime ingress-to-egress RDP-like latency:
+
+| Runs | Clients | Frames / Client | Max Payload | Bytes / Run | Elapsed Median | Throughput Median | RTT p50 | RTT p95 | RTT p99 | RTT Max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 4 | 64 | 8192 B | 247296 | 64.507 ms | 3.656 MiB/s | 465 us | 4186 us | 8038 us | 14440 us |
+
+Runtime relay-loop diagnostics:
+
+| Runs | Clients | Relay Turns | Empty Turns | Yield Turns | Wait Turns | Ingress Frames | Egress Frames | Ingress Data Frames | Egress Data Frames |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 4 | 1378 | 384 | 1375 | 1028 | 789 | 779 | 768 | 768 |
+
+Notes:
+
+- The RDP-like profile is deterministic, so future runs can compare the same
+  small-frame and burst-frame sequence instead of sampling random payloads.
+- The reported `bytes` value is lower than `frames * payload_bytes` because
+  `payload_bytes` caps the largest burst while most frames stay small.
+- This is a first release-host evidence point for interactive mixed-payload
+  traffic; it should be expanded with longer live forwarding windows before
+  setting performance gates.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
@@ -354,8 +400,9 @@ Notes:
 Next evidence to collect:
 
 - Repeated multi-client runs with higher sample counts and percentile summaries.
-- Release-host samples for `ktp-e2e-bench --profile rdp-like` so tunnel tuning
-  compares interactive mixed-payload traffic instead of fixed-size frames only.
+- Longer release-host and live-canary samples for
+  `ktp-e2e-bench --profile rdp-like` so tunnel tuning compares interactive
+  mixed-payload traffic instead of fixed-size frames only.
 - Before/after diagnostics for production data carrier scheduling changes.
 - Inspect the next GitHub Actions KTP local-backend artifact and keep it as the
   release evidence source instead of relying on one-off remote host paths.
