@@ -1,11 +1,13 @@
 use crate::ktp::{FrameLeg, FrameType, KtpFrame};
-use crate::tunnel_session::encode_session_accept_payload;
+use crate::tunnel_session::{
+    encode_session_accept_payload, encode_session_open_payload, TunnelSessionOpenPayload,
+};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,11 +163,21 @@ impl TunnelRuntimeStats {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TunnelIngressListenerSpec {
+    pub rule_id: u64,
+    pub listen_address: String,
+    pub listen_port: u16,
+    pub source_allowlist: String,
+}
+
+#[derive(Clone)]
 pub struct AsyncTunnelCore {
     limits: TunnelRuntimeLimits,
     outbound: AsyncTunnelFrameQueue,
     sessions: Arc<Mutex<HashMap<u64, mpsc::Sender<Vec<u8>>>>>,
+    listeners: Arc<Mutex<HashMap<u64, tokio::task::JoinHandle<()>>>>,
+    next_session_id: Arc<AtomicU64>,
     stats: TunnelRuntimeStats,
 }
 
@@ -175,8 +187,50 @@ impl AsyncTunnelCore {
             outbound: AsyncTunnelFrameQueue::new(limits.max_outbound_frames),
             limits,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            listeners: Arc::new(Mutex::new(HashMap::new())),
+            next_session_id: Arc::new(AtomicU64::new(1)),
             stats: TunnelRuntimeStats::default(),
         }
+    }
+
+    pub async fn start_ingress_listener(
+        &self,
+        spec: TunnelIngressListenerSpec,
+    ) -> Result<(), TunnelRuntimeError> {
+        let endpoint = format!("{}:{}", spec.listen_address.trim(), spec.listen_port);
+        let listener = TcpListener::bind(&endpoint)
+            .await
+            .map_err(|error| TunnelRuntimeError::listen_bind_failed(error.to_string()))?;
+        let core = self.clone();
+        let rule_id = spec.rule_id;
+        let handle = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, peer)) => {
+                        if !crate::tunnel_runtime::source_addr_allowed(
+                            &peer.to_string(),
+                            &spec.source_allowlist,
+                        ) {
+                            continue;
+                        }
+                        let session_id = core.next_session_id.fetch_add(1, Ordering::Relaxed);
+                        let _ = core
+                            .attach_ingress_stream(session_id, rule_id, stream, peer.to_string())
+                            .await;
+                    }
+                    Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+                }
+            }
+        });
+
+        let mut listeners = self
+            .listeners
+            .lock()
+            .map_err(|_| TunnelRuntimeError::runtime_unavailable("listener map is unavailable"))?;
+        if let Some(previous) = listeners.insert(rule_id, handle) {
+            previous.abort();
+        }
+        Ok(())
     }
 
     pub async fn open_egress_session(
@@ -211,6 +265,41 @@ impl AsyncTunnelCore {
             session_id,
             payload: encode_session_accept_payload(rule_id),
         }])
+    }
+
+    async fn attach_ingress_stream(
+        &self,
+        session_id: u64,
+        rule_id: u64,
+        stream: TcpStream,
+        source_addr: String,
+    ) -> Result<(), TunnelRuntimeError> {
+        let (reader, writer) = stream.into_split();
+        let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
+
+        self.sessions
+            .lock()
+            .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
+            .insert(session_id, tx);
+        self.stats.session_opened(rule_id);
+
+        let payload = encode_session_open_payload(&TunnelSessionOpenPayload {
+            rule_id,
+            listen_host: String::new(),
+            listen_port: 0,
+            source_addr,
+        })
+        .map_err(|error| TunnelRuntimeError::runtime_unavailable(error.to_string()))?;
+        self.outbound.try_push(KtpFrame {
+            frame_type: FrameType::SessionOpen,
+            leg: FrameLeg::Ingress,
+            flags: 0,
+            session_id,
+            payload,
+        })?;
+        self.spawn_session_reader(reader, session_id, rule_id, FrameLeg::Ingress);
+        self.spawn_session_writer(writer, rx, rule_id);
+        Ok(())
     }
 
     pub async fn handle_session_data(
@@ -303,6 +392,13 @@ impl TunnelRuntimeError {
     pub fn target_connect_failed(message: impl Into<String>) -> Self {
         Self {
             code: "target_connect_failed",
+            message: message.into(),
+        }
+    }
+
+    pub fn listen_bind_failed(message: impl Into<String>) -> Self {
+        Self {
+            code: "listen_bind_failed",
             message: message.into(),
         }
     }
