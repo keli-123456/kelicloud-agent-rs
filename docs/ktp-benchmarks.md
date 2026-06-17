@@ -158,6 +158,17 @@ logs, and verifies that `tunnel data diagnostics` lines include runtime wait
 and outbound queue dwell percentile fields. Treat the generated Markdown file
 as the live-log companion to `ktp-e2e-bench --latency` output.
 
+Local backend KTP smoke:
+
+```bash
+KELICLOUD_SMOKE_KTP_TCP=true scripts/smoke-local-backend.sh
+```
+
+This runs the regular local real-backend smoke with the backend KTP TCP relay
+enabled and the agent started with `--tunnel-ktp-tcp-address`. After the tunnel
+echo check succeeds, the script waits for live `tunnel data diagnostics` in the
+captured agent log and writes `smoke-logs/ktp-live-canary.evidence.md`.
+
 ## 2026-06-18 Release Host Latency Sample
 
 Code:

@@ -6,10 +6,14 @@ KELICLOUD_BACKEND_REF="${KELICLOUD_BACKEND_REF:-main}"
 KELICLOUD_BACKEND_PATH="${KELICLOUD_BACKEND_PATH:-}"
 KELICLOUD_PREPARE_FRONTEND="${KELICLOUD_PREPARE_FRONTEND:-true}"
 KOMARI_FRONTEND_REF="${KOMARI_FRONTEND_REF:-main}"
+KELICLOUD_SMOKE_KTP_TCP="${KELICLOUD_SMOKE_KTP_TCP:-false}"
 
 BACKEND_LISTEN="${BACKEND_LISTEN:-127.0.0.1:25775}"
 BACKEND_ENDPOINT="${BACKEND_ENDPOINT:-http://${BACKEND_LISTEN}}"
 BACKEND_START_TIMEOUT_SECONDS="${BACKEND_START_TIMEOUT_SECONDS:-240}"
+KTP_TCP_LISTEN="${KTP_TCP_LISTEN:-}"
+KTP_DIAGNOSTICS_TIMEOUT_SECONDS="${KTP_DIAGNOSTICS_TIMEOUT_SECONDS:-45}"
+KTP_LIVE_CANARY_MIN_LINES="${KTP_LIVE_CANARY_MIN_LINES:-1}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin-smoke-password}"
 
@@ -39,6 +43,7 @@ ROTATED_AGENT_TOKEN=""
 TUNNEL_TARGET_PORT=""
 TUNNEL_LISTEN_PORT=""
 TUNNEL_RULE_ID=""
+KTP_EVIDENCE_FILE=""
 CURRENT_STAGE="startup"
 
 log() {
@@ -125,6 +130,10 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || die "$1 command is required"
 }
 
+ktp_tcp_smoke_enabled() {
+    [[ "${KELICLOUD_SMOKE_KTP_TCP}" == "true" ]]
+}
+
 json_value() {
     local path="$1"
     python3 -c '
@@ -209,6 +218,16 @@ sock = socket.socket()
 sock.bind(("127.0.0.1", 0))
 print(sock.getsockname()[1])
 sock.close()'
+}
+
+configure_ktp_tcp_smoke() {
+    if ! ktp_tcp_smoke_enabled; then
+        return
+    fi
+    if [[ -z "${KTP_TCP_LISTEN}" ]]; then
+        KTP_TCP_LISTEN="127.0.0.1:$(pick_free_tcp_port)"
+    fi
+    log "KTP TCP tunnel data smoke enabled at ${KTP_TCP_LISTEN}"
 }
 
 wait_for_http() {
@@ -337,6 +356,9 @@ start_backend() {
             KOMARI_DB_USER="${KOMARI_DB_USER}" \
             KOMARI_DB_PASS="${KOMARI_DB_PASS}" \
             KOMARI_DB_NAME="${KOMARI_DB_NAME}" \
+            KOMARI_TUNNEL_KTP_TCP_ENABLED="${KELICLOUD_SMOKE_KTP_TCP}" \
+            KOMARI_TUNNEL_KTP_TCP_LISTEN="${KTP_TCP_LISTEN}" \
+            KOMARI_TUNNEL_KTP_TCP_ADDRESS="${KTP_TCP_LISTEN}" \
             KOMARI_SECURITY_HSTS="false" \
             "${WORK_DIR}/kelicloud-backend" server
     ) >"${BACKEND_LOG}" 2>&1 &
@@ -429,8 +451,12 @@ latest_auto_discovery_registered_uuid() {
 
 start_agent() {
     local root="$1"
+    local tunnel_args=()
     AGENT_LOG="${SMOKE_LOG_DIR}/agent.log"
     : >"${AGENT_LOG}"
+    if ktp_tcp_smoke_enabled; then
+        tunnel_args+=(--tunnel-ktp-tcp-address "${KTP_TCP_LISTEN}")
+    fi
 
     log "Building agent and smoke helpers"
     (cd "${root}" && cargo build --locked --release --bin kelicloud-agent-rs --bin admin-terminal-smoke --bin smoke-summary)
@@ -443,7 +469,8 @@ start_agent() {
         --interval 1 \
         --max-retries 3 \
         --reconnect-interval 1 \
-        --info-report-interval 0 >>"${AGENT_LOG}" 2>&1 &
+        --info-report-interval 0 \
+        "${tunnel_args[@]}" >>"${AGENT_LOG}" 2>&1 &
     AGENT_PID="$!"
 
     wait_for_log "${AGENT_LOG}" "smoke: report_websocket_connected" 45
@@ -476,9 +503,12 @@ stop_agent_process() {
 
 restart_agent_after_token_recovery() {
     local root="$1"
-    local connected_count sent_count
+    local connected_count sent_count tunnel_args=()
     connected_count="$({ grep -F "smoke: report_websocket_connected" "${AGENT_LOG}" || true; } | wc -l | tr -d '[:space:]')"
     sent_count="$({ grep -F "smoke: report_sent" "${AGENT_LOG}" || true; } | wc -l | tr -d '[:space:]')"
+    if ktp_tcp_smoke_enabled; then
+        tunnel_args+=(--tunnel-ktp-tcp-address "${KTP_TCP_LISTEN}")
+    fi
 
     stop_agent_process
     printf '%s\n' "smoke: restarting_agent_after_token_recovery" >>"${AGENT_LOG}"
@@ -489,7 +519,8 @@ restart_agent_after_token_recovery() {
         --interval 1 \
         --max-retries 3 \
         --reconnect-interval 1 \
-        --info-report-interval 0 >>"${AGENT_LOG}" 2>&1 &
+        --info-report-interval 0 \
+        "${tunnel_args[@]}" >>"${AGENT_LOG}" 2>&1 &
     AGENT_PID="$!"
 
     wait_for_log_count "${AGENT_LOG}" "smoke: report_websocket_connected" "$((connected_count + 1))" 90
@@ -673,6 +704,22 @@ PY
     log "Tunnel relay echo succeeded through 127.0.0.1:${TUNNEL_LISTEN_PORT}"
 }
 
+collect_ktp_live_canary_evidence() {
+    local root="$1"
+    if ! ktp_tcp_smoke_enabled; then
+        return
+    fi
+
+    KTP_EVIDENCE_FILE="${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md"
+    wait_for_log "${AGENT_LOG}" "tunnel data diagnostics" "${KTP_DIAGNOSTICS_TIMEOUT_SECONDS}"
+    bash "${root}/scripts/ktp-live-canary-evidence.sh" \
+        --log-file "${AGENT_LOG}" \
+        --evidence-file "${KTP_EVIDENCE_FILE}" \
+        --min-lines "${KTP_LIVE_CANARY_MIN_LINES}"
+    printf '%s\n' "smoke: ktp_live_canary_evidence=${KTP_EVIDENCE_FILE}" >>"${AGENT_LOG}"
+    log "KTP live canary evidence written to ${KTP_EVIDENCE_FILE}"
+}
+
 print_summary() {
     local root="$1"
     local summary_file="${SMOKE_LOG_DIR}/agent.summary.md"
@@ -695,6 +742,9 @@ main() {
         require_command node
         require_command npm
     fi
+    if ktp_tcp_smoke_enabled; then
+        require_command bash
+    fi
 
     local root
     root="$(repo_root)"
@@ -706,6 +756,7 @@ main() {
     fi
     WORK_DIR="${SMOKE_WORK_DIR}"
 
+    configure_ktp_tcp_smoke
     set_stage "wait for MySQL"
     wait_for_mysql
     set_stage "prepare backend"
@@ -742,6 +793,10 @@ main() {
     create_tunnel_rule
     set_stage "verify tunnel relay echo"
     verify_tunnel_relay_echo
+    if ktp_tcp_smoke_enabled; then
+        set_stage "collect KTP canary evidence"
+        collect_ktp_live_canary_evidence "${root}"
+    fi
     record_agent_stayed_alive
     set_stage "print smoke summary"
     print_summary "${root}"

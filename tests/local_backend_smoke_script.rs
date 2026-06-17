@@ -59,6 +59,23 @@ fn local_backend_smoke_script_prints_agent_logs_before_backend_logs() {
 }
 
 #[test]
+fn local_backend_smoke_script_can_run_tunnel_relay_over_ktp_tcp() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+
+    assert!(script.contains("KELICLOUD_SMOKE_KTP_TCP"));
+    assert!(script.contains("KELICLOUD_SMOKE_KTP_TCP:-false"));
+    assert!(script.contains("KTP_TCP_LISTEN"));
+    assert!(script.contains("KOMARI_TUNNEL_KTP_TCP_ENABLED"));
+    assert!(script.contains("KOMARI_TUNNEL_KTP_TCP_LISTEN"));
+    assert!(script.contains("KOMARI_TUNNEL_KTP_TCP_ADDRESS"));
+    assert!(script.contains("--tunnel-ktp-tcp-address"));
+    assert!(script.contains("ktp-live-canary-evidence.sh"));
+    assert!(script.contains("ktp-live-canary.evidence.md"));
+    assert!(script.contains("smoke: ktp_live_canary_evidence="));
+    assert!(script.contains("tunnel data diagnostics"));
+}
+
+#[test]
 fn local_backend_smoke_script_surfaces_terminal_helper_failures() {
     let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
 

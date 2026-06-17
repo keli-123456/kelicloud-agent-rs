@@ -289,6 +289,18 @@ by running `smoke-summary --require-pass` against the captured agent log. The
 same path runs automatically in the `Local Backend Smoke` GitHub Actions
 workflow on pushes to `main`.
 
+To run that same real-backend smoke through the KTP TCP data carrier instead
+of the WebSocket data carrier, enable the opt-in KTP mode:
+
+```bash
+KELICLOUD_SMOKE_KTP_TCP=true scripts/smoke-local-backend.sh
+```
+
+In KTP mode the script starts the backend KTP TCP relay, passes the relay
+address to `kelicloud-agent-rs`, verifies the same tunnel echo path, waits for
+`tunnel data diagnostics`, and writes
+`smoke-logs/ktp-live-canary.evidence.md`.
+
 ## Release Builds
 
 GitHub Actions publishes Linux binaries when a version tag is pushed:
