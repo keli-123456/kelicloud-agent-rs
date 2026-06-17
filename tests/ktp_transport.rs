@@ -2,7 +2,10 @@ use kelicloud_agent_rs::ktp::{
     encode_frame, FrameLeg, FrameType, KtpError, KtpFrame, KTP_HEADER_LEN, KTP_MAX_PAYLOAD_LEN,
     KTP_VERSION,
 };
-use kelicloud_agent_rs::ktp_transport::{KtpStreamCodec, KtpStreamCodecError};
+use kelicloud_agent_rs::ktp_transport::{
+    KtpCryptoDirection, KtpCryptoKey, KtpCryptoOpen, KtpCryptoRecordCodec, KtpCryptoSeal,
+    KtpStreamCodec, KtpStreamCodecError,
+};
 
 #[test]
 fn stream_codec_decodes_frame_split_across_tcp_chunks() {
@@ -77,6 +80,78 @@ fn stream_codec_reports_malformed_header_before_payload_length_limit() {
     assert_eq!(err, KtpStreamCodecError::Ktp(KtpError::WrongMagic));
 }
 
+#[test]
+fn crypto_record_round_trips_ktp_frame_and_hides_plaintext() {
+    let key = test_crypto_key();
+    let frame = session_data(700, b"rdp payload bytes");
+    let mut seal = KtpCryptoSeal::new(key.clone(), KtpCryptoDirection::ClientToRelay);
+    let mut open = KtpCryptoOpen::new(key, KtpCryptoDirection::ClientToRelay, KTP_MAX_PAYLOAD_LEN);
+
+    let record = seal.seal_frame(&frame).expect("seal frame");
+    assert!(!record
+        .windows(b"rdp payload bytes".len())
+        .any(|window| window == b"rdp payload bytes"));
+
+    let decoded = open.open_record(&record).expect("open record");
+    assert_eq!(decoded, frame);
+}
+
+#[test]
+fn crypto_record_rejects_tampered_ciphertext() {
+    let key = test_crypto_key();
+    let frame = session_data(701, b"secret");
+    let mut seal = KtpCryptoSeal::new(key.clone(), KtpCryptoDirection::ClientToRelay);
+    let mut open = KtpCryptoOpen::new(key, KtpCryptoDirection::ClientToRelay, KTP_MAX_PAYLOAD_LEN);
+    let mut record = seal.seal_frame(&frame).expect("seal frame");
+    let last = record.len() - 1;
+    record[last] ^= 0x55;
+
+    let err = open
+        .open_record(&record)
+        .expect_err("tampered record should fail auth");
+
+    assert_eq!(err.code(), "auth_failed");
+}
+
+#[test]
+fn crypto_record_rejects_out_of_order_sequence() {
+    let key = test_crypto_key();
+    let first = session_data(710, b"first");
+    let second = session_data(711, b"second");
+    let mut seal = KtpCryptoSeal::new(key.clone(), KtpCryptoDirection::ClientToRelay);
+    let first_record = seal.seal_frame(&first).expect("seal first");
+    let second_record = seal.seal_frame(&second).expect("seal second");
+    let mut open = KtpCryptoOpen::new(key, KtpCryptoDirection::ClientToRelay, KTP_MAX_PAYLOAD_LEN);
+
+    let err = open
+        .open_record(&second_record)
+        .expect_err("second sequence should not open before first");
+    assert_eq!(err.code(), "sequence_mismatch");
+
+    assert_eq!(open.open_record(&first_record).expect("open first"), first);
+}
+
+#[test]
+fn crypto_record_codec_decodes_split_encrypted_records() {
+    let key = test_crypto_key();
+    let frame = session_data(702, b"chunked");
+    let mut seal = KtpCryptoSeal::new(key.clone(), KtpCryptoDirection::RelayToClient);
+    let record = seal.seal_frame(&frame).expect("seal frame");
+    let mut codec = KtpCryptoRecordCodec::new(
+        key,
+        KtpCryptoDirection::RelayToClient,
+        KTP_MAX_PAYLOAD_LEN,
+        1024 * 1024,
+    );
+
+    codec.push(&record[..5]).expect("push first chunk");
+    assert_eq!(codec.next_frame().expect("decode first chunk"), None);
+    codec.push(&record[5..]).expect("push second chunk");
+
+    assert_eq!(codec.next_frame().expect("decode frame"), Some(frame));
+    assert_eq!(codec.next_frame().expect("decode empty"), None);
+}
+
 fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
     KtpFrame {
         frame_type: FrameType::SessionData,
@@ -85,4 +160,8 @@ fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
         session_id,
         payload: payload.to_vec(),
     }
+}
+
+fn test_crypto_key() -> KtpCryptoKey {
+    KtpCryptoKey::from_bytes([7u8; 32])
 }
