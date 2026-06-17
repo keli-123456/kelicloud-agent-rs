@@ -128,6 +128,17 @@ impl fmt::Display for KtpError {
 impl Error for KtpError {}
 
 pub fn encode_frame(frame: &KtpFrame) -> Result<Vec<u8>, KtpError> {
+    let mut bytes = Vec::with_capacity(KTP_HEADER_LEN + frame.payload.len());
+    encode_frame_into(frame, &mut bytes)?;
+    Ok(bytes)
+}
+
+pub fn encode_frame_into(frame: &KtpFrame, bytes: &mut Vec<u8>) -> Result<(), KtpError> {
+    bytes.clear();
+    append_frame_bytes(frame, bytes)
+}
+
+pub(crate) fn append_frame_bytes(frame: &KtpFrame, bytes: &mut Vec<u8>) -> Result<(), KtpError> {
     validate_frame(frame)?;
 
     let payload_len = frame.payload.len();
@@ -135,7 +146,6 @@ pub fn encode_frame(frame: &KtpFrame) -> Result<Vec<u8>, KtpError> {
         return Err(KtpError::PayloadTooLarge(payload_len));
     }
 
-    let mut bytes = Vec::with_capacity(KTP_HEADER_LEN + payload_len);
     bytes.extend_from_slice(KTP_MAGIC);
     bytes.push(KTP_VERSION);
     bytes.push(frame.frame_type as u8);
@@ -145,8 +155,7 @@ pub fn encode_frame(frame: &KtpFrame) -> Result<Vec<u8>, KtpError> {
     bytes.extend_from_slice(&(payload_len as u32).to_be_bytes());
     bytes.extend_from_slice(&0u32.to_be_bytes());
     bytes.extend_from_slice(&frame.payload);
-
-    Ok(bytes)
+    Ok(())
 }
 
 pub fn decode_frame(bytes: &[u8], max_payload_len: usize) -> Result<KtpFrame, KtpError> {

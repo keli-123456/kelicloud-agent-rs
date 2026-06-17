@@ -1,7 +1,7 @@
 use crate::ktp::{
-    decode_frame, encode_frame, KtpError, KtpFrame, KTP_HEADER_LEN, KTP_MAX_PAYLOAD_LEN,
+    append_frame_bytes, decode_frame, KtpError, KtpFrame, KTP_HEADER_LEN, KTP_MAX_PAYLOAD_LEN,
 };
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::aead::{Aead, AeadInPlace, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use std::error::Error;
 use std::fmt;
@@ -207,26 +207,34 @@ impl KtpCryptoSeal {
     }
 
     pub fn seal_frame(&mut self, frame: &KtpFrame) -> Result<Vec<u8>, KtpCryptoError> {
-        let plaintext = encode_frame(frame).map_err(KtpCryptoError::ktp)?;
+        let mut record = Vec::new();
+        self.seal_frame_into(frame, &mut record)?;
+        Ok(record)
+    }
+
+    pub fn seal_frame_into(
+        &mut self,
+        frame: &KtpFrame,
+        record: &mut Vec<u8>,
+    ) -> Result<(), KtpCryptoError> {
         let sequence = self.sequence;
-        let mut header = crypto_header(self.direction, sequence, plaintext.len() + 16);
-        let ciphertext = self
+        record.clear();
+        record.resize(KTP_CRYPTO_HEADER_LEN, 0);
+        append_frame_bytes(frame, record).map_err(KtpCryptoError::ktp)?;
+        let ciphertext_len = record.len() - KTP_CRYPTO_HEADER_LEN + 16;
+        let header = crypto_header_bytes(self.direction, sequence, ciphertext_len);
+        record[..KTP_CRYPTO_HEADER_LEN].copy_from_slice(&header);
+        let tag = self
             .cipher
-            .encrypt(
+            .encrypt_in_place_detached(
                 &nonce(self.direction, sequence),
-                Payload {
-                    msg: &plaintext,
-                    aad: &header,
-                },
+                &header,
+                &mut record[KTP_CRYPTO_HEADER_LEN..],
             )
             .map_err(|_| KtpCryptoError::auth_failed())?;
-        let ciphertext_len = ciphertext.len() as u32;
-        header[14..18].copy_from_slice(&ciphertext_len.to_be_bytes());
+        record.extend_from_slice(&tag);
         self.sequence = self.sequence.wrapping_add(1);
-
-        let mut record = header;
-        record.extend_from_slice(&ciphertext);
-        Ok(record)
+        Ok(())
     }
 }
 
@@ -335,14 +343,17 @@ struct CryptoHeader {
     ciphertext_len: usize,
 }
 
-fn crypto_header(direction: KtpCryptoDirection, sequence: u64, ciphertext_len: usize) -> Vec<u8> {
-    let mut header = Vec::with_capacity(KTP_CRYPTO_HEADER_LEN);
-    header.extend_from_slice(KTP_CRYPTO_MAGIC);
-    header.push(KTP_CRYPTO_VERSION);
-    header.push(direction.id());
-    header.extend_from_slice(&sequence.to_be_bytes());
-    header.extend_from_slice(&(ciphertext_len as u32).to_be_bytes());
-    header.extend_from_slice(&[0u8; 6]);
+fn crypto_header_bytes(
+    direction: KtpCryptoDirection,
+    sequence: u64,
+    ciphertext_len: usize,
+) -> [u8; KTP_CRYPTO_HEADER_LEN] {
+    let mut header = [0u8; KTP_CRYPTO_HEADER_LEN];
+    header[0..4].copy_from_slice(KTP_CRYPTO_MAGIC);
+    header[4] = KTP_CRYPTO_VERSION;
+    header[5] = direction.id();
+    header[6..14].copy_from_slice(&sequence.to_be_bytes());
+    header[14..18].copy_from_slice(&(ciphertext_len as u32).to_be_bytes());
     header
 }
 
@@ -417,6 +428,7 @@ pub struct KtpEncryptedTcpStream {
     seal: KtpCryptoSeal,
     codec: KtpCryptoRecordCodec,
     read_buffer: Vec<u8>,
+    write_buffer: Vec<u8>,
 }
 
 impl KtpEncryptedTcpStream {
@@ -433,16 +445,18 @@ impl KtpEncryptedTcpStream {
             seal: KtpCryptoSeal::new(key.clone(), seal_direction),
             codec: KtpCryptoRecordCodec::new(key, open_direction, max_payload_len, max_buffer_len),
             read_buffer: vec![0u8; 16 * 1024],
+            write_buffer: Vec::with_capacity(
+                KTP_CRYPTO_HEADER_LEN + KTP_HEADER_LEN + 16 * 1024 + 16,
+            ),
         }
     }
 
     pub async fn send_frame(&mut self, frame: &KtpFrame) -> Result<(), KtpTcpTransportError> {
-        let record = self
-            .seal
-            .seal_frame(frame)
+        self.seal
+            .seal_frame_into(frame, &mut self.write_buffer)
             .map_err(KtpTcpTransportError::Crypto)?;
         self.stream
-            .write_all(&record)
+            .write_all(&self.write_buffer)
             .await
             .map_err(KtpTcpTransportError::Io)
     }

@@ -1,6 +1,6 @@
 use kelicloud_agent_rs::ktp::{
-    decode_frame, encode_frame, FrameLeg, FrameType, KtpError, KtpFrame, KTP_HEADER_LEN,
-    KTP_MAX_PAYLOAD_LEN, KTP_VERSION,
+    decode_frame, encode_frame, encode_frame_into, FrameLeg, FrameType, KtpError, KtpFrame,
+    KTP_HEADER_LEN, KTP_MAX_PAYLOAD_LEN, KTP_VERSION,
 };
 
 #[test]
@@ -40,6 +40,26 @@ fn preserves_session_data_payload_leg_flags_and_session_id() {
     assert_eq!(decoded.flags, 0b1010_0001);
     assert_eq!(decoded.session_id, 42);
     assert_eq!(decoded.payload, b"hello session");
+}
+
+#[test]
+fn encode_frame_into_reuses_output_buffer() {
+    let frame = KtpFrame {
+        frame_type: FrameType::SessionData,
+        leg: FrameLeg::Ingress,
+        flags: 0,
+        session_id: 4242,
+        payload: vec![0x7a; 64],
+    };
+    let expected = encode_frame(&frame).expect("encode frame");
+    let mut output = Vec::with_capacity(512);
+    let capacity = output.capacity();
+    output.extend_from_slice(b"stale bytes");
+
+    encode_frame_into(&frame, &mut output).expect("encode into reusable buffer");
+
+    assert_eq!(output, expected);
+    assert_eq!(output.capacity(), capacity);
 }
 
 #[test]

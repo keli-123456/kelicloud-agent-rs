@@ -98,6 +98,33 @@ fn crypto_record_round_trips_ktp_frame_and_hides_plaintext() {
 }
 
 #[test]
+fn crypto_seal_frame_into_reuses_output_buffer() {
+    let key = test_crypto_key();
+    let first = session_data(720, &[0x11; 64]);
+    let second = session_data(721, &[0x22; 64]);
+    let mut expected_seal = KtpCryptoSeal::new(key.clone(), KtpCryptoDirection::ClientToRelay);
+    let expected_first = expected_seal.seal_frame(&first).expect("seal first");
+    let expected_second = expected_seal.seal_frame(&second).expect("seal second");
+
+    let mut reusable_seal = KtpCryptoSeal::new(key, KtpCryptoDirection::ClientToRelay);
+    let mut record = Vec::with_capacity(512);
+    let capacity = record.capacity();
+    record.extend_from_slice(b"stale bytes");
+
+    reusable_seal
+        .seal_frame_into(&first, &mut record)
+        .expect("seal first into reusable buffer");
+    assert_eq!(record, expected_first);
+    assert_eq!(record.capacity(), capacity);
+
+    reusable_seal
+        .seal_frame_into(&second, &mut record)
+        .expect("seal second into reusable buffer");
+    assert_eq!(record, expected_second);
+    assert_eq!(record.capacity(), capacity);
+}
+
+#[test]
 fn crypto_record_rejects_tampered_ciphertext() {
     let key = test_crypto_key();
     let frame = session_data(701, b"secret");
