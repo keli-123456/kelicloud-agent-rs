@@ -15,6 +15,7 @@ Code:
 - Commit: `c86a832` for relay-loop diagnostic counters
 - Commit: `d1355da` for condition-wait relay prototype
 - Commit: `ca46474` for shared relay readiness notification
+- Commit: `23551b8` for production tunnel-data loop readiness scheduling
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -113,6 +114,17 @@ Runtime relay-loop shared-readiness wait:
 | 3 | 4 | 1024 B | 217.181 ms | 4.604 MiB/s | 4382 | 982 | 4379 | 3271 | 3093 | 3083 |
 | 3 | 4 | 16384 B | 187.193 ms | 85.473 MiB/s | 5062 | 933 | 5059 | 3850 | 3093 | 3084 |
 
+Production data-loop readiness integration check:
+
+```bash
+cargo build --release --bin kelicloud-agent-rs --bin ktp-e2e-bench
+./target/release/ktp-e2e-bench --diagnostics --relay-wait-timeout-us 100 --runs 3 --clients 4 --frames 256 --payload-bytes 1024
+```
+
+| Commit | Runs | Clients | Payload | Elapsed Median | Throughput Median | Relay Turns | Empty Turns | Wait Turns |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `23551b8` | 3 | 4 | 1024 B | 176.353 ms | 5.670 MiB/s | 4092 | 654 | 2833 |
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
@@ -153,12 +165,16 @@ Observations:
   waits only after both queues are empty. On the same Linux host, the 100
   microsecond 4-client small-frame repeated run completed without the earlier
   timeout and kept relay turns near the 10 microsecond prototype range.
+- Production KTP TCP tunnel-data sessions now opt into a short runtime-frame
+  wait before idle socket reads and use a short idle socket read timeout. The
+  default websocket path keeps the older blocking behavior because the runtime
+  scheduling hints default to disabled.
 
 Next evidence to collect:
 
 - Same benchmark on a release Linux host with CPU details captured.
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Latency distribution for small frames.
-- Integrating shared readiness into the production data carrier scheduling path,
-  not only the benchmark relay.
 - Before/after diagnostics for production data carrier scheduling changes.
+- Dedicated production data-carrier diagnostics that measure socket-read idle
+  wakeups and outbound frame latency, not only benchmark relay-loop counters.
