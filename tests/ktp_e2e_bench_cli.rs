@@ -168,3 +168,34 @@ fn ktp_e2e_bench_cli_reports_relay_diagnostics_when_requested() {
     assert!(stdout.contains("ingress_data_frames="));
     assert!(stdout.contains("egress_data_frames="));
 }
+
+#[test]
+fn ktp_e2e_bench_cli_reports_latency_percentiles_when_requested() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--latency",
+            "--clients",
+            "2",
+            "--frames",
+            "2",
+            "--payload-bytes",
+            "128",
+        ])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-e2e-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("rtt_micros_p50="));
+    assert!(stdout.contains("rtt_micros_p95="));
+    assert!(stdout.contains("rtt_micros_p99="));
+    assert!(stdout.contains("rtt_micros_max="));
+}

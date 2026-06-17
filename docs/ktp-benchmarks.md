@@ -131,6 +131,18 @@ cargo build --release --bin kelicloud-agent-rs --bin ktp-e2e-bench
 | `7760cd3` | 3 | 4 | 1024 B | 204.894 ms | 4.881 MiB/s | 4277 | 882 | 3137 |
 | `9590a4f` | 3 | 4 | 1024 B | 162.743 ms | 6.145 MiB/s | 4268 | 619 | 3010 |
 
+Runtime small-frame latency evidence:
+
+```bash
+./target/release/ktp-e2e-bench --latency --clients <N> --frames <N> --payload-bytes <BYTES>
+```
+
+The `--latency` flag records each client echo round trip inside the benchmark
+client threads and appends `rtt_micros_samples`, `rtt_micros_p50`,
+`rtt_micros_p95`, `rtt_micros_p99`, and `rtt_micros_max` to the report. Keep it
+off for raw throughput-only samples; turn it on when comparing small-frame
+interactive paths such as RDP-like forwarding.
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
@@ -191,12 +203,15 @@ Observations:
   enqueue timestamp and dequeue bucket accounting, but the run-to-run variance
   above still means this should be treated as a measurement point, not proof of
   a performance improvement.
+- `ktp-e2e-bench --latency` now captures client-observed round-trip percentiles
+  for small-frame paths. This gives us a lightweight local signal for
+  interactivity before moving to live canary traffic.
 
 Next evidence to collect:
 
 - Same benchmark on a release Linux host with CPU details captured.
 - Repeated multi-client runs with higher sample counts and percentile summaries.
-- Latency distribution for small frames.
+- Live small-frame latency distribution on a release Linux host.
 - Before/after diagnostics for production data carrier scheduling changes.
 - Live KTP canary logs with runtime wait and outbound queue dwell percentiles
   captured during real tunnel traffic.

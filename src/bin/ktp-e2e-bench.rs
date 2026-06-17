@@ -24,14 +24,16 @@ struct BenchConfig {
     frames: usize,
     payload_bytes: usize,
     diagnostics: bool,
+    latency: bool,
     relay_wait_timeout: Duration,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct BenchSample {
     elapsed_ms: f64,
     throughput_mib_s: f64,
     relay_stats: RelayStats,
+    latency_micros: Vec<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -71,11 +73,13 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
     let mut frames = 1024usize;
     let mut payload_bytes = 1024usize;
     let mut diagnostics = false;
+    let mut latency = false;
     let mut relay_wait_timeout = Duration::ZERO;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--diagnostics" => diagnostics = true,
+            "--latency" => latency = true,
             "--relay-wait-timeout-us" => {
                 let micros = parse_positive_usize(
                     next_value(&mut args, "--relay-wait-timeout-us")?,
@@ -106,6 +110,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
         frames,
         payload_bytes,
         diagnostics,
+        latency,
         relay_wait_timeout,
     })
 }
@@ -186,15 +191,25 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
 
     let client_threads = (0..config.clients)
         .map(|_| {
-            thread::spawn(move || -> std::io::Result<()> {
+            let collect_latency = config.latency;
+            thread::spawn(move || -> std::io::Result<Vec<u64>> {
                 let mut stream = connect_with_retry(("127.0.0.1", listen_port))?;
                 let payload = vec![0x5a; payload_bytes];
                 let mut response = vec![0u8; payload_bytes];
+                let mut latency_micros = if collect_latency {
+                    Vec::with_capacity(frames)
+                } else {
+                    Vec::new()
+                };
                 for _ in 0..frames {
+                    let round_started = collect_latency.then(Instant::now);
                     stream.write_all(&payload)?;
                     stream.read_exact(&mut response)?;
+                    if let Some(round_started) = round_started {
+                        latency_micros.push(round_started.elapsed().as_micros() as u64);
+                    }
                 }
-                Ok(())
+                Ok(latency_micros)
             })
         })
         .collect::<Vec<_>>();
@@ -208,10 +223,12 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
         config.relay_wait_timeout,
         frame_ready_notifier,
     )?;
+    let mut latency_micros = Vec::new();
     for client_thread in client_threads {
-        client_thread
+        let client_latencies = client_thread
             .join()
             .map_err(|_| "client thread panicked")??;
+        latency_micros.extend(client_latencies);
     }
     echo_thread.join().map_err(|_| "echo thread panicked")??;
     let elapsed = started.elapsed();
@@ -222,13 +239,14 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
         elapsed_ms: elapsed.as_secs_f64() * 1000.0,
         throughput_mib_s,
         relay_stats,
+        latency_micros,
     })
 }
 
 fn format_report(config: BenchConfig, samples: &[BenchSample]) -> String {
     let bytes = config.clients * config.frames * config.payload_bytes;
     if samples.len() == 1 {
-        let sample = samples[0];
+        let sample = &samples[0];
         return format!(
             "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}{}",
             config.runs,
@@ -238,7 +256,7 @@ fn format_report(config: BenchConfig, samples: &[BenchSample]) -> String {
             bytes,
             sample.elapsed_ms,
             sample.throughput_mib_s,
-            diagnostics_suffix(config, samples)
+            latency_suffix(config, samples) + &diagnostics_suffix(config, samples)
         );
     }
 
@@ -266,7 +284,28 @@ fn format_report(config: BenchConfig, samples: &[BenchSample]) -> String {
         throughput_values[0],
         median(&throughput_values),
         throughput_values[throughput_values.len() - 1],
-        diagnostics_suffix(config, samples)
+        latency_suffix(config, samples) + &diagnostics_suffix(config, samples)
+    )
+}
+
+fn latency_suffix(config: BenchConfig, samples: &[BenchSample]) -> String {
+    if !config.latency {
+        return String::new();
+    }
+    let mut values = samples
+        .iter()
+        .flat_map(|sample| sample.latency_micros.iter().copied())
+        .collect::<Vec<_>>();
+    let Some(stats) = LatencyStats::from_samples(&mut values) else {
+        return " rtt_micros_samples=0".to_string();
+    };
+    format!(
+        " rtt_micros_samples={} rtt_micros_p50={} rtt_micros_p95={} rtt_micros_p99={} rtt_micros_max={}",
+        values.len(),
+        stats.p50,
+        stats.p95,
+        stats.p99,
+        stats.max
     )
 }
 
@@ -305,6 +344,35 @@ fn median(sorted_values: &[f64]) -> f64 {
     } else {
         sorted_values[middle]
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LatencyStats {
+    p50: u64,
+    p95: u64,
+    p99: u64,
+    max: u64,
+}
+
+impl LatencyStats {
+    fn from_samples(values: &mut [u64]) -> Option<Self> {
+        if values.is_empty() {
+            return None;
+        }
+        values.sort_unstable();
+        Some(Self {
+            p50: percentile_nearest_rank(values, 50),
+            p95: percentile_nearest_rank(values, 95),
+            p99: percentile_nearest_rank(values, 99),
+            max: *values.last().expect("non-empty latency values"),
+        })
+    }
+}
+
+fn percentile_nearest_rank(sorted_values: &[u64], percentile: usize) -> u64 {
+    let rank = (sorted_values.len() * percentile).div_ceil(100);
+    let index = rank.saturating_sub(1).min(sorted_values.len() - 1);
+    sorted_values[index]
 }
 
 fn new_bench_runtime(
@@ -446,5 +514,5 @@ fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
+    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--latency] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
 }
