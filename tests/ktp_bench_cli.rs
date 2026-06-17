@@ -45,7 +45,12 @@ fn ktp_tunnel_bench_cli_can_average_multiple_runs() {
     assert!(stdout.contains("frames=2"));
     assert!(stdout.contains("bytes_per_run=256"));
     assert!(stdout.contains("total_bytes=512"));
-    assert!(stdout.contains("throughput_mib_s="));
+    assert!(stdout.contains("elapsed_ms_min="));
+    assert!(stdout.contains("elapsed_ms_median="));
+    assert!(stdout.contains("elapsed_ms_max="));
+    assert!(stdout.contains("throughput_mib_s_min="));
+    assert!(stdout.contains("throughput_mib_s_median="));
+    assert!(stdout.contains("throughput_mib_s_max="));
 }
 
 #[test]
@@ -54,6 +59,8 @@ fn tunnel_relay_smoke_script_runs_ktp_tunnel_bench() {
         .expect("smoke script should be readable");
 
     assert!(script.contains("cargo run --bin ktp-tunnel-bench"));
+    assert!(script.contains("KTP_SMOKE_CARRIER_RUNS"));
     assert!(script.contains("--frames 4096"));
     assert!(script.contains("--payload-bytes 16384"));
+    assert!(script.contains("--runs \"${KTP_SMOKE_CARRIER_RUNS}\""));
 }

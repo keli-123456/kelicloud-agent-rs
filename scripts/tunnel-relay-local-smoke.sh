@@ -3,6 +3,7 @@ set -euo pipefail
 
 KTP_SMOKE_POLICY_GATE="${KTP_SMOKE_POLICY_GATE:-0}"
 KTP_SMOKE_POLICY_CSV="${KTP_SMOKE_POLICY_CSV:-${TMPDIR:-/tmp}/ktp-relay-policy-smoke.csv}"
+KTP_SMOKE_CARRIER_RUNS="${KTP_SMOKE_CARRIER_RUNS:-3}"
 
 echo "== tunnel preflight checks =="
 cargo test --test tunnel_preflight -- --nocapture
@@ -16,7 +17,7 @@ cargo test --test tunnel_async_runtime async_runtime_handles_100_concurrent_loop
 echo "== encrypted ktp tcp carrier performance gate =="
 cargo test --test ktp_transport encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips -- --nocapture
 cargo test --test ktp_transport encrypted_tcp_frame_relay_handles_100_bidirectional_rounds -- --nocapture
-cargo run --bin ktp-tunnel-bench -- --frames 4096 --payload-bytes 16384
+cargo run --bin ktp-tunnel-bench -- --frames 4096 --payload-bytes 16384 --runs "${KTP_SMOKE_CARRIER_RUNS}"
 cargo run --bin ktp-e2e-bench -- --latency --frames 16 --payload-bytes 1024
 cargo run --bin ktp-e2e-bench -- --profile rdp-like --diagnostics --latency --relay-wait-timeout-us 100 --clients 2 --frames 16 --payload-bytes 8192
 

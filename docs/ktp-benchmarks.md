@@ -782,6 +782,17 @@ clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=64 through
 KTP_SMOKE_POLICY_GATE=1 bash scripts/tunnel-relay-local-smoke.sh completed successfully.
 ```
 
+Encrypted carrier repeated-run statistics:
+
+- `ktp-tunnel-bench --runs N` now reports per-run min/median/max elapsed time
+  and throughput when `N > 1`, matching the evidence shape used by
+  `ktp-e2e-bench`.
+- `scripts/tunnel-relay-local-smoke.sh` runs the encrypted TCP carrier bench
+  with `KTP_SMOKE_CARRIER_RUNS=3` by default. The value can be overridden for a
+  longer local soak without changing the script.
+- Single-run output still keeps the compact `elapsed_ms` and
+  `throughput_mib_s` fields for quick developer checks.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:

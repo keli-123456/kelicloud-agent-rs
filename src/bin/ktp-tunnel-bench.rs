@@ -105,23 +105,53 @@ async fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
     }
     let bytes_per_run = config.frames * config.payload_bytes;
     let total_bytes = samples.iter().map(|sample| sample.bytes).sum::<usize>();
-    let total_elapsed = samples
+    if samples.len() == 1 {
+        let sample = samples
+            .first()
+            .expect("single-run benchmark should have one sample");
+        let elapsed_secs = sample.elapsed.as_secs_f64().max(0.000_001);
+        let throughput_mib_s = (sample.bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs;
+        return Ok(format!(
+            "ktp_tunnel_bench carrier=encrypted_tcp direction=client_to_relay runs={} frames={} payload_bytes={} bytes={} bytes_per_run={} total_bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
+            config.runs,
+            config.frames,
+            config.payload_bytes,
+            bytes_per_run,
+            bytes_per_run,
+            total_bytes,
+            sample.elapsed.as_secs_f64() * 1000.0,
+            throughput_mib_s
+        ));
+    }
+
+    let mut elapsed_values = samples
         .iter()
-        .map(|sample| sample.elapsed)
-        .fold(Duration::ZERO, |total, elapsed| total + elapsed);
-    let elapsed_secs = total_elapsed.as_secs_f64().max(0.000_001);
-    let throughput_mib_s = (total_bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs;
+        .map(|sample| sample.elapsed.as_secs_f64() * 1000.0)
+        .collect::<Vec<_>>();
+    elapsed_values.sort_by(f64::total_cmp);
+    let mut throughput_values = samples
+        .iter()
+        .map(|sample| {
+            let elapsed_secs = sample.elapsed.as_secs_f64().max(0.000_001);
+            (sample.bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs
+        })
+        .collect::<Vec<_>>();
+    throughput_values.sort_by(f64::total_cmp);
 
     Ok(format!(
-        "ktp_tunnel_bench carrier=encrypted_tcp direction=client_to_relay runs={} frames={} payload_bytes={} bytes={} bytes_per_run={} total_bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}",
+        "ktp_tunnel_bench carrier=encrypted_tcp direction=client_to_relay runs={} frames={} payload_bytes={} bytes={} bytes_per_run={} total_bytes={} elapsed_ms_min={:.3} elapsed_ms_median={:.3} elapsed_ms_max={:.3} throughput_mib_s_min={:.3} throughput_mib_s_median={:.3} throughput_mib_s_max={:.3}",
         config.runs,
         config.frames,
         config.payload_bytes,
         bytes_per_run,
         bytes_per_run,
         total_bytes,
-        total_elapsed.as_secs_f64() * 1000.0,
-        throughput_mib_s
+        elapsed_values[0],
+        median(&elapsed_values),
+        elapsed_values[elapsed_values.len() - 1],
+        throughput_values[0],
+        median(&throughput_values),
+        throughput_values[throughput_values.len() - 1],
     ))
 }
 
@@ -179,4 +209,13 @@ async fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
 
 fn print_usage() {
     eprintln!("usage: ktp-tunnel-bench [--frames N] [--payload-bytes BYTES] [--runs N]");
+}
+
+fn median(sorted_values: &[f64]) -> f64 {
+    let middle = sorted_values.len() / 2;
+    if sorted_values.len() % 2 == 0 {
+        (sorted_values[middle - 1] + sorted_values[middle]) / 2.0
+    } else {
+        sorted_values[middle]
+    }
 }
