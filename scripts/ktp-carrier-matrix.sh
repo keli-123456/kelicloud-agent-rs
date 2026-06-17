@@ -14,7 +14,7 @@ DRY_RUN="${KTP_CARRIER_MATRIX_DRY_RUN:-0}"
 CSV_PATH="${KTP_CARRIER_MATRIX_CSV:-}"
 
 csv_header() {
-  printf '%s\n' "direction,runs,frames,payload_bytes,write_batch_frames,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max"
+  printf '%s\n' "direction,runs,frames,payload_bytes,write_batch_frames,write_batch_reused,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max"
 }
 
 metric_value() {
@@ -51,7 +51,7 @@ required_metric_value() {
 write_csv_row() {
   local output="$1"
   local direction frames payload_bytes
-  local write_batch_frames read_batch_frames
+  local write_batch_frames write_batch_reused read_batch_frames
   local elapsed_ms_min elapsed_ms_median elapsed_ms_max
   local throughput_mib_s_min throughput_mib_s_median throughput_mib_s_max
 
@@ -61,6 +61,10 @@ write_csv_row() {
   write_batch_frames="$(metric_value "${output}" write_batch_frames)"
   if [[ -z "${write_batch_frames}" ]]; then
     write_batch_frames="0"
+  fi
+  write_batch_reused="$(metric_value "${output}" write_batch_reused)"
+  if [[ -z "${write_batch_reused}" ]]; then
+    write_batch_reused="0"
   fi
   read_batch_frames="$(metric_value "${output}" read_batch_frames)"
   if [[ -z "${read_batch_frames}" ]]; then
@@ -73,12 +77,13 @@ write_csv_row() {
   throughput_mib_s_median="$(required_metric_value "${output}" throughput_mib_s_median throughput_mib_s)"
   throughput_mib_s_max="$(required_metric_value "${output}" throughput_mib_s_max throughput_mib_s)"
 
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "${direction}" \
     "${RUNS}" \
     "${frames}" \
     "${payload_bytes}" \
     "${write_batch_frames}" \
+    "${write_batch_reused}" \
     "${read_batch_frames}" \
     "${elapsed_ms_min}" \
     "${elapsed_ms_median}" \

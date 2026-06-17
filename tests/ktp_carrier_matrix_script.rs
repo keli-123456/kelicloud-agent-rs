@@ -18,6 +18,7 @@ fn ktp_carrier_matrix_script_sweeps_directions_with_repeatable_defaults() {
     assert!(script.contains("KTP_CARRIER_MATRIX_CSV"));
     assert!(script.contains("write_csv_row"));
     assert!(script.contains("write_batch_frames"));
+    assert!(script.contains("write_batch_reused"));
     assert!(script.contains("read_batch_frames"));
     assert!(script.contains("throughput_mib_s_median"));
 }
@@ -118,13 +119,15 @@ fn ktp_carrier_matrix_script_writes_csv_from_bench_output_on_linux() {
     );
     let csv = std::fs::read_to_string(&csv_path).expect("CSV should be written");
     assert!(csv.contains(
-        "direction,runs,frames,payload_bytes,write_batch_frames,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max"
+        "direction,runs,frames,payload_bytes,write_batch_frames,write_batch_reused,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max"
     ));
-    assert!(csv.contains("client_to_relay,3,8,1024,0,0,8.100,8.200,8.300,8.400,8.500,8.600"));
-    assert!(csv
-        .contains("client_to_relay_batch_write,3,8,1024,64,0,8.100,8.200,8.300,8.400,8.500,8.600"));
-    assert!(csv
-        .contains("relay_to_client_batch_read,3,8,1024,0,64,8.100,8.200,8.300,8.400,8.500,8.600"));
+    assert!(csv.contains("client_to_relay,3,8,1024,0,0,0,8.100,8.200,8.300,8.400,8.500,8.600"));
+    assert!(csv.contains(
+        "client_to_relay_batch_write,3,8,1024,64,1,0,8.100,8.200,8.300,8.400,8.500,8.600"
+    ));
+    assert!(csv.contains(
+        "relay_to_client_batch_read,3,8,1024,0,0,64,8.100,8.200,8.300,8.400,8.500,8.600"
+    ));
 }
 
 fn unique_temp_path(prefix: &str, extension: &str) -> std::path::PathBuf {
@@ -194,7 +197,7 @@ report_direction="${direction//-/_}"
 read_batch=""
 write_batch=""
 if [[ "$direction" == "client-to-relay-batch-write" ]]; then
-  write_batch=" write_batch_frames=64"
+  write_batch=" write_batch_frames=64 write_batch_reused=1"
 fi
 if [[ "$direction" == "relay-to-client-batch-read" ]]; then
   read_batch=" read_batch_frames=64"
