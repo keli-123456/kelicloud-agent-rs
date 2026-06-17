@@ -884,6 +884,9 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
         runtime_wait_hits: 2,
         runtime_wait_elapsed_micros_total: 120,
         runtime_wait_elapsed_micros_max: 70,
+        runtime_wait_elapsed_p50_micros: 50,
+        runtime_wait_elapsed_p95_micros: 100,
+        runtime_wait_elapsed_p99_micros: 100,
         outbound_runtime_frames: 9,
         socket_idle_reads: 4,
         socket_idle_empty_reads: 1,
@@ -894,7 +897,7 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
     assert!(snapshot.has_activity());
     assert_eq!(
         line,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 outbound_runtime_frames=9 socket_idle_reads=4 socket_idle_empty_reads=1"
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 socket_idle_reads=4 socket_idle_empty_reads=1"
     );
     assert!(!line.contains("token"));
 }

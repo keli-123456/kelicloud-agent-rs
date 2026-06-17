@@ -115,6 +115,26 @@ pub struct TunnelDataRuleFailure {
     pub error: String,
 }
 
+const RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS: [u64; 17] = [
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1_000,
+    2_500,
+    5_000,
+    10_000,
+    25_000,
+    50_000,
+    100_000,
+    250_000,
+    500_000,
+    1_000_000,
+    u64::MAX,
+];
+
 #[derive(Clone, Debug, Default)]
 pub struct SharedTunnelDataDiagnostics {
     inner: Arc<TunnelDataDiagnosticsInner>,
@@ -126,6 +146,7 @@ struct TunnelDataDiagnosticsInner {
     runtime_wait_hits: AtomicU64,
     runtime_wait_elapsed_micros_total: AtomicU64,
     runtime_wait_elapsed_micros_max: AtomicU64,
+    runtime_wait_elapsed_micros_buckets: [AtomicU64; RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS.len()],
     outbound_runtime_frames: AtomicU64,
     socket_idle_reads: AtomicU64,
     socket_idle_empty_reads: AtomicU64,
@@ -137,6 +158,9 @@ pub struct TunnelDataDiagnosticsSnapshot {
     pub runtime_wait_hits: u64,
     pub runtime_wait_elapsed_micros_total: u64,
     pub runtime_wait_elapsed_micros_max: u64,
+    pub runtime_wait_elapsed_p50_micros: u64,
+    pub runtime_wait_elapsed_p95_micros: u64,
+    pub runtime_wait_elapsed_p99_micros: u64,
     pub outbound_runtime_frames: u64,
     pub socket_idle_reads: u64,
     pub socket_idle_empty_reads: u64,
@@ -148,8 +172,19 @@ impl SharedTunnelDataDiagnostics {
     }
 
     pub fn snapshot(&self) -> TunnelDataDiagnosticsSnapshot {
+        let runtime_wait_attempts = self.inner.runtime_wait_attempts.load(Ordering::Relaxed);
+        let mut runtime_wait_elapsed_micros_buckets =
+            [0u64; RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS.len()];
+        for (index, bucket) in self
+            .inner
+            .runtime_wait_elapsed_micros_buckets
+            .iter()
+            .enumerate()
+        {
+            runtime_wait_elapsed_micros_buckets[index] = bucket.load(Ordering::Relaxed);
+        }
         TunnelDataDiagnosticsSnapshot {
-            runtime_wait_attempts: self.inner.runtime_wait_attempts.load(Ordering::Relaxed),
+            runtime_wait_attempts,
             runtime_wait_hits: self.inner.runtime_wait_hits.load(Ordering::Relaxed),
             runtime_wait_elapsed_micros_total: self
                 .inner
@@ -159,6 +194,21 @@ impl SharedTunnelDataDiagnostics {
                 .inner
                 .runtime_wait_elapsed_micros_max
                 .load(Ordering::Relaxed),
+            runtime_wait_elapsed_p50_micros: runtime_wait_elapsed_percentile(
+                &runtime_wait_elapsed_micros_buckets,
+                runtime_wait_attempts,
+                50,
+            ),
+            runtime_wait_elapsed_p95_micros: runtime_wait_elapsed_percentile(
+                &runtime_wait_elapsed_micros_buckets,
+                runtime_wait_attempts,
+                95,
+            ),
+            runtime_wait_elapsed_p99_micros: runtime_wait_elapsed_percentile(
+                &runtime_wait_elapsed_micros_buckets,
+                runtime_wait_attempts,
+                99,
+            ),
             outbound_runtime_frames: self.inner.outbound_runtime_frames.load(Ordering::Relaxed),
             socket_idle_reads: self.inner.socket_idle_reads.load(Ordering::Relaxed),
             socket_idle_empty_reads: self.inner.socket_idle_empty_reads.load(Ordering::Relaxed),
@@ -183,6 +233,9 @@ impl SharedTunnelDataDiagnostics {
             .runtime_wait_elapsed_micros_total
             .fetch_add(elapsed_micros, Ordering::Relaxed);
         update_atomic_max(&self.inner.runtime_wait_elapsed_micros_max, elapsed_micros);
+        self.inner.runtime_wait_elapsed_micros_buckets
+            [runtime_wait_elapsed_bucket_index(elapsed_micros)]
+        .fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_socket_idle_read(&self) {
@@ -208,15 +261,44 @@ impl TunnelDataDiagnosticsSnapshot {
 
 pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) -> String {
     format!(
-        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} outbound_runtime_frames={} socket_idle_reads={} socket_idle_empty_reads={}",
+        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} socket_idle_reads={} socket_idle_empty_reads={}",
         snapshot.runtime_wait_attempts,
         snapshot.runtime_wait_hits,
         snapshot.runtime_wait_elapsed_micros_total,
         snapshot.runtime_wait_elapsed_micros_max,
+        snapshot.runtime_wait_elapsed_p50_micros,
+        snapshot.runtime_wait_elapsed_p95_micros,
+        snapshot.runtime_wait_elapsed_p99_micros,
         snapshot.outbound_runtime_frames,
         snapshot.socket_idle_reads,
         snapshot.socket_idle_empty_reads
     )
+}
+
+fn runtime_wait_elapsed_bucket_index(elapsed_micros: u64) -> usize {
+    RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS
+        .iter()
+        .position(|bucket| elapsed_micros <= *bucket)
+        .unwrap_or(RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS.len() - 1)
+}
+
+fn runtime_wait_elapsed_percentile(
+    buckets: &[u64; RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS.len()],
+    total: u64,
+    percentile: u64,
+) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+    let rank = ((total * percentile).saturating_add(99) / 100).max(1);
+    let mut cumulative = 0u64;
+    for (index, count) in buckets.iter().enumerate() {
+        cumulative = cumulative.saturating_add(*count);
+        if cumulative >= rank {
+            return RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS[index];
+        }
+    }
+    RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS[RUNTIME_WAIT_ELAPSED_MICROS_BUCKETS.len() - 1]
 }
 
 fn update_atomic_max(target: &AtomicU64, candidate: u64) {
@@ -568,8 +650,9 @@ fn is_idle_read_error(kind: ErrorKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_idle_read_error;
+    use super::{is_idle_read_error, SharedTunnelDataDiagnostics};
     use std::io::ErrorKind;
+    use std::time::Duration;
 
     #[test]
     fn data_read_timeout_errors_are_idle_but_interrupted_retries() {
@@ -577,6 +660,21 @@ mod tests {
         assert!(is_idle_read_error(ErrorKind::WouldBlock));
         assert!(!is_idle_read_error(ErrorKind::Interrupted));
         assert!(!is_idle_read_error(ErrorKind::ConnectionReset));
+    }
+
+    #[test]
+    fn diagnostics_snapshot_reports_runtime_wait_latency_percentiles() {
+        let diagnostics = SharedTunnelDataDiagnostics::new();
+        diagnostics.record_runtime_wait(Duration::from_micros(8), 1);
+        diagnostics.record_runtime_wait(Duration::from_micros(90), 1);
+        diagnostics.record_runtime_wait(Duration::from_micros(900), 1);
+        diagnostics.record_runtime_wait(Duration::from_micros(9_000), 1);
+
+        let snapshot = diagnostics.snapshot();
+
+        assert_eq!(snapshot.runtime_wait_elapsed_p50_micros, 100);
+        assert_eq!(snapshot.runtime_wait_elapsed_p95_micros, 10_000);
+        assert_eq!(snapshot.runtime_wait_elapsed_p99_micros, 10_000);
     }
 }
 
