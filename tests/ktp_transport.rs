@@ -6,7 +6,9 @@ use kelicloud_agent_rs::ktp_transport::{
     KtpCryptoDirection, KtpCryptoKey, KtpCryptoOpen, KtpCryptoRecordCodec, KtpCryptoSeal,
     KtpEncryptedTcpFrameRelay, KtpEncryptedTcpStream, KtpStreamCodec, KtpStreamCodecError,
 };
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::time::timeout;
 
 #[test]
 fn stream_codec_decodes_frame_split_across_tcp_chunks() {
@@ -513,6 +515,74 @@ fn encrypted_tcp_frame_relay_handles_100_bidirectional_rounds() {
         left_task.await.expect("left task");
         right_task.await.expect("right task");
         relay_task.await.expect("relay task");
+    });
+}
+
+#[test]
+fn encrypted_tcp_frame_relay_drains_ready_batches_per_round() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let relay_key = key.clone();
+        let relay_task = tokio::spawn(async move {
+            let (left_stream, _) = listener.accept().await.expect("accept left");
+            let (right_stream, _) = listener.accept().await.expect("accept right");
+            let left = relay_side_stream(left_stream, relay_key.clone());
+            let right = relay_side_stream(right_stream, relay_key);
+            let mut relay = KtpEncryptedTcpFrameRelay::new(left, right);
+            relay
+                .relay_bidirectional_rounds(1)
+                .await
+                .expect("relay one batch round")
+        });
+
+        let mut left_client = connect_encrypted_client(addr, key.clone()).await;
+        let mut right_client = connect_encrypted_client(addr, key).await;
+        left_client
+            .send_frames(&[
+                session_data(2300, b"left-1"),
+                session_data(2301, b"left-2"),
+                session_data(2302, b"left-3"),
+            ])
+            .await
+            .expect("left sends batch");
+        right_client
+            .send_frames(&[
+                session_data(3300, b"right-1"),
+                session_data(3301, b"right-2"),
+                session_data(3302, b"right-3"),
+            ])
+            .await
+            .expect("right sends batch");
+
+        let stats = relay_task.await.expect("relay task");
+        assert_eq!(stats.frames_left_to_right, 3);
+        assert_eq!(stats.frames_right_to_left, 3);
+
+        for expected_session_id in 2300..=2302 {
+            let frame = timeout(Duration::from_secs(1), right_client.next_frame())
+                .await
+                .expect("right client should receive forwarded frame")
+                .expect("right client frame should decode");
+            assert_eq!(frame.session_id, expected_session_id);
+        }
+        for expected_session_id in 3300..=3302 {
+            let frame = timeout(Duration::from_secs(1), left_client.next_frame())
+                .await
+                .expect("left client should receive forwarded frame")
+                .expect("left client frame should decode");
+            assert_eq!(frame.session_id, expected_session_id);
+        }
     });
 }
 

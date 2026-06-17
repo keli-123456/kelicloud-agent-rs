@@ -345,6 +345,17 @@ impl KtpCryptoRecordCodec {
         self.buffer.drain(..record_len);
         Ok(Some(frame))
     }
+
+    fn next_frames(&mut self, max_frames: usize) -> Result<Vec<KtpFrame>, KtpCryptoError> {
+        let mut frames = Vec::new();
+        while frames.len() < max_frames {
+            let Some(frame) = self.next_frame()? else {
+                break;
+            };
+            frames.push(frame);
+        }
+        Ok(frames)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -509,6 +520,37 @@ impl KtpEncryptedTcpStream {
                 .map_err(KtpTcpTransportError::Crypto)?;
         }
     }
+
+    async fn next_frames(
+        &mut self,
+        max_frames: usize,
+    ) -> Result<Vec<KtpFrame>, KtpTcpTransportError> {
+        if max_frames == 0 {
+            return Ok(Vec::new());
+        }
+
+        loop {
+            let frames = self
+                .codec
+                .next_frames(max_frames)
+                .map_err(KtpTcpTransportError::Crypto)?;
+            if !frames.is_empty() {
+                return Ok(frames);
+            }
+
+            let read = self
+                .stream
+                .read(&mut self.read_buffer)
+                .await
+                .map_err(KtpTcpTransportError::Io)?;
+            if read == 0 {
+                return Err(KtpTcpTransportError::Closed);
+            }
+            self.codec
+                .push(&self.read_buffer[..read])
+                .map_err(KtpTcpTransportError::Crypto)?;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -522,6 +564,8 @@ pub struct KtpEncryptedTcpFrameRelay {
     right: KtpEncryptedTcpStream,
     stats: KtpEncryptedTcpRelayStats,
 }
+
+const KTP_RELAY_BATCH_FRAMES: usize = 64;
 
 impl KtpEncryptedTcpFrameRelay {
     pub fn new(left: KtpEncryptedTcpStream, right: KtpEncryptedTcpStream) -> Self {
@@ -550,13 +594,35 @@ impl KtpEncryptedTcpFrameRelay {
         Ok(frame)
     }
 
+    async fn relay_next_left_to_right_batch(
+        &mut self,
+        max_frames: usize,
+    ) -> Result<Vec<KtpFrame>, KtpTcpTransportError> {
+        let frames = self.left.next_frames(max_frames).await?;
+        self.right.send_frames(&frames).await?;
+        self.stats.frames_left_to_right += frames.len() as u64;
+        Ok(frames)
+    }
+
+    async fn relay_next_right_to_left_batch(
+        &mut self,
+        max_frames: usize,
+    ) -> Result<Vec<KtpFrame>, KtpTcpTransportError> {
+        let frames = self.right.next_frames(max_frames).await?;
+        self.left.send_frames(&frames).await?;
+        self.stats.frames_right_to_left += frames.len() as u64;
+        Ok(frames)
+    }
+
     pub async fn relay_bidirectional_rounds(
         &mut self,
         rounds: usize,
     ) -> Result<KtpEncryptedTcpRelayStats, KtpTcpTransportError> {
         for _ in 0..rounds {
-            self.relay_next_left_to_right().await?;
-            self.relay_next_right_to_left().await?;
+            self.relay_next_left_to_right_batch(KTP_RELAY_BATCH_FRAMES)
+                .await?;
+            self.relay_next_right_to_left_batch(KTP_RELAY_BATCH_FRAMES)
+                .await?;
         }
         Ok(self.stats)
     }
