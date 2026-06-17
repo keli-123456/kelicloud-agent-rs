@@ -26,6 +26,7 @@ struct BenchSample {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BenchDirection {
     ClientToRelay,
+    ClientToRelayBatchWrite,
     RelayToClientBatchRead,
 }
 
@@ -33,19 +34,22 @@ impl BenchDirection {
     fn parse(value: &str) -> BenchResult<Self> {
         match value {
             "client-to-relay" => Ok(Self::ClientToRelay),
+            "client-to-relay-batch-write" => Ok(Self::ClientToRelayBatchWrite),
             "relay-to-client-batch-read" => Ok(Self::RelayToClientBatchRead),
-            _ => Err("--direction must be client-to-relay or relay-to-client-batch-read".into()),
+            _ => Err("--direction must be client-to-relay, client-to-relay-batch-write, or relay-to-client-batch-read".into()),
         }
     }
 
     fn report_value(self) -> &'static str {
         match self {
             Self::ClientToRelay => "client_to_relay",
+            Self::ClientToRelayBatchWrite => "client_to_relay_batch_write",
             Self::RelayToClientBatchRead => "relay_to_client_batch_read",
         }
     }
 }
 
+const WRITE_BATCH_FRAMES: usize = 64;
 const READ_BATCH_FRAMES: usize = 64;
 
 fn main() {
@@ -154,7 +158,7 @@ async fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
             bytes_per_run,
             bytes_per_run,
             total_bytes,
-            batch_read_suffix(config.direction),
+            batch_direction_suffix(config.direction),
             sample.elapsed.as_secs_f64() * 1000.0,
             throughput_mib_s
         ));
@@ -183,7 +187,7 @@ async fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
         bytes_per_run,
         bytes_per_run,
         total_bytes,
-        batch_read_suffix(config.direction),
+        batch_direction_suffix(config.direction),
         elapsed_values[0],
         median(&elapsed_values),
         elapsed_values[elapsed_values.len() - 1],
@@ -196,6 +200,9 @@ async fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
 async fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
     match config.direction {
         BenchDirection::ClientToRelay => run_client_to_relay_benchmark_once(config).await,
+        BenchDirection::ClientToRelayBatchWrite => {
+            run_client_to_relay_batch_write_benchmark_once(config).await
+        }
         BenchDirection::RelayToClientBatchRead => {
             run_relay_to_client_batch_read_benchmark_once(config).await
         }
@@ -247,6 +254,64 @@ async fn run_client_to_relay_benchmark_once(config: BenchConfig) -> BenchResult<
     let started = Instant::now();
     for _ in 0..config.frames {
         client.send_frame(&frame).await?;
+    }
+    drop(client);
+    let bytes = server.await??;
+    let elapsed = started.elapsed();
+    Ok(BenchSample { bytes, elapsed })
+}
+
+async fn run_client_to_relay_batch_write_benchmark_once(
+    config: BenchConfig,
+) -> BenchResult<BenchSample> {
+    let key = KtpCryptoKey::from_bytes([0x42; 32]);
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server_key = key.clone();
+    let frames = config.frames;
+    let payload_bytes = config.payload_bytes;
+
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut stream = KtpEncryptedTcpStream::from_stream(
+            stream,
+            server_key,
+            KtpCryptoDirection::RelayToClient,
+            KtpCryptoDirection::ClientToRelay,
+            KTP_MAX_PAYLOAD_LEN,
+            4 * 1024 * 1024,
+        );
+        let mut bytes = 0usize;
+        for _ in 0..frames {
+            let frame = stream.next_frame().await?;
+            bytes += frame.payload.len();
+        }
+        BenchResult::Ok(bytes)
+    });
+
+    let stream = TcpStream::connect(address).await?;
+    let mut client = KtpEncryptedTcpStream::from_stream(
+        stream,
+        key,
+        KtpCryptoDirection::ClientToRelay,
+        KtpCryptoDirection::RelayToClient,
+        KTP_MAX_PAYLOAD_LEN,
+        4 * 1024 * 1024,
+    );
+    let frame = KtpFrame {
+        frame_type: FrameType::SessionData,
+        leg: FrameLeg::Ingress,
+        flags: 0,
+        session_id: 1,
+        payload: vec![0x5a; payload_bytes],
+    };
+    let started = Instant::now();
+    let mut remaining = config.frames;
+    while remaining > 0 {
+        let chunk = remaining.min(WRITE_BATCH_FRAMES);
+        let batch = (0..chunk).map(|_| frame.clone()).collect::<Vec<_>>();
+        client.send_frames(&batch).await?;
+        remaining -= chunk;
     }
     drop(client);
     let bytes = server.await??;
@@ -320,7 +385,7 @@ async fn run_relay_to_client_batch_read_benchmark_once(
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-tunnel-bench [--direction client-to-relay|relay-to-client-batch-read] [--frames N] [--payload-bytes BYTES] [--runs N]");
+    eprintln!("usage: ktp-tunnel-bench [--direction client-to-relay|client-to-relay-batch-write|relay-to-client-batch-read] [--frames N] [--payload-bytes BYTES] [--runs N]");
 }
 
 fn median(sorted_values: &[f64]) -> f64 {
@@ -332,9 +397,12 @@ fn median(sorted_values: &[f64]) -> f64 {
     }
 }
 
-fn batch_read_suffix(direction: BenchDirection) -> String {
+fn batch_direction_suffix(direction: BenchDirection) -> String {
     match direction {
         BenchDirection::ClientToRelay => String::new(),
+        BenchDirection::ClientToRelayBatchWrite => {
+            format!(" write_batch_frames={WRITE_BATCH_FRAMES}")
+        }
         BenchDirection::RelayToClientBatchRead => {
             format!(" read_batch_frames={READ_BATCH_FRAMES}")
         }

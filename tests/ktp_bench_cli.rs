@@ -87,6 +87,39 @@ fn ktp_tunnel_bench_cli_reports_relay_to_client_batch_read() {
 }
 
 #[test]
+fn ktp_tunnel_bench_cli_reports_client_to_relay_batch_write() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-tunnel-bench")
+        .expect("ktp-tunnel-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--direction",
+            "client-to-relay-batch-write",
+            "--frames",
+            "4",
+            "--payload-bytes",
+            "128",
+        ])
+        .output()
+        .expect("ktp-tunnel-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-tunnel-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ktp_tunnel_bench"));
+    assert!(stdout.contains("direction=client_to_relay_batch_write"));
+    assert!(stdout.contains("write_batch_frames=64"));
+    assert!(stdout.contains("frames=4"));
+    assert!(stdout.contains("bytes=512"));
+    assert!(stdout.contains("elapsed_ms="));
+    assert!(stdout.contains("throughput_mib_s="));
+}
+
+#[test]
 fn tunnel_relay_smoke_script_runs_ktp_tunnel_bench() {
     let script = std::fs::read_to_string("scripts/tunnel-relay-local-smoke.sh")
         .expect("smoke script should be readable");

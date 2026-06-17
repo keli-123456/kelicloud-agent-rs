@@ -839,21 +839,27 @@ KTP_CARRIER_MATRIX_CSV=/tmp/ktp-carrier-matrix.csv \
 
 The matrix runs `ktp-tunnel-bench` in release mode across carrier directions,
 frame counts, and payload sizes. It writes a CSV with direction, run count,
-payload shape, optional `read_batch_frames`, and min/median/max elapsed and
-throughput fields. Use this for carrier-layer before/after comparisons; keep
-runtime/RDP fairness comparisons in `scripts/ktp-relay-batch-matrix.sh`.
+payload shape, optional `write_batch_frames`, optional `read_batch_frames`, and
+min/median/max elapsed and throughput fields. The default direction sweep
+compares one-frame client writes, client-to-relay batch writes, and
+relay-to-client batch reads. Use this for carrier-layer before/after
+comparisons; keep runtime/RDP fairness comparisons in
+`scripts/ktp-relay-batch-matrix.sh`.
 
 Linux release smoke sample:
 
 ```text
-direction,runs,frames,payload_bytes,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max
-client_to_relay,2,64,1024,0,0.940,1.544,2.149,29.088,47.806,66.524
-relay_to_client_batch_read,2,64,1024,64,0.862,1.998,3.135,19.937,46.224,72.511
+direction,runs,frames,payload_bytes,write_batch_frames,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max
+client_to_relay,2,64,1024,0,0,0.955,1.124,1.293,48.329,56.895,65.461
+client_to_relay_batch_write,2,64,1024,64,0,1.044,1.190,1.335,46.808,53.337,59.866
+relay_to_client_batch_read,2,64,1024,0,64,0.415,0.656,0.896,69.729,110.159,150.589
 ```
 
 This sample was intentionally small so it can run as a quick release-mode
 verification. Larger matrices should raise frame counts, payload sizes, and run
-count before being used as tuning evidence.
+count before being used as tuning evidence. In this short run, the new
+client-to-relay batch-write direction was slightly slower than one-frame writes,
+so treat it as comparison coverage rather than a proven optimization.
 
 ## 2026-06-18 KTP Local Backend Smoke
 
