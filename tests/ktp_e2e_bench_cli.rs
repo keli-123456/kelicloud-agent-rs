@@ -171,6 +171,59 @@ fn ktp_e2e_bench_cli_reports_relay_diagnostics_when_requested() {
     assert!(stdout.contains("egress_batches="));
     assert!(stdout.contains("ingress_max_batch_frames="));
     assert!(stdout.contains("egress_max_batch_frames="));
+    assert!(stdout.contains("relay_batch_frames=64"));
+}
+
+#[test]
+fn ktp_e2e_bench_cli_reports_custom_relay_batch_frames_when_requested() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--diagnostics",
+            "--relay-batch-frames",
+            "2",
+            "--clients",
+            "1",
+            "--frames",
+            "3",
+            "--payload-bytes",
+            "128",
+        ])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-e2e-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("relay_batch_frames=2"));
+    assert!(stdout.contains("ingress_max_batch_frames="));
+    assert!(stdout.contains("egress_max_batch_frames="));
+}
+
+#[test]
+fn ktp_e2e_bench_cli_rejects_zero_relay_batch_frames() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args(["--relay-batch-frames", "0"])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        !output.status.success(),
+        "ktp-e2e-bench unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--relay-batch-frames must be greater than zero"));
 }
 
 #[test]

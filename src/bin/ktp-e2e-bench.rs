@@ -69,6 +69,7 @@ struct BenchConfig {
     payload_bytes: usize,
     diagnostics: bool,
     latency: bool,
+    relay_batch_frames: usize,
     relay_wait_timeout: Duration,
 }
 
@@ -150,6 +151,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
     let mut profile = BenchProfile::Fixed;
     let mut diagnostics = false;
     let mut latency = false;
+    let mut relay_batch_frames = RELAY_BATCH_FRAMES;
     let mut relay_wait_timeout = Duration::ZERO;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
@@ -162,6 +164,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
                     "--relay-wait-timeout-us",
                 )?;
                 relay_wait_timeout = Duration::from_micros(micros as u64);
+            }
+            "--relay-batch-frames" => {
+                relay_batch_frames = parse_positive_usize(
+                    next_value(&mut args, "--relay-batch-frames")?,
+                    "--relay-batch-frames",
+                )?
             }
             "--runs" => runs = parse_positive_usize(next_value(&mut args, "--runs")?, "--runs")?,
             "--clients" => {
@@ -189,6 +197,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
         payload_bytes,
         diagnostics,
         latency,
+        relay_batch_frames,
         relay_wait_timeout,
     })
 }
@@ -301,6 +310,7 @@ fn run_benchmark_once(config: BenchConfig) -> BenchResult<BenchSample> {
         &mut ingress_runtime,
         &mut egress_runtime,
         bytes,
+        config.relay_batch_frames,
         config.relay_wait_timeout,
         frame_ready_notifier,
     )?;
@@ -416,7 +426,8 @@ fn diagnostics_suffix(config: BenchConfig, samples: &[BenchSample]) -> String {
             .max(sample.relay_stats.egress_max_batch_frames);
     }
     format!(
-        " relay_turns={} relay_empty_turns={} relay_yield_turns={} relay_wait_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={} ingress_batches={} egress_batches={} ingress_max_batch_frames={} egress_max_batch_frames={}",
+        " relay_batch_frames={} relay_turns={} relay_empty_turns={} relay_yield_turns={} relay_wait_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={} ingress_batches={} egress_batches={} ingress_max_batch_frames={} egress_max_batch_frames={}",
+        config.relay_batch_frames,
         total.relay_turns,
         total.relay_empty_turns,
         total.relay_yield_turns,
@@ -488,6 +499,7 @@ fn relay_data_batches(
     ingress_runtime: &mut TunnelTcpRuntime,
     egress_runtime: &mut TunnelTcpRuntime,
     expected_bytes: usize,
+    relay_batch_frames: usize,
     relay_wait_timeout: Duration,
     frame_ready_notifier: Option<Arc<TunnelFrameReadyNotifier>>,
 ) -> BenchResult<RelayStats> {
@@ -502,22 +514,22 @@ fn relay_data_batches(
             .as_ref()
             .filter(|_| !relay_wait_timeout.is_zero())
             .map(|notifier| notifier.generation());
-        let mut ingress_frames = ingress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
-        let mut egress_frames = egress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
+        let mut ingress_frames = ingress_runtime.next_client_frames(relay_batch_frames)?;
+        let mut egress_frames = egress_runtime.next_client_frames(relay_batch_frames)?;
         if ingress_frames.is_empty() && egress_frames.is_empty() && !relay_wait_timeout.is_zero() {
             stats.relay_wait_turns += 1;
             if let (Some(notifier), Some(observed_generation)) =
                 (frame_ready_notifier.as_ref(), observed_generation)
             {
                 let _ = notifier.wait_for_change(observed_generation, relay_wait_timeout);
-                ingress_frames = ingress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
-                egress_frames = egress_runtime.next_client_frames(RELAY_BATCH_FRAMES)?;
+                ingress_frames = ingress_runtime.next_client_frames(relay_batch_frames)?;
+                egress_frames = egress_runtime.next_client_frames(relay_batch_frames)?;
             } else {
                 ingress_frames = ingress_runtime
-                    .next_client_frames_after_wait(RELAY_BATCH_FRAMES, relay_wait_timeout)?;
+                    .next_client_frames_after_wait(relay_batch_frames, relay_wait_timeout)?;
                 if ingress_frames.is_empty() {
                     egress_frames = egress_runtime
-                        .next_client_frames_after_wait(RELAY_BATCH_FRAMES, relay_wait_timeout)?;
+                        .next_client_frames_after_wait(relay_batch_frames, relay_wait_timeout)?;
                 }
             }
         }
@@ -612,5 +624,5 @@ fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--latency] [--profile fixed|rdp-like] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
+    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--latency] [--profile fixed|rdp-like] [--relay-batch-frames N] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
 }
