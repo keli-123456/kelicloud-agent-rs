@@ -13,6 +13,9 @@ fn tunnel_relay_smoke_script_runs_runtime_relay_test() {
     assert!(script.contains("encrypted_tcp_frame_relay_handles_100_bidirectional_rounds"));
     assert!(script.contains("cargo run --bin ktp-e2e-bench"));
     assert!(script.contains("--latency"));
+    assert!(script.contains("--profile rdp-like"));
+    assert!(script.contains("--diagnostics"));
+    assert!(script.contains("--relay-wait-timeout-us 100"));
 }
 
 #[test]
