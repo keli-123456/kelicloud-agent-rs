@@ -874,6 +874,19 @@ BACKEND_ENDPOINT=http://127.0.0.1:26776 \
 scripts/smoke-local-backend.sh
 ```
 
+Carrier matrix smoke:
+
+```bash
+KELICLOUD_LOCAL_BACKEND_MATRIX_LOG_DIR=/tmp/kelicloud-local-backend-matrix/logs \
+KELICLOUD_LOCAL_BACKEND_MATRIX_WORK_DIR=/tmp/kelicloud-local-backend-matrix/work \
+  bash scripts/ktp-local-backend-matrix.sh
+```
+
+The matrix wrapper runs the same local backend smoke once through the default
+WebSocket tunnel-data carrier and once through the KTP TCP carrier. Each run
+gets an isolated log directory, so the KTP evidence file and `agent.summary.md`
+can be compared without mixing artifacts.
+
 Result:
 
 - Backend KTP TCP relay listened on `127.0.0.1:40699`.
