@@ -13,6 +13,7 @@ Code:
 - Commit: `12fc85c` for multi-client end-to-end runtime results
 - Commit: `a06916c` for repeated-run end-to-end runtime statistics
 - Commit: `c86a832` for relay-loop diagnostic counters
+- Commit: `d1355da` for condition-wait relay prototype
 - Carrier binary: `ktp-tunnel-bench`
 - End-to-end binary: `ktp-e2e-bench`
 - Build mode: `cargo build --release --bin <bench>`
@@ -87,6 +88,18 @@ Runtime relay-loop diagnostics:
 | 3 | 4 | 1024 B | 483878 | 478957 | 483875 | 3093 | 3082 | 3072 | 3072 |
 | 3 | 4 | 16384 B | 403808 | 399467 | 403805 | 3092 | 3083 | 3072 | 3072 |
 
+Runtime relay-loop condition-wait prototype:
+
+```bash
+./target/release/ktp-e2e-bench --diagnostics --relay-wait-timeout-us 10 --runs 3 --clients <N> --frames <N> --payload-bytes <BYTES>
+```
+
+| Runs | Clients | Payload | Elapsed Median | Throughput Median | Relay Turns | Empty Turns | Yield Turns | Wait Turns | Ingress Frames | Egress Frames |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 1 | 1024 B | 345.446 ms | 2.895 MiB/s | 8484 | 2338 | 8481 | 7279 | 3075 | 3074 |
+| 3 | 4 | 1024 B | 186.541 ms | 5.361 MiB/s | 5045 | 807 | 5042 | 3485 | 3093 | 3084 |
+| 3 | 4 | 16384 B | 217.487 ms | 73.568 MiB/s | 5065 | 1348 | 5062 | 3311 | 3093 | 3084 |
+
 Observations:
 
 - Small 1 KiB frames are dominated by per-frame overhead.
@@ -115,10 +128,18 @@ Observations:
   turn calls `thread::yield_now()`. The next optimization should replace this
   bench/runtime polling shape with condition-based waiting or readiness
   notification before changing cryptography or frame encoding.
+- A 10 microsecond condition-wait prototype cuts relay turns from hundreds of
+  thousands to roughly five to eight thousand over the same three-run samples.
+  This validates queue notification as the right optimization direction.
+- A 100 microsecond wait was too aggressive in one 4-client small-frame
+  repeated run and timed out before all bytes relayed. The production design
+  should avoid blind long waits and prefer readiness notification across both
+  ingress and egress queues.
 
 Next evidence to collect:
 
 - Same benchmark on a release Linux host with CPU details captured.
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Latency distribution for small frames.
-- Condition-based relay waiting prototype and before/after diagnostics.
+- Production-ready readiness notification across both ingress and egress queues.
+- Before/after diagnostics for production data carrier scheduling changes.
