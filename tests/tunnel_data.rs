@@ -57,6 +57,16 @@ struct DirectOnlyTunnelDataSocket {
     inbound: Vec<Result<Vec<u8>, TransportError>>,
 }
 
+struct BatchOnlyTunnelDataTransport {
+    events: Rc<RefCell<Vec<String>>>,
+    inbound: Vec<Result<Vec<u8>, TransportError>>,
+}
+
+struct BatchOnlyTunnelDataSocket {
+    events: Rc<RefCell<Vec<String>>>,
+    inbound: Vec<Result<Vec<u8>, TransportError>>,
+}
+
 impl FakeTunnelDataTransport {
     fn with_hello_ack(events: Rc<RefCell<Vec<String>>>) -> Self {
         Self {
@@ -106,6 +116,22 @@ impl TunnelDataTransport for DirectOnlyTunnelDataTransport {
     ) -> Result<Self::Socket, TransportError> {
         self.events.borrow_mut().push(format!("connect:{url}"));
         Ok(DirectOnlyTunnelDataSocket {
+            events: Rc::clone(&self.events),
+            inbound: self.inbound.drain(..).collect(),
+        })
+    }
+}
+
+impl TunnelDataTransport for BatchOnlyTunnelDataTransport {
+    type Socket = BatchOnlyTunnelDataSocket;
+
+    fn connect_tunnel_data(
+        &mut self,
+        url: &str,
+        _headers: &[HeaderPair],
+    ) -> Result<Self::Socket, TransportError> {
+        self.events.borrow_mut().push(format!("connect:{url}"));
+        Ok(BatchOnlyTunnelDataSocket {
             events: Rc::clone(&self.events),
             inbound: self.inbound.drain(..).collect(),
         })
@@ -194,6 +220,63 @@ impl TunnelDataSocket for DirectOnlyTunnelDataSocket {
     }
 }
 
+impl TunnelDataSocket for BatchOnlyTunnelDataSocket {
+    fn send_frame(&mut self, _frame: &[u8]) -> Result<(), TransportError> {
+        self.events.borrow_mut().push("bytes_send".to_string());
+        Err(TransportError::RequestFailed(
+            "wire bytes send path should not be used".to_string(),
+        ))
+    }
+
+    fn send_ktp_frame(&mut self, frame: &KtpFrame) -> Result<(), TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("direct:{:?}", frame.frame_type));
+        if frame.frame_type == FrameType::SessionData {
+            return Err(TransportError::RequestFailed(
+                "runtime session data should be sent as a batch".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn send_ktp_frame_batch(&mut self, frames: &[KtpFrame]) -> Result<(), TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("batch:{}", frames.len()));
+        for frame in frames {
+            self.events.borrow_mut().push(format!(
+                "batch_frame:{:?}:{}",
+                frame.frame_type, frame.session_id
+            ));
+        }
+        Ok(())
+    }
+
+    fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.events.borrow_mut().push("read".to_string());
+        self.inbound.remove(0).map_err(|error| error.clone())
+    }
+
+    fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        self.events.borrow_mut().push("read_optional".to_string());
+        self.inbound
+            .remove(0)
+            .map(Some)
+            .map_err(|error| error.clone())
+    }
+
+    fn read_optional_frame_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("read_optional_timeout:{}us", timeout.as_micros()));
+        self.read_optional_frame()
+    }
+}
+
 struct OneClientFrameRuntime {
     frame: Option<KtpFrame>,
 }
@@ -201,6 +284,16 @@ struct OneClientFrameRuntime {
 impl TunnelSessionRuntime for OneClientFrameRuntime {
     fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
         Ok(self.frame.take())
+    }
+}
+
+struct MultiClientFrameRuntime {
+    frames: VecDeque<KtpFrame>,
+}
+
+impl TunnelSessionRuntime for MultiClientFrameRuntime {
+    fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
+        Ok(self.frames.pop_front())
     }
 }
 
@@ -309,6 +402,57 @@ fn tunnel_data_session_uses_direct_ktp_frame_sends_when_socket_supports_it() {
     assert_eq!(
         direct_sends,
         vec!["direct:Hello", "direct:Ready", "direct:SessionData"]
+    );
+}
+
+#[test]
+fn tunnel_data_session_batches_runtime_frames_when_socket_supports_it() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = BatchOnlyTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+    };
+    let mut runtime = MultiClientFrameRuntime {
+        frames: VecDeque::from([
+            session_data_frame(81, b"first"),
+            session_data_frame(82, b"second"),
+            session_data_frame(83, b"third"),
+        ]),
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-batch"),
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should batch ready runtime frames");
+
+    let events = events.borrow();
+    assert!(
+        !events.iter().any(|event| event == "bytes_send"),
+        "batch-capable sockets should not use wire bytes send path: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|event| event == "direct:SessionData"),
+        "runtime session data should not be sent one frame at a time: {events:?}"
+    );
+    assert!(events.iter().any(|event| event == "batch:3"));
+    let batched_frames = events
+        .iter()
+        .filter(|event| event.starts_with("batch_frame:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        batched_frames,
+        vec![
+            "batch_frame:SessionData:81",
+            "batch_frame:SessionData:82",
+            "batch_frame:SessionData:83",
+        ]
     );
 }
 

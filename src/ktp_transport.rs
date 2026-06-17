@@ -217,19 +217,29 @@ impl KtpCryptoSeal {
         frame: &KtpFrame,
         record: &mut Vec<u8>,
     ) -> Result<(), KtpCryptoError> {
-        let sequence = self.sequence;
         record.clear();
-        record.resize(KTP_CRYPTO_HEADER_LEN, 0);
+        self.append_sealed_frame(frame, record)
+    }
+
+    pub fn append_sealed_frame(
+        &mut self,
+        frame: &KtpFrame,
+        record: &mut Vec<u8>,
+    ) -> Result<(), KtpCryptoError> {
+        let sequence = self.sequence;
+        let record_start = record.len();
+        let payload_start = record_start + KTP_CRYPTO_HEADER_LEN;
+        record.resize(payload_start, 0);
         append_frame_bytes(frame, record).map_err(KtpCryptoError::ktp)?;
-        let ciphertext_len = record.len() - KTP_CRYPTO_HEADER_LEN + 16;
+        let ciphertext_len = record.len() - payload_start + 16;
         let header = crypto_header_bytes(self.direction, sequence, ciphertext_len);
-        record[..KTP_CRYPTO_HEADER_LEN].copy_from_slice(&header);
+        record[record_start..payload_start].copy_from_slice(&header);
         let tag = self
             .cipher
             .encrypt_in_place_detached(
                 &nonce(self.direction, sequence),
                 &header,
-                &mut record[KTP_CRYPTO_HEADER_LEN..],
+                &mut record[payload_start..],
             )
             .map_err(|_| KtpCryptoError::auth_failed())?;
         record.extend_from_slice(&tag);
@@ -455,6 +465,22 @@ impl KtpEncryptedTcpStream {
         self.seal
             .seal_frame_into(frame, &mut self.write_buffer)
             .map_err(KtpTcpTransportError::Crypto)?;
+        self.stream
+            .write_all(&self.write_buffer)
+            .await
+            .map_err(KtpTcpTransportError::Io)
+    }
+
+    pub async fn send_frames(&mut self, frames: &[KtpFrame]) -> Result<(), KtpTcpTransportError> {
+        if frames.is_empty() {
+            return Ok(());
+        }
+        self.write_buffer.clear();
+        for frame in frames {
+            self.seal
+                .append_sealed_frame(frame, &mut self.write_buffer)
+                .map_err(KtpTcpTransportError::Crypto)?;
+        }
         self.stream
             .write_all(&self.write_buffer)
             .await

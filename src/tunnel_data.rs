@@ -390,6 +390,12 @@ pub trait TunnelDataSocket {
             .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
         self.send_frame(&bytes)
     }
+    fn send_ktp_frame_batch(&mut self, frames: &[KtpFrame]) -> Result<(), TransportError> {
+        for frame in frames {
+            self.send_ktp_frame(frame)?;
+        }
+        Ok(())
+    }
     fn read_frame(&mut self) -> Result<Vec<u8>, TransportError>;
     fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
         self.read_frame().map(Some)
@@ -555,6 +561,12 @@ impl TunnelDataSocket for KtpEncryptedTcpTunnelDataSocket {
     fn send_ktp_frame(&mut self, frame: &KtpFrame) -> Result<(), TransportError> {
         self.runtime
             .block_on(self.stream.send_frame(frame))
+            .map_err(ktp_tcp_transport_error_to_transport)
+    }
+
+    fn send_ktp_frame_batch(&mut self, frames: &[KtpFrame]) -> Result<(), TransportError> {
+        self.runtime
+            .block_on(self.stream.send_frames(frames))
             .map_err(ktp_tcp_transport_error_to_transport)
     }
 
@@ -1073,6 +1085,20 @@ where
     }
 }
 
+fn send_tunnel_data_ktp_frame_batch<S>(
+    socket: &mut S,
+    frames: &[KtpFrame],
+) -> Result<SendFrameOutcome, TransportError>
+where
+    S: TunnelDataSocket,
+{
+    match socket.send_ktp_frame_batch(frames) {
+        Ok(()) => Ok(SendFrameOutcome::Sent),
+        Err(TransportError::SocketClosed) => Ok(SendFrameOutcome::Closed),
+        Err(error) => Err(error),
+    }
+}
+
 fn read_tunnel_data_hello_ack<S>(socket: &mut S) -> Result<ReadFrameOutcome, TransportError>
 where
     S: TunnelDataSocket,
@@ -1137,8 +1163,8 @@ fn send_tunnel_session_runtime_frame_batch<S>(
 where
     S: TunnelDataSocket,
 {
-    for frame in frames {
-        let _ = send_tunnel_data_ktp_frame(socket, &frame)?;
+    if !frames.is_empty() {
+        let _ = send_tunnel_data_ktp_frame_batch(socket, &frames)?;
     }
     Ok(())
 }

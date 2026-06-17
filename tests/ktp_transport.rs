@@ -125,6 +125,27 @@ fn crypto_seal_frame_into_reuses_output_buffer() {
 }
 
 #[test]
+fn crypto_seal_appends_multiple_records_without_clearing_output() {
+    let key = test_crypto_key();
+    let first = session_data(722, b"first");
+    let second = session_data(723, b"second");
+    let mut expected_seal = KtpCryptoSeal::new(key.clone(), KtpCryptoDirection::ClientToRelay);
+    let mut expected = expected_seal.seal_frame(&first).expect("seal first");
+    expected.extend_from_slice(&expected_seal.seal_frame(&second).expect("seal second"));
+
+    let mut append_seal = KtpCryptoSeal::new(key, KtpCryptoDirection::ClientToRelay);
+    let mut records = Vec::new();
+    append_seal
+        .append_sealed_frame(&first, &mut records)
+        .expect("append first record");
+    append_seal
+        .append_sealed_frame(&second, &mut records)
+        .expect("append second record");
+
+    assert_eq!(records, expected);
+}
+
+#[test]
 fn crypto_record_rejects_tampered_ciphertext() {
     let key = test_crypto_key();
     let frame = session_data(701, b"secret");
@@ -231,6 +252,59 @@ fn encrypted_tcp_stream_round_trips_frame_over_loopback() {
             client.next_frame().await.expect("read response"),
             session_data(802, b"hello client")
         );
+        server.await.expect("server task");
+    });
+}
+
+#[test]
+fn encrypted_tcp_stream_sends_batched_frames_over_loopback() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let server_key = key.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept encrypted tcp");
+            let mut server = KtpEncryptedTcpStream::from_stream(
+                stream,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            assert_eq!(
+                server.next_frame().await.expect("read first request"),
+                session_data(811, b"first")
+            );
+            assert_eq!(
+                server.next_frame().await.expect("read second request"),
+                session_data(812, b"second")
+            );
+        });
+
+        let stream = TcpStream::connect(addr).await.expect("connect client");
+        let mut client = KtpEncryptedTcpStream::from_stream(
+            stream,
+            key,
+            KtpCryptoDirection::ClientToRelay,
+            KtpCryptoDirection::RelayToClient,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        );
+        client
+            .send_frames(&[session_data(811, b"first"), session_data(812, b"second")])
+            .await
+            .expect("send batch");
         server.await.expect("server task");
     });
 }
