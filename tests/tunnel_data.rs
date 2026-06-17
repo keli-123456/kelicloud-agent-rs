@@ -14,10 +14,12 @@ use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
 use kelicloud_agent_rs::tunnel_data::{
     build_ktp_tcp_auth_preface, derive_ktp_tcp_crypto_key, run_tunnel_data_once,
     run_tunnel_data_session, run_tunnel_data_session_with_ready_source,
-    run_tunnel_data_session_with_ready_source_and_runtime, tunnel_data_startup_line,
-    KtpEncryptedTcpTunnelDataTransport, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
-    TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket,
-    TunnelDataTransport,
+    run_tunnel_data_session_with_ready_source_and_runtime,
+    run_tunnel_data_session_with_ready_source_runtime_and_diagnostics,
+    tunnel_data_diagnostics_line, tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport,
+    SharedTunnelDataDiagnostics, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
+    TunnelDataDiagnosticsSnapshot, TunnelDataReadySource, TunnelDataReadyState,
+    TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::TunnelSessionRuntime;
 
@@ -835,12 +837,77 @@ fn tunnel_data_session_waits_for_runtime_frames_before_idle_socket_read() {
 }
 
 #[test]
+fn tunnel_data_session_records_local_diagnostics_for_runtime_wait_and_idle_read() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: None,
+    };
+    let mut runtime = RuntimeWaitOrderingRuntime {
+        events: Rc::clone(&events),
+        waited: false,
+    };
+    let diagnostics = SharedTunnelDataDiagnostics::new();
+
+    run_tunnel_data_session_with_ready_source_runtime_and_diagnostics(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-ktp"),
+        &mut transport,
+        &mut runtime,
+        &diagnostics,
+    )
+    .expect("data session should record local diagnostics");
+
+    let snapshot = diagnostics.snapshot();
+    assert_eq!(snapshot.runtime_wait_attempts, 2);
+    assert_eq!(snapshot.runtime_wait_hits, 1);
+    assert_eq!(snapshot.outbound_runtime_frames, 1);
+    assert_eq!(snapshot.socket_idle_reads, 1);
+    assert_eq!(snapshot.socket_idle_empty_reads, 0);
+    assert!(
+        snapshot.runtime_wait_elapsed_micros_total > 0,
+        "runtime wait elapsed time should be observable"
+    );
+}
+
+#[test]
+fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
+    let snapshot = TunnelDataDiagnosticsSnapshot {
+        runtime_wait_attempts: 3,
+        runtime_wait_hits: 2,
+        runtime_wait_elapsed_micros_total: 120,
+        runtime_wait_elapsed_micros_max: 70,
+        outbound_runtime_frames: 9,
+        socket_idle_reads: 4,
+        socket_idle_empty_reads: 1,
+    };
+
+    let line = tunnel_data_diagnostics_line(&snapshot);
+
+    assert!(snapshot.has_activity());
+    assert_eq!(
+        line,
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 outbound_runtime_frames=9 socket_idle_reads=4 socket_idle_empty_reads=1"
+    );
+    assert!(!line.contains("token"));
+}
+
+#[test]
 fn main_wires_tunnel_control_state_into_data_ready_source() {
     let source = std::fs::read_to_string("src/main.rs").expect("main source should be readable");
 
     assert!(source.contains("SharedTunnelRuleState::new()"));
     assert!(source.contains("TunnelTcpRuntime::new"));
     assert!(source.contains("TunnelFrameReadyNotifier::new"));
+    assert!(source.contains("SharedTunnelDataDiagnostics::new"));
+    assert!(source.contains("tunnel_data_diagnostics_line"));
     assert!(source.contains("TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport"));
     assert!(source.contains("run_tunnel_control_once_with_rule_sink"));
     assert!(source.contains("run_tunnel_control_session_with_rule_sink"));

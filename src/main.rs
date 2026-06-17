@@ -28,8 +28,9 @@ use kelicloud_agent_rs::tunnel_control::{
     TungsteniteTunnelControlTransport, TUNNEL_DATA_TRANSPORT_KTP_TCP,
 };
 use kelicloud_agent_rs::tunnel_data::{
-    run_tunnel_data_session_with_ready_source_and_runtime, tunnel_data_startup_line,
-    KtpEncryptedTcpTunnelDataTransport, TungsteniteTunnelDataTransport,
+    run_tunnel_data_session_with_ready_source_and_runtime, tunnel_data_diagnostics_line,
+    tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport, SharedTunnelDataDiagnostics,
+    TungsteniteTunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::{SharedTunnelRuleState, TunnelTcpRuntime};
 use std::sync::Arc;
@@ -194,6 +195,7 @@ fn main() {
         std::thread::spawn(move || {
             let frame_ready_notifier =
                 ktp_tcp_enabled.then(|| Arc::new(TunnelFrameReadyNotifier::new()));
+            let tunnel_data_diagnostics = SharedTunnelDataDiagnostics::new();
             let mut tunnel_runtime = if ktp_tcp_enabled {
                 TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport(
                     tunnel_data_ready_state.clone(),
@@ -220,8 +222,7 @@ fn main() {
                             let mut transport = KtpEncryptedTcpTunnelDataTransport::new_with_token(
                                 &tunnel_data_shared_token.get(),
                             );
-                            if let Err(error) =
-                                run_tunnel_data_session_with_ready_source_and_runtime(
+                            if let Err(error) = kelicloud_agent_rs::tunnel_data::run_tunnel_data_session_with_ready_source_runtime_and_diagnostics(
                                     &url,
                                     &[],
                                     "",
@@ -229,9 +230,14 @@ fn main() {
                                     &ktp_ready_source,
                                     &mut transport,
                                     &mut tunnel_runtime,
+                                    &tunnel_data_diagnostics,
                                 )
                             {
                                 eprintln!("tunnel data warning: {error}");
+                            }
+                            let diagnostics = tunnel_data_diagnostics.snapshot();
+                            if diagnostics.has_activity() {
+                                eprintln!("{}", tunnel_data_diagnostics_line(&diagnostics));
                             }
                         } else {
                             let mut transport = TungsteniteTunnelDataTransport::new_with_custom_dns(

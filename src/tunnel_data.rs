@@ -9,8 +9,9 @@ use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::io::ErrorKind;
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio::runtime::Runtime;
@@ -112,6 +113,121 @@ pub struct TunnelDataRuleFailure {
     pub rule_id: u64,
     pub status: String,
     pub error: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SharedTunnelDataDiagnostics {
+    inner: Arc<TunnelDataDiagnosticsInner>,
+}
+
+#[derive(Debug, Default)]
+struct TunnelDataDiagnosticsInner {
+    runtime_wait_attempts: AtomicU64,
+    runtime_wait_hits: AtomicU64,
+    runtime_wait_elapsed_micros_total: AtomicU64,
+    runtime_wait_elapsed_micros_max: AtomicU64,
+    outbound_runtime_frames: AtomicU64,
+    socket_idle_reads: AtomicU64,
+    socket_idle_empty_reads: AtomicU64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TunnelDataDiagnosticsSnapshot {
+    pub runtime_wait_attempts: u64,
+    pub runtime_wait_hits: u64,
+    pub runtime_wait_elapsed_micros_total: u64,
+    pub runtime_wait_elapsed_micros_max: u64,
+    pub outbound_runtime_frames: u64,
+    pub socket_idle_reads: u64,
+    pub socket_idle_empty_reads: u64,
+}
+
+impl SharedTunnelDataDiagnostics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn snapshot(&self) -> TunnelDataDiagnosticsSnapshot {
+        TunnelDataDiagnosticsSnapshot {
+            runtime_wait_attempts: self.inner.runtime_wait_attempts.load(Ordering::Relaxed),
+            runtime_wait_hits: self.inner.runtime_wait_hits.load(Ordering::Relaxed),
+            runtime_wait_elapsed_micros_total: self
+                .inner
+                .runtime_wait_elapsed_micros_total
+                .load(Ordering::Relaxed),
+            runtime_wait_elapsed_micros_max: self
+                .inner
+                .runtime_wait_elapsed_micros_max
+                .load(Ordering::Relaxed),
+            outbound_runtime_frames: self.inner.outbound_runtime_frames.load(Ordering::Relaxed),
+            socket_idle_reads: self.inner.socket_idle_reads.load(Ordering::Relaxed),
+            socket_idle_empty_reads: self.inner.socket_idle_empty_reads.load(Ordering::Relaxed),
+        }
+    }
+
+    fn record_outbound_runtime_frames(&self, count: usize) {
+        self.inner
+            .outbound_runtime_frames
+            .fetch_add(count as u64, Ordering::Relaxed);
+    }
+
+    fn record_runtime_wait(&self, elapsed: Duration, frame_count: usize) {
+        let elapsed_micros = elapsed.as_micros().min(u128::from(u64::MAX)) as u64;
+        self.inner
+            .runtime_wait_attempts
+            .fetch_add(1, Ordering::Relaxed);
+        if frame_count > 0 {
+            self.inner.runtime_wait_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        self.inner
+            .runtime_wait_elapsed_micros_total
+            .fetch_add(elapsed_micros, Ordering::Relaxed);
+        update_atomic_max(&self.inner.runtime_wait_elapsed_micros_max, elapsed_micros);
+    }
+
+    fn record_socket_idle_read(&self) {
+        self.inner.socket_idle_reads.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_socket_idle_empty_read(&self) {
+        self.inner
+            .socket_idle_empty_reads
+            .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+impl TunnelDataDiagnosticsSnapshot {
+    pub fn has_activity(&self) -> bool {
+        self.runtime_wait_attempts > 0
+            || self.runtime_wait_hits > 0
+            || self.outbound_runtime_frames > 0
+            || self.socket_idle_reads > 0
+            || self.socket_idle_empty_reads > 0
+    }
+}
+
+pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) -> String {
+    format!(
+        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} outbound_runtime_frames={} socket_idle_reads={} socket_idle_empty_reads={}",
+        snapshot.runtime_wait_attempts,
+        snapshot.runtime_wait_hits,
+        snapshot.runtime_wait_elapsed_micros_total,
+        snapshot.runtime_wait_elapsed_micros_max,
+        snapshot.outbound_runtime_frames,
+        snapshot.socket_idle_reads,
+        snapshot.socket_idle_empty_reads
+    )
+}
+
+fn update_atomic_max(target: &AtomicU64, candidate: u64) {
+    let mut current = target.load(Ordering::Relaxed);
+    while candidate > current {
+        match target.compare_exchange_weak(current, candidate, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => break,
+            Err(next) => current = next,
+        }
+    }
 }
 
 pub trait TunnelDataSocket {
@@ -561,6 +677,34 @@ where
     S: TunnelDataReadySource,
     R: TunnelSessionRuntime,
 {
+    let diagnostics = SharedTunnelDataDiagnostics::new();
+    run_tunnel_data_session_with_ready_source_runtime_and_diagnostics(
+        url,
+        headers,
+        agent_id_hint,
+        agent_version,
+        ready_source,
+        transport,
+        runtime,
+        &diagnostics,
+    )
+}
+
+pub fn run_tunnel_data_session_with_ready_source_runtime_and_diagnostics<T, S, R>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_id_hint: &str,
+    agent_version: &str,
+    ready_source: &S,
+    transport: &mut T,
+    runtime: &mut R,
+    diagnostics: &SharedTunnelDataDiagnostics,
+) -> Result<(), TransportError>
+where
+    T: TunnelDataTransport,
+    S: TunnelDataReadySource,
+    R: TunnelSessionRuntime,
+{
     let mut socket = match transport.connect_tunnel_data(url, headers) {
         Ok(socket) => socket,
         Err(error) if is_nonfatal_connect_error(&error) => return Ok(()),
@@ -595,20 +739,30 @@ where
             last_ready = current_ready;
         }
         let sent_runtime_frames = drain_tunnel_session_runtime_frames(&mut socket, runtime)?;
-        if !sent_runtime_frames {
+        diagnostics.record_outbound_runtime_frames(sent_runtime_frames);
+        if sent_runtime_frames == 0 {
             if let Some(timeout) = runtime.tunnel_data_client_frame_wait_timeout() {
-                if drain_tunnel_session_runtime_frames_after_wait(&mut socket, runtime, timeout)? {
+                let wait_started = Instant::now();
+                let waited_runtime_frames =
+                    drain_tunnel_session_runtime_frames_after_wait(&mut socket, runtime, timeout)?;
+                diagnostics.record_runtime_wait(wait_started.elapsed(), waited_runtime_frames);
+                diagnostics.record_outbound_runtime_frames(waited_runtime_frames);
+                if waited_runtime_frames > 0 {
                     continue;
                 }
             }
         }
+        diagnostics.record_socket_idle_read();
         let read_result = match runtime.tunnel_data_socket_idle_timeout() {
             Some(timeout) => socket.read_optional_frame_with_timeout(timeout),
             None => socket.read_optional_frame(),
         };
         match read_result {
             Ok(Some(bytes)) => handle_tunnel_data_session_frame(&mut socket, &bytes, runtime)?,
-            Ok(None) => continue,
+            Ok(None) => {
+                diagnostics.record_socket_idle_empty_read();
+                continue;
+            }
             Err(TransportError::SocketClosed) => return Ok(()),
             Err(error) => return Err(error),
         }
@@ -701,19 +855,19 @@ where
 fn drain_tunnel_session_runtime_frames<S, R>(
     socket: &mut S,
     runtime: &mut R,
-) -> Result<bool, TransportError>
+) -> Result<usize, TransportError>
 where
     S: TunnelDataSocket,
     R: TunnelSessionRuntime,
 {
-    let mut sent_any = false;
+    let mut sent_count = 0usize;
     loop {
         let frames = runtime.next_client_frames(64)?;
         if frames.is_empty() {
-            return Ok(sent_any);
+            return Ok(sent_count);
         }
+        sent_count += frames.len();
         send_tunnel_session_runtime_frame_batch(socket, frames)?;
-        sent_any = true;
     }
 }
 
@@ -721,17 +875,18 @@ fn drain_tunnel_session_runtime_frames_after_wait<S, R>(
     socket: &mut S,
     runtime: &mut R,
     timeout: Duration,
-) -> Result<bool, TransportError>
+) -> Result<usize, TransportError>
 where
     S: TunnelDataSocket,
     R: TunnelSessionRuntime,
 {
     let frames = runtime.next_client_frames_after_wait(64, timeout)?;
     if frames.is_empty() {
-        return Ok(false);
+        return Ok(0);
     }
+    let frame_count = frames.len();
     send_tunnel_session_runtime_frame_batch(socket, frames)?;
-    Ok(true)
+    Ok(frame_count)
 }
 
 fn send_tunnel_session_runtime_frame_batch<S>(
