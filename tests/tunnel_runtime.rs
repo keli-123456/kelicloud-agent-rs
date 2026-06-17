@@ -38,6 +38,46 @@ fn tcp_listener_plan_includes_enabled_ingress_and_both_rules_only() {
 }
 
 #[test]
+fn tcp_listener_plan_skips_ktp_tcp_rules_until_ktp_runtime_owns_them() {
+    let mut websocket_rule = selected_rule(7, "tcp", "ingress", true);
+    websocket_rule.data_transport = "websocket".to_string();
+    let mut ktp_rule = selected_rule(8, "tcp", "both", true);
+    ktp_rule.data_transport = "ktp_tcp".to_string();
+
+    let plan = build_tcp_listener_plan(&[websocket_rule, ktp_rule]);
+
+    assert_eq!(
+        plan.iter()
+            .map(|listener| listener.rule_id)
+            .collect::<Vec<_>>(),
+        vec![7]
+    );
+}
+
+#[test]
+fn shared_tunnel_rule_state_reports_ktp_tcp_rules_as_transport_pending() {
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(81, "tcp", "both", true);
+    rule.data_transport = "ktp_tcp".to_string();
+
+    state.update_rules("rev-ktp-pending", &[rule]);
+    let ready = state.current_ready();
+
+    assert_eq!(ready.revision, "rev-ktp-pending");
+    assert!(ready.ingress_rule_ids.is_empty());
+    assert!(ready.egress_rule_ids.is_empty());
+    assert!(
+        ready.failed_rules.iter().any(|failure| {
+            failure.rule_id == 81
+                && failure.status == "unsupported_data_transport"
+                && failure.error.contains("ktp_tcp")
+        }),
+        "expected unsupported_data_transport failure, got {:?}",
+        ready.failed_rules
+    );
+}
+
+#[test]
 fn source_allowlist_accepts_empty_wildcard_exact_ip_and_cidr() {
     assert!(source_addr_allowed("203.0.113.9:50000", ""));
     assert!(source_addr_allowed("203.0.113.9:50000", "0.0.0.0/0"));
@@ -379,6 +419,35 @@ fn tcp_runtime_target_connect_failure_returns_stable_error_code_and_no_session()
     let error = decode_session_error_payload(&responses[0].payload).expect("decode session error");
     assert_eq!(error.rule_id, 51);
     assert_eq!(error.code, "target_connect_failed");
+    assert_eq!(runtime.active_session_count(), 0);
+}
+
+#[test]
+fn tcp_runtime_does_not_open_ktp_tcp_egress_rules_on_websocket_data_runtime() {
+    let closed_port = free_tcp_port();
+    let state = SharedTunnelRuleState::new();
+    let mut rule = selected_rule(82, "tcp", "egress", true);
+    rule.data_transport = "ktp_tcp".to_string();
+    rule.target_host = "127.0.0.1".to_string();
+    rule.target_port = closed_port;
+    state.update_rules("rev-ktp-egress", &[rule]);
+    let mut runtime = TunnelTcpRuntime::new(state);
+
+    let responses = runtime
+        .handle_server_frame(KtpFrame {
+            frame_type: FrameType::SessionOpen,
+            leg: FrameLeg::Egress,
+            flags: 0,
+            session_id: 820,
+            payload: session_open_payload(82),
+        })
+        .expect("ktp egress rule should be ignored by websocket runtime");
+
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].frame_type, FrameType::SessionError);
+    let error = decode_session_error_payload(&responses[0].payload).expect("decode session error");
+    assert_eq!(error.rule_id, 82);
+    assert_eq!(error.code, "runtime_unavailable");
     assert_eq!(runtime.active_session_count(), 0);
 }
 

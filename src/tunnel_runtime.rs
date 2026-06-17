@@ -3,7 +3,9 @@ use crate::transport::TransportError;
 use crate::tunnel_async_runtime::{
     AsyncTunnelCore, TunnelIngressListenerSpec, TunnelRuntimeError, TunnelRuntimeLimits,
 };
-use crate::tunnel_control::{SelectedTunnelRule, TunnelRuleStateSink};
+use crate::tunnel_control::{
+    SelectedTunnelRule, TunnelRuleStateSink, TUNNEL_DATA_TRANSPORT_WEBSOCKET,
+};
 use crate::tunnel_data::{TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure};
 use crate::tunnel_preflight::{
     tunnel_preflight_status, validate_tunnel_tcp_rule_for_side, TunnelPreflightIssue,
@@ -451,6 +453,7 @@ impl TunnelTcpRuntime {
             rule.id == rule_id
                 && rule.enabled
                 && rule.protocol.trim().eq_ignore_ascii_case("tcp")
+                && rule_uses_websocket_data_transport(rule)
                 && matches!(rule.role.trim(), "egress" | "both")
         })
     }
@@ -605,6 +608,10 @@ fn build_tunnel_ready_state_with_listener_health(
     let mut ready = TunnelDataReadyState::empty(revision);
     for rule in rules {
         if !rule.enabled || rule.protocol.trim().to_ascii_lowercase() != "tcp" {
+            continue;
+        }
+        if !rule_uses_websocket_data_transport(rule) {
+            push_unsupported_data_transport_failure_once(&mut ready, rule);
             continue;
         }
         match rule.role.trim().to_ascii_lowercase().as_str() {
@@ -805,6 +812,27 @@ fn push_preflight_failure_once(ready: &mut TunnelDataReadyState, issue: TunnelPr
     });
 }
 
+fn push_unsupported_data_transport_failure_once(
+    ready: &mut TunnelDataReadyState,
+    rule: &SelectedTunnelRule,
+) {
+    let transport = rule.data_transport();
+    let error =
+        format!("data transport {transport} is not handled by websocket tunnel data runtime");
+    if ready.failed_rules.iter().any(|failure| {
+        failure.rule_id == rule.id
+            && failure.status == "unsupported_data_transport"
+            && failure.error == error
+    }) {
+        return;
+    }
+    ready.failed_rules.push(TunnelDataRuleFailure {
+        rule_id: rule.id,
+        status: "unsupported_data_transport".to_string(),
+        error,
+    });
+}
+
 fn listener_spec_for_rule(rule: &SelectedTunnelRule) -> TunnelTcpListenerSpec {
     TunnelTcpListenerSpec {
         rule_id: rule.id,
@@ -823,11 +851,18 @@ pub fn build_tcp_listener_plan(rules: &[SelectedTunnelRule]) -> Vec<TunnelTcpLis
         .iter()
         .filter(|rule| rule.enabled)
         .filter(|rule| rule.protocol.trim().eq_ignore_ascii_case("tcp"))
+        .filter(|rule| rule_uses_websocket_data_transport(rule))
         .filter(|rule| matches!(rule.role.trim(), "ingress" | "both"))
         .map(listener_spec_for_rule)
         .collect::<Vec<_>>();
     listeners.sort_by_key(|listener| listener.rule_id);
     listeners
+}
+
+fn rule_uses_websocket_data_transport(rule: &SelectedTunnelRule) -> bool {
+    rule.data_transport()
+        .trim()
+        .eq_ignore_ascii_case(TUNNEL_DATA_TRANSPORT_WEBSOCKET)
 }
 
 pub fn source_addr_allowed(source_addr: &str, allowlist: &str) -> bool {
