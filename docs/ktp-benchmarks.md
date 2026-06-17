@@ -654,6 +654,38 @@ Notes:
   median throughput and widened client p95 spread. This needs a larger matrix
   before becoming the default scheduling policy.
 
+Follow-up tool change:
+
+- `scripts/ktp-relay-batch-matrix.sh` now accepts
+  `KTP_BATCH_MATRIX_BATCH_POLICIES="fixed adaptive"` so the same command can
+  produce a single CSV containing both policy rows. The previous
+  `KTP_BATCH_MATRIX_BATCH_POLICY=<policy>` path remains supported for single
+  policy runs.
+
+Validation command:
+
+```bash
+KTP_BATCH_MATRIX_CLIENTS="4" \
+KTP_BATCH_MATRIX_BATCHES="64" \
+KTP_BATCH_MATRIX_BATCH_POLICIES="fixed adaptive" \
+KTP_BATCH_MATRIX_RUNS=2 \
+KTP_BATCH_MATRIX_FRAMES=64 \
+KTP_BATCH_MATRIX_PAYLOAD_BYTES=8192 \
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-policy-compare-smoke.csv \
+  bash scripts/ktp-relay-batch-matrix.sh
+```
+
+Validation output:
+
+| Policy | Clients | Configured Batch | Effective Batch | Throughput Median | RTT p95 | RTT p99 | RTT Max | Client p95 Spread |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fixed | 4 | 64 | 64 | 9.331 MiB/s | 949 us | 2940 us | 5768 us | 248 us |
+| adaptive | 4 | 64 | 32 | 5.604 MiB/s | 1456 us | 3654 us | 8002 us | 2058 us |
+
+This two-run smoke confirms the compare path and CSV shape. It also shows why
+larger same-host matrices are required before promoting adaptive scheduling:
+the short sample contradicted the earlier three-run smoke at four clients.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:

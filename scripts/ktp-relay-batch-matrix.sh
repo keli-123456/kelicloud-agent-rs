@@ -12,7 +12,7 @@ CLIENTS="${KTP_BATCH_MATRIX_CLIENTS:-2}"
 FRAMES="${KTP_BATCH_MATRIX_FRAMES:-64}"
 PAYLOAD_BYTES="${KTP_BATCH_MATRIX_PAYLOAD_BYTES:-8192}"
 PROFILE="${KTP_BATCH_MATRIX_PROFILE:-rdp-like}"
-RELAY_BATCH_POLICY="${KTP_BATCH_MATRIX_BATCH_POLICY:-fixed}"
+RELAY_BATCH_POLICIES="${KTP_BATCH_MATRIX_BATCH_POLICIES:-${KTP_BATCH_MATRIX_BATCH_POLICY:-fixed}}"
 RELAY_WAIT_TIMEOUT_US="${KTP_BATCH_MATRIX_RELAY_WAIT_TIMEOUT_US:-100}"
 DRY_RUN="${KTP_BATCH_MATRIX_DRY_RUN:-0}"
 CSV_PATH="${KTP_BATCH_MATRIX_CSV:-}"
@@ -120,7 +120,7 @@ write_csv_row() {
 }
 
 echo "== ktp relay batch matrix =="
-echo "profile=${PROFILE} runs=${RUNS} clients=${CLIENTS} frames=${FRAMES} payload_bytes=${PAYLOAD_BYTES} relay_batch_policy=${RELAY_BATCH_POLICY} relay_wait_timeout_us=${RELAY_WAIT_TIMEOUT_US}"
+echo "profile=${PROFILE} runs=${RUNS} clients=${CLIENTS} frames=${FRAMES} payload_bytes=${PAYLOAD_BYTES} relay_batch_policies=${RELAY_BATCH_POLICIES} relay_wait_timeout_us=${RELAY_WAIT_TIMEOUT_US}"
 echo "batches=${BATCHES}"
 
 if [[ -n "${CSV_PATH}" ]]; then
@@ -132,41 +132,48 @@ if [[ -n "${CSV_PATH}" ]]; then
   fi
 fi
 
-for clients in ${CLIENTS}; do
-  if ! [[ "${clients}" =~ ^[0-9]+$ ]] || [[ "${clients}" == "0" ]]; then
-    echo "invalid client count: ${clients}" >&2
+for policy in ${RELAY_BATCH_POLICIES}; do
+  if [[ "${policy}" != "fixed" && "${policy}" != "adaptive" ]]; then
+    echo "invalid relay batch policy: ${policy}" >&2
     exit 2
   fi
 
-  for batch in ${BATCHES}; do
-    if ! [[ "${batch}" =~ ^[0-9]+$ ]] || [[ "${batch}" == "0" ]]; then
-      echo "invalid relay batch frame count: ${batch}" >&2
+  for clients in ${CLIENTS}; do
+    if ! [[ "${clients}" =~ ^[0-9]+$ ]] || [[ "${clients}" == "0" ]]; then
+      echo "invalid client count: ${clients}" >&2
       exit 2
     fi
 
-    echo "== clients=${clients} relay_batch_frames=$batch =="
-    cmd=(cargo run --release --bin ktp-e2e-bench -- \
-      --profile "${PROFILE}" \
-      --diagnostics \
-      --latency \
-      --relay-wait-timeout-us "${RELAY_WAIT_TIMEOUT_US}" \
-      --runs "${RUNS}" \
-      --clients "${clients}" \
-      --frames "${FRAMES}" \
-      --payload-bytes "${PAYLOAD_BYTES}" \
-      --relay-batch-policy "${RELAY_BATCH_POLICY}" \
-      --relay-batch-frames "${batch}")
-
-    if [[ "${DRY_RUN}" == "1" ]]; then
-      printf 'dry_run:'
-      printf ' %q' "${cmd[@]}"
-      printf '\n'
-    else
-      output="$("${cmd[@]}")"
-      printf '%s\n' "${output}"
-      if [[ -n "${CSV_PATH}" ]]; then
-        write_csv_row "${clients}" "${batch}" "${output}"
+    for batch in ${BATCHES}; do
+      if ! [[ "${batch}" =~ ^[0-9]+$ ]] || [[ "${batch}" == "0" ]]; then
+        echo "invalid relay batch frame count: ${batch}" >&2
+        exit 2
       fi
-    fi
+
+      echo "== relay_batch_policy=${policy} clients=${clients} relay_batch_frames=$batch =="
+      cmd=(cargo run --release --bin ktp-e2e-bench -- \
+        --profile "${PROFILE}" \
+        --diagnostics \
+        --latency \
+        --relay-wait-timeout-us "${RELAY_WAIT_TIMEOUT_US}" \
+        --runs "${RUNS}" \
+        --clients "${clients}" \
+        --frames "${FRAMES}" \
+        --payload-bytes "${PAYLOAD_BYTES}" \
+        --relay-batch-policy "${policy}" \
+        --relay-batch-frames "${batch}")
+
+      if [[ "${DRY_RUN}" == "1" ]]; then
+        printf 'dry_run:'
+        printf ' %q' "${cmd[@]}"
+        printf '\n'
+      else
+        output="$("${cmd[@]}")"
+        printf '%s\n' "${output}"
+        if [[ -n "${CSV_PATH}" ]]; then
+          write_csv_row "${clients}" "${batch}" "${output}"
+        fi
+      fi
+    done
   done
 done

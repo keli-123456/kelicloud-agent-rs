@@ -14,6 +14,7 @@ fn ktp_batch_matrix_script_sweeps_relay_batch_frames_with_rdp_like_defaults() {
     assert!(script.contains("--relay-wait-timeout-us"));
     assert!(script.contains("--relay-batch-frames"));
     assert!(script.contains("KTP_BATCH_MATRIX_BATCH_POLICY"));
+    assert!(script.contains("KTP_BATCH_MATRIX_BATCH_POLICIES"));
     assert!(script.contains("--relay-batch-policy"));
     assert!(script.contains("relay_batch_frames=$batch"));
     assert!(script.contains("KTP_BATCH_MATRIX_CSV"));
@@ -104,6 +105,38 @@ fn ktp_batch_matrix_script_dry_run_expands_each_client_and_batch_on_linux() {
 }
 
 #[test]
+fn ktp_batch_matrix_script_dry_run_expands_each_policy_on_linux() {
+    if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+
+    let output = Command::new("bash")
+        .env("KTP_BATCH_MATRIX_DRY_RUN", "1")
+        .env("KTP_BATCH_MATRIX_BATCH_POLICIES", "fixed adaptive")
+        .env("KTP_BATCH_MATRIX_CLIENTS", "4")
+        .env("KTP_BATCH_MATRIX_BATCHES", "64")
+        .env("KTP_BATCH_MATRIX_RUNS", "2")
+        .env("KTP_BATCH_MATRIX_FRAMES", "8")
+        .env("KTP_BATCH_MATRIX_PAYLOAD_BYTES", "1024")
+        .args(["scripts/ktp-relay-batch-matrix.sh"])
+        .output()
+        .expect("batch matrix dry-run should run");
+
+    assert!(
+        output.status.success(),
+        "batch matrix dry-run failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("dry_run:").count(), 2);
+    assert!(stdout.contains("relay_batch_policy=fixed"));
+    assert!(stdout.contains("relay_batch_policy=adaptive"));
+    assert!(stdout.contains("--relay-batch-policy fixed"));
+    assert!(stdout.contains("--relay-batch-policy adaptive"));
+}
+
+#[test]
 fn ktp_batch_matrix_script_dry_run_does_not_create_csv_on_linux() {
     if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
         return;
@@ -130,6 +163,60 @@ fn ktp_batch_matrix_script_dry_run_does_not_create_csv_on_linux() {
         "dry-run should not create a CSV file at {}",
         csv_path.display()
     );
+}
+
+#[test]
+fn ktp_batch_matrix_script_writes_csv_for_each_policy_on_linux() {
+    if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+
+    let fake_bin_dir = unique_temp_path("ktp-policy-matrix-fake-bin", "");
+    let _ = std::fs::remove_dir_all(&fake_bin_dir);
+    std::fs::create_dir_all(&fake_bin_dir).expect("fake bin dir should be created");
+    let fake_cargo = fake_bin_dir.join("cargo");
+    std::fs::write(&fake_cargo, fake_cargo_script()).expect("fake cargo should be written");
+    let chmod_status = Command::new("chmod")
+        .args([
+            "+x",
+            fake_cargo
+                .to_str()
+                .expect("fake cargo path should be utf-8"),
+        ])
+        .status()
+        .expect("chmod should run");
+    assert!(chmod_status.success());
+
+    let csv_path = unique_temp_path("ktp-policy-matrix", "csv");
+    let _ = std::fs::remove_file(&csv_path);
+    let original_path = std::env::var("PATH").expect("PATH should be set");
+    let test_path = format!("{}:{original_path}", fake_bin_dir.display());
+    let output = Command::new("bash")
+        .env("PATH", test_path)
+        .env("KTP_BATCH_MATRIX_BATCH_POLICIES", "fixed adaptive")
+        .env("KTP_BATCH_MATRIX_BATCHES", "64")
+        .env("KTP_BATCH_MATRIX_RUNS", "1")
+        .env("KTP_BATCH_MATRIX_CLIENTS", "4")
+        .env("KTP_BATCH_MATRIX_FRAMES", "8")
+        .env("KTP_BATCH_MATRIX_PAYLOAD_BYTES", "1024")
+        .env("KTP_BATCH_MATRIX_CSV", &csv_path)
+        .args(["scripts/ktp-relay-batch-matrix.sh"])
+        .output()
+        .expect("batch matrix should run with fake cargo");
+
+    assert!(
+        output.status.success(),
+        "batch matrix failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let csv = std::fs::read_to_string(&csv_path).expect("CSV should be written");
+    assert!(csv.contains(
+        "rdp-like,1,4,8,1024,64,fixed,64,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,64,64"
+    ));
+    assert!(csv.contains(
+        "rdp-like,1,4,8,1024,64,adaptive,32,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,32,32"
+    ));
 }
 
 #[test]
@@ -207,9 +294,14 @@ fn fake_cargo_script() -> &'static str {
     r#"#!/usr/bin/env bash
 set -euo pipefail
 batch=""
+clients="1"
 policy="fixed"
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --clients)
+      clients="$2"
+      shift 2
+      ;;
     --relay-batch-frames)
       batch="$2"
       shift 2
@@ -227,6 +319,12 @@ if [[ -z "$batch" ]]; then
   echo "missing --relay-batch-frames" >&2
   exit 9
 fi
-echo "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile=rdp_like runs=1 clients=1 frames=8 payload_bytes=1024 bytes=1472 elapsed_ms=${batch}.000 throughput_mib_s=${batch}.500 rtt_micros_samples=8 rtt_micros_p50=10 rtt_micros_p95=20 rtt_micros_p99=30 rtt_micros_max=40 rtt_client_p95_micros_min=20 rtt_client_p95_micros_max=20 rtt_client_p95_spread_micros=0 rtt_client_max_micros_max=40 relay_batch_policy=${policy} relay_batch_frames=${batch} relay_batch_frames_effective=${batch} relay_turns=7 relay_empty_turns=0 relay_yield_turns=6 relay_wait_turns=2 ingress_frames=9 egress_frames=8 ingress_data_frames=8 egress_data_frames=8 ingress_batches=3 egress_batches=4 ingress_max_batch_frames=${batch} egress_max_batch_frames=${batch}"
+effective="$batch"
+if [[ "$policy" == "adaptive" && "$clients" -ge 8 && "$effective" -gt 16 ]]; then
+  effective="16"
+elif [[ "$policy" == "adaptive" && "$clients" -ge 4 && "$effective" -gt 32 ]]; then
+  effective="32"
+fi
+echo "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile=rdp_like runs=1 clients=${clients} frames=8 payload_bytes=1024 bytes=1472 elapsed_ms=${batch}.000 throughput_mib_s=${batch}.500 rtt_micros_samples=8 rtt_micros_p50=10 rtt_micros_p95=20 rtt_micros_p99=30 rtt_micros_max=40 rtt_client_p95_micros_min=20 rtt_client_p95_micros_max=20 rtt_client_p95_spread_micros=0 rtt_client_max_micros_max=40 relay_batch_policy=${policy} relay_batch_frames=${batch} relay_batch_frames_effective=${effective} relay_turns=7 relay_empty_turns=0 relay_yield_turns=6 relay_wait_turns=2 ingress_frames=9 egress_frames=8 ingress_data_frames=8 egress_data_frames=8 ingress_batches=3 egress_batches=4 ingress_max_batch_frames=${effective} egress_max_batch_frames=${effective}"
 "#
 }
