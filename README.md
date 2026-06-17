@@ -287,7 +287,10 @@ creates a client token, runs `kelicloud-agent-rs`, and then drives admin APIs
 for CN connectivity config, script exec, TCP ping, and WebSSH terminal. It ends
 by running `smoke-summary --require-pass` against the captured agent log. The
 same path runs automatically in the `Local Backend Smoke` GitHub Actions
-workflow on pushes to `main`.
+workflow on pushes to `main`. The workflow runs both the default WebSocket data
+carrier and the KTP TCP data carrier, then uploads separate
+`kelicloud-agent-rs-local-backend-smoke-websocket` and
+`kelicloud-agent-rs-local-backend-smoke-ktp_tcp` log artifacts.
 
 To run that same real-backend smoke through the KTP TCP data carrier instead
 of the WebSocket data carrier, enable the opt-in KTP mode:

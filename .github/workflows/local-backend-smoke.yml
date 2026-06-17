@@ -22,13 +22,24 @@ env:
   KOMARI_DB_NAME: komari
   KELICLOUD_BACKEND_REF: main
   KOMARI_FRONTEND_REF: main
-  SMOKE_LOG_DIR: smoke-logs
 
 jobs:
   linux:
-    name: Linux Control Plane
+    name: Linux Control Plane (${{ matrix.data_plane }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - data_plane: websocket
+            ktp_tcp: "false"
+          - data_plane: ktp_tcp
+            ktp_tcp: "true"
+    env:
+      KELICLOUD_SMOKE_KTP_TCP: ${{ matrix.ktp_tcp }}
+      KOMARI_DB_NAME: komari_${{ matrix.data_plane }}
+      SMOKE_LOG_DIR: smoke-logs-${{ matrix.data_plane }}
 
     services:
       mysql:
@@ -76,6 +87,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kelicloud-agent-rs-local-backend-smoke
-          path: smoke-logs/*
+          name: kelicloud-agent-rs-local-backend-smoke-${{ matrix.data_plane }}
+          path: smoke-logs-${{ matrix.data_plane }}/*
           if-no-files-found: ignore

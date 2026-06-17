@@ -335,12 +335,16 @@ Notes:
 - The successful smoke proves the current KTP TCP carrier can run the existing
   control-plane compatibility suite and a loopback tunnel echo against a real
   backend. It is not yet a high-throughput production capacity claim.
+- The `Local Backend Smoke` GitHub Actions workflow now runs the same smoke as
+  a matrix over `websocket` and `ktp_tcp`, with separate artifacts for each data
+  carrier. That moves KTP smoke evidence from one-off host logs into CI
+  artifacts on pushes to `main`.
 
 Next evidence to collect:
 
 - Repeated multi-client runs with higher sample counts and percentile summaries.
 - Before/after diagnostics for production data carrier scheduling changes.
-- Repeat KTP local-backend smoke from GitHub Actions or a self-hosted runner so
-  the evidence is attached to CI artifacts, not only a one-off remote host.
+- Inspect the next GitHub Actions KTP local-backend artifact and keep it as the
+  release evidence source instead of relying on one-off remote host paths.
 - Live KTP canary traffic with real RDP-like forwarding and paired RTT or
   throughput evidence from the same observation window.

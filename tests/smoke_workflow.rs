@@ -46,9 +46,19 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
     assert!(workflow.contains("actions/setup-go@v5"));
     assert!(workflow.contains("actions/setup-node@v4"));
     assert!(workflow.contains("rustup toolchain install stable"));
+    assert!(workflow.contains("strategy:"));
+    assert!(workflow.contains("fail-fast: false"));
+    assert!(workflow.contains("data_plane: websocket"));
+    assert!(workflow.contains("data_plane: ktp_tcp"));
+    assert!(workflow.contains("ktp_tcp: \"false\""));
+    assert!(workflow.contains("ktp_tcp: \"true\""));
+    assert!(workflow.contains("KELICLOUD_SMOKE_KTP_TCP: ${{ matrix.ktp_tcp }}"));
+    assert!(workflow.contains("KOMARI_DB_NAME: komari_${{ matrix.data_plane }}"));
+    assert!(workflow.contains("SMOKE_LOG_DIR: smoke-logs-${{ matrix.data_plane }}"));
     assert!(workflow.contains("bash scripts/smoke-local-backend.sh"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
-    assert!(workflow.contains("smoke-logs/*"));
+    assert!(workflow.contains("smoke-logs-${{ matrix.data_plane }}/*"));
+    assert!(workflow.contains("kelicloud-agent-rs-local-backend-smoke-${{ matrix.data_plane }}"));
 }
 
 fn local_backend_smoke_workflow_path() -> PathBuf {
