@@ -113,6 +113,7 @@ fn ktp_tunnel_bench_cli_reports_client_to_relay_batch_write() {
     assert!(stdout.contains("ktp_tunnel_bench"));
     assert!(stdout.contains("direction=client_to_relay_batch_write"));
     assert!(stdout.contains("write_batch_frames=64"));
+    assert!(stdout.contains("write_batch_reused=1"));
     assert!(stdout.contains("frames=4"));
     assert!(stdout.contains("bytes=512"));
     assert!(stdout.contains("elapsed_ms="));

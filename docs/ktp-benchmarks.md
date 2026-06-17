@@ -844,22 +844,26 @@ min/median/max elapsed and throughput fields. The default direction sweep
 compares one-frame client writes, client-to-relay batch writes, and
 relay-to-client batch reads. Use this for carrier-layer before/after
 comparisons; keep runtime/RDP fairness comparisons in
-`scripts/ktp-relay-batch-matrix.sh`.
+`scripts/ktp-relay-batch-matrix.sh`. The client-to-relay batch-write benchmark
+prebuilds reusable frame batches before the timed section; the direct
+`ktp-tunnel-bench` output includes `write_batch_reused=1` for that direction so
+the carrier sample is not dominated by per-batch payload cloning.
 
 Linux release smoke sample:
 
 ```text
 direction,runs,frames,payload_bytes,write_batch_frames,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max
-client_to_relay,2,64,1024,0,0,0.955,1.124,1.293,48.329,56.895,65.461
-client_to_relay_batch_write,2,64,1024,64,0,1.044,1.190,1.335,46.808,53.337,59.866
-relay_to_client_batch_read,2,64,1024,0,64,0.415,0.656,0.896,69.729,110.159,150.589
+client_to_relay,2,64,1024,0,0,1.104,1.173,1.241,50.348,53.471,56.594
+client_to_relay_batch_write,2,64,1024,64,0,0.831,0.988,1.146,54.546,64.895,75.245
+relay_to_client_batch_read,2,64,1024,0,64,1.426,1.929,2.432,25.698,34.769,43.840
 ```
 
 This sample was intentionally small so it can run as a quick release-mode
 verification. Larger matrices should raise frame counts, payload sizes, and run
-count before being used as tuning evidence. In this short run, the new
-client-to-relay batch-write direction was slightly slower than one-frame writes,
-so treat it as comparison coverage rather than a proven optimization.
+count before being used as tuning evidence. In this short run, reusable
+client-to-relay batch writes improved median throughput over one-frame writes,
+but the sample is still too small to promote a production tuning claim by
+itself.
 
 ## 2026-06-18 KTP Local Backend Smoke
 

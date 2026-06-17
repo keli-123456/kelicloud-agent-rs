@@ -305,13 +305,10 @@ async fn run_client_to_relay_batch_write_benchmark_once(
         session_id: 1,
         payload: vec![0x5a; payload_bytes],
     };
+    let batches = reusable_frame_batches(&frame, config.frames, WRITE_BATCH_FRAMES);
     let started = Instant::now();
-    let mut remaining = config.frames;
-    while remaining > 0 {
-        let chunk = remaining.min(WRITE_BATCH_FRAMES);
-        let batch = (0..chunk).map(|_| frame.clone()).collect::<Vec<_>>();
-        client.send_frames(&batch).await?;
-        remaining -= chunk;
+    for batch in &batches {
+        client.send_frames(batch).await?;
     }
     drop(client);
     let bytes = server.await??;
@@ -401,10 +398,26 @@ fn batch_direction_suffix(direction: BenchDirection) -> String {
     match direction {
         BenchDirection::ClientToRelay => String::new(),
         BenchDirection::ClientToRelayBatchWrite => {
-            format!(" write_batch_frames={WRITE_BATCH_FRAMES}")
+            format!(" write_batch_frames={WRITE_BATCH_FRAMES} write_batch_reused=1")
         }
         BenchDirection::RelayToClientBatchRead => {
             format!(" read_batch_frames={READ_BATCH_FRAMES}")
         }
     }
+}
+
+fn reusable_frame_batches(
+    frame: &KtpFrame,
+    frame_count: usize,
+    batch_size: usize,
+) -> Vec<Vec<KtpFrame>> {
+    let batch_size = batch_size.max(1);
+    let mut remaining = frame_count;
+    let mut batches = Vec::with_capacity(frame_count.div_ceil(batch_size));
+    while remaining > 0 {
+        let chunk = remaining.min(batch_size);
+        batches.push((0..chunk).map(|_| frame.clone()).collect());
+        remaining -= chunk;
+    }
+    batches
 }
