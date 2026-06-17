@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+KTP_SMOKE_POLICY_GATE="${KTP_SMOKE_POLICY_GATE:-0}"
+KTP_SMOKE_POLICY_CSV="${KTP_SMOKE_POLICY_CSV:-${TMPDIR:-/tmp}/ktp-relay-policy-smoke.csv}"
+
 echo "== tunnel preflight checks =="
 cargo test --test tunnel_preflight -- --nocapture
 
@@ -16,6 +19,22 @@ cargo test --test ktp_transport encrypted_tcp_frame_relay_handles_100_bidirectio
 cargo run --bin ktp-tunnel-bench -- --frames 4096 --payload-bytes 16384
 cargo run --bin ktp-e2e-bench -- --latency --frames 16 --payload-bytes 1024
 cargo run --bin ktp-e2e-bench -- --profile rdp-like --diagnostics --latency --relay-wait-timeout-us 100 --clients 2 --frames 16 --payload-bytes 8192
+
+if [[ "${KTP_SMOKE_POLICY_GATE}" == "1" ]]; then
+  echo "== ktp relay batch policy gate =="
+  KTP_BATCH_MATRIX_BATCH_POLICIES="${KTP_BATCH_MATRIX_BATCH_POLICIES:-fixed adaptive}" \
+    KTP_BATCH_MATRIX_CLIENTS="${KTP_BATCH_MATRIX_CLIENTS:-4}" \
+    KTP_BATCH_MATRIX_BATCHES="${KTP_BATCH_MATRIX_BATCHES:-64}" \
+    KTP_BATCH_MATRIX_RUNS="${KTP_BATCH_MATRIX_RUNS:-2}" \
+    KTP_BATCH_MATRIX_FRAMES="${KTP_BATCH_MATRIX_FRAMES:-64}" \
+    KTP_BATCH_MATRIX_PAYLOAD_BYTES="${KTP_BATCH_MATRIX_PAYLOAD_BYTES:-8192}" \
+    KTP_BATCH_MATRIX_CSV="${KTP_SMOKE_POLICY_CSV}" \
+    KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1 \
+    bash scripts/ktp-relay-batch-matrix.sh
+else
+  echo "== ktp relay batch policy gate skipped =="
+  echo "set KTP_SMOKE_POLICY_GATE=1 to compare fixed/adaptive batch policies"
+fi
 
 echo "== tunnel runtime listener lifecycle =="
 cargo test --test tunnel_runtime tcp_runtime_stops_listener_when_rule_is_removed -- --nocapture

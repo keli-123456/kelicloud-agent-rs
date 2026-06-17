@@ -736,6 +736,17 @@ bash scripts/ktp-relay-batch-matrix.sh
 non-dry-run mode. The script runs `ktp-policy-summary --fail-on-fixed-better`
 against that CSV and returns the summary exit code.
 
+The local tunnel smoke keeps this policy gate optional so ordinary smoke runs
+do not fail while a candidate adaptive policy is still being tuned:
+
+```bash
+KTP_SMOKE_POLICY_GATE=1 bash scripts/tunnel-relay-local-smoke.sh
+```
+
+When enabled, the smoke script writes the matrix CSV to
+`${TMPDIR:-/tmp}/ktp-relay-policy-smoke.csv` unless `KTP_SMOKE_POLICY_CSV`
+overrides it.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:

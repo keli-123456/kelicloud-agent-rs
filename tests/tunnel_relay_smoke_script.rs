@@ -31,6 +31,17 @@ fn tunnel_relay_smoke_script_covers_preflight_and_failure_diagnostics() {
 }
 
 #[test]
+fn tunnel_relay_smoke_script_can_run_optional_policy_gate() {
+    let script = std::fs::read_to_string("scripts/tunnel-relay-local-smoke.sh")
+        .expect("smoke script should be readable");
+    assert!(script.contains("KTP_SMOKE_POLICY_GATE"));
+    assert!(script.contains("== ktp relay batch policy gate =="));
+    assert!(script.contains("scripts/ktp-relay-batch-matrix.sh"));
+    assert!(script.contains("KTP_BATCH_MATRIX_CSV"));
+    assert!(script.contains("KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1"));
+}
+
+#[test]
 fn tunnel_relay_smoke_script_has_valid_bash_syntax_when_bash_is_available() {
     if Command::new("bash").arg("--version").output().is_err() {
         return;
