@@ -17,6 +17,7 @@ use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_session, run_tunnel_data_session_with_ready_source,
     run_tunnel_data_session_with_ready_source_and_runtime,
     run_tunnel_data_session_with_ready_source_runtime_and_diagnostics,
+    run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter,
     tunnel_data_diagnostics_line, tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport,
     SharedTunnelDataDiagnostics, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
     TunnelDataDiagnosticsSnapshot, TunnelDataReadySource, TunnelDataReadyState,
@@ -896,6 +897,54 @@ fn tunnel_data_session_records_local_diagnostics_for_runtime_wait_and_idle_read(
 }
 
 #[test]
+fn tunnel_data_session_reports_diagnostics_while_session_is_open() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![
+            Ok(hello_ack_frame()),
+            Ok(encode_frame(&KtpFrame::connection(FrameType::Ping, Vec::new())).unwrap()),
+            Err(TransportError::SocketClosed),
+        ],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: None,
+    };
+    let mut runtime = RuntimeWaitOrderingRuntime {
+        events: Rc::clone(&events),
+        waited: false,
+    };
+    let diagnostics = SharedTunnelDataDiagnostics::new();
+    let reports = Rc::new(RefCell::new(Vec::<TunnelDataDiagnosticsSnapshot>::new()));
+    let report_sink = Rc::clone(&reports);
+
+    run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-ktp"),
+        &mut transport,
+        &mut runtime,
+        &diagnostics,
+        Duration::ZERO,
+        |snapshot| report_sink.borrow_mut().push(snapshot.clone()),
+    )
+    .expect("data session should report diagnostics before reconnect boundary");
+
+    assert!(
+        reports.borrow().iter().any(|snapshot| {
+            snapshot.runtime_wait_attempts > 0
+                && snapshot.outbound_runtime_frames > 0
+                && snapshot.outbound_queue_dwell_frames == 1
+        }),
+        "diagnostics must be observable before the data session closes: {:?}",
+        reports.borrow()
+    );
+}
+
+#[test]
 fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
     let snapshot = TunnelDataDiagnosticsSnapshot {
         runtime_wait_attempts: 3,
@@ -938,7 +987,8 @@ fn main_wires_tunnel_control_state_into_data_ready_source() {
     assert!(source.contains("TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport"));
     assert!(source.contains("run_tunnel_control_once_with_rule_sink"));
     assert!(source.contains("run_tunnel_control_session_with_rule_sink"));
-    assert!(source.contains("run_tunnel_data_session_with_ready_source_and_runtime"));
+    assert!(source
+        .contains("run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter"));
 }
 
 #[test]

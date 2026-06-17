@@ -874,11 +874,44 @@ where
     S: TunnelDataReadySource,
     R: TunnelSessionRuntime,
 {
+    run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
+        url,
+        headers,
+        agent_id_hint,
+        agent_version,
+        ready_source,
+        transport,
+        runtime,
+        diagnostics,
+        Duration::MAX,
+        |_| {},
+    )
+}
+
+pub fn run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter<T, S, R, F>(
+    url: &str,
+    headers: &[HeaderPair],
+    agent_id_hint: &str,
+    agent_version: &str,
+    ready_source: &S,
+    transport: &mut T,
+    runtime: &mut R,
+    diagnostics: &SharedTunnelDataDiagnostics,
+    diagnostics_report_interval: Duration,
+    mut report_diagnostics: F,
+) -> Result<(), TransportError>
+where
+    T: TunnelDataTransport,
+    S: TunnelDataReadySource,
+    R: TunnelSessionRuntime,
+    F: FnMut(&TunnelDataDiagnosticsSnapshot),
+{
     let mut socket = match transport.connect_tunnel_data(url, headers) {
         Ok(socket) => socket,
         Err(error) if is_nonfatal_connect_error(&error) => return Ok(()),
         Err(error) => return Err(error),
     };
+    let mut last_diagnostics_report = Instant::now();
 
     let hello_ready = ready_source.current_ready();
     let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &hello_ready.revision)?;
@@ -920,10 +953,22 @@ where
                 diagnostics
                     .record_outbound_queue_dwell_snapshot(runtime.outbound_queue_dwell_snapshot());
                 if waited_runtime_frames > 0 {
+                    report_tunnel_data_diagnostics_if_due(
+                        diagnostics,
+                        &mut last_diagnostics_report,
+                        diagnostics_report_interval,
+                        &mut report_diagnostics,
+                    );
                     continue;
                 }
             }
         }
+        report_tunnel_data_diagnostics_if_due(
+            diagnostics,
+            &mut last_diagnostics_report,
+            diagnostics_report_interval,
+            &mut report_diagnostics,
+        );
         diagnostics.record_socket_idle_read();
         let read_result = match runtime.tunnel_data_socket_idle_timeout() {
             Some(timeout) => socket.read_optional_frame_with_timeout(timeout),
@@ -938,6 +983,24 @@ where
             Err(TransportError::SocketClosed) => return Ok(()),
             Err(error) => return Err(error),
         }
+    }
+}
+
+fn report_tunnel_data_diagnostics_if_due<F>(
+    diagnostics: &SharedTunnelDataDiagnostics,
+    last_report: &mut Instant,
+    interval: Duration,
+    report: &mut F,
+) where
+    F: FnMut(&TunnelDataDiagnosticsSnapshot),
+{
+    if interval == Duration::MAX || last_report.elapsed() < interval {
+        return;
+    }
+    let snapshot = diagnostics.snapshot();
+    if snapshot.has_activity() {
+        report(&snapshot);
+        *last_report = Instant::now();
     }
 }
 
