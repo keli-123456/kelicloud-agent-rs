@@ -461,6 +461,7 @@ impl KtpEncryptedTcpStream {
         max_payload_len: usize,
         max_buffer_len: usize,
     ) -> Self {
+        let _ = stream.set_nodelay(true);
         Self {
             stream,
             seal: KtpCryptoSeal::new(key.clone(), seal_direction),
@@ -470,6 +471,10 @@ impl KtpEncryptedTcpStream {
                 KTP_CRYPTO_HEADER_LEN + KTP_HEADER_LEN + 16 * 1024 + 16,
             ),
         }
+    }
+
+    pub fn tcp_nodelay(&self) -> Result<bool, KtpTcpTransportError> {
+        self.stream.nodelay().map_err(KtpTcpTransportError::Io)
     }
 
     pub async fn send_frame(&mut self, frame: &KtpFrame) -> Result<(), KtpTcpTransportError> {

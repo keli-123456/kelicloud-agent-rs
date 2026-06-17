@@ -259,6 +259,50 @@ fn encrypted_tcp_stream_round_trips_frame_over_loopback() {
 }
 
 #[test]
+fn encrypted_tcp_stream_enables_tcp_nodelay_by_default() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let server_key = key.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept encrypted tcp");
+            let server = KtpEncryptedTcpStream::from_stream(
+                stream,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            server.tcp_nodelay().expect("server TCP_NODELAY query")
+        });
+
+        let stream = TcpStream::connect(addr).await.expect("connect client");
+        let client = KtpEncryptedTcpStream::from_stream(
+            stream,
+            key,
+            KtpCryptoDirection::ClientToRelay,
+            KtpCryptoDirection::RelayToClient,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        );
+
+        assert!(client.tcp_nodelay().expect("client TCP_NODELAY query"));
+        assert!(server.await.expect("server task"));
+    });
+}
+
+#[test]
 fn encrypted_tcp_stream_sends_batched_frames_over_loopback() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()

@@ -809,6 +809,9 @@ Tunnel-data receive batch foundation:
 - `scripts/tunnel-relay-local-smoke.sh` runs a small batch-read carrier sample
   by default. Use `KTP_SMOKE_BATCH_READ_FRAMES` and
   `KTP_SMOKE_BATCH_READ_PAYLOAD_BYTES` to adjust that smoke workload.
+- KTP encrypted TCP streams enable `TCP_NODELAY` by default. That keeps
+  interactive RDP-like payloads from waiting behind Nagle coalescing while the
+  existing batched write path still coalesces intentional KTP frame batches.
 
 Linux debug smoke sample:
 
