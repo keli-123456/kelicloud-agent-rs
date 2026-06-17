@@ -397,6 +397,82 @@ Notes:
   more frames, and live forwarding traffic. This result makes batch 32 a
   candidate for the next tuning pass, not a production default by itself.
 
+## 2026-06-18 Multi-Client Relay Batch Matrix
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Commit: `f960a42`
+- End-to-end binary: `ktp-e2e-bench`
+- Build mode: release builds created by `scripts/ktp-relay-batch-matrix.sh`
+- Run directory: `/root/kelicloud-agent-rs-matrix-f960a42-a`
+
+Host:
+
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- CPU: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+- CPU cores: 4
+- Memory: 3.8 GiB
+
+Command:
+
+```bash
+KTP_BATCH_MATRIX_CLIENTS="1 2 4 8" \
+KTP_BATCH_MATRIX_BATCHES="16 32 64" \
+KTP_BATCH_MATRIX_RUNS=5 \
+KTP_BATCH_MATRIX_FRAMES=64 \
+KTP_BATCH_MATRIX_PAYLOAD_BYTES=8192 \
+KTP_BATCH_MATRIX_CSV=/tmp/ktp-batch-matrix-clients-f960a42.csv \
+  bash scripts/ktp-relay-batch-matrix.sh
+```
+
+Workload:
+
+- Profile: `rdp-like`
+- Runs: 5
+- Clients: 1, 2, 4, 8
+- Frames per client: 64
+- Max payload: 8192 B
+- Relay wait timeout: 100 us
+- Relay batch sweep: 16, 32, 64
+
+Relay batch sweep:
+
+| Clients | Relay Batch Frames | Elapsed Median | Throughput Median | RTT p95 | RTT p99 | RTT Max | Relay Turns | Wait Turns | Max Batch In/Eg |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 16 | 15.612 ms | 3.777 MiB/s | 637 us | 1503 us | 2242 us | 760 | 750 | 1 / 2 |
+| 1 | 32 | 16.951 ms | 3.478 MiB/s | 578 us | 1748 us | 2065 us | 786 | 779 | 1 / 2 |
+| 1 | 64 | 16.392 ms | 3.597 MiB/s | 597 us | 2607 us | 5056 us | 774 | 766 | 1 / 2 |
+| 2 | 16 | 27.916 ms | 4.224 MiB/s | 1481 us | 4879 us | 9040 us | 1411 | 1259 | 3 / 3 |
+| 2 | 32 | 23.811 ms | 4.952 MiB/s | 747 us | 2353 us | 5066 us | 1219 | 1075 | 3 / 3 |
+| 2 | 64 | 19.159 ms | 6.155 MiB/s | 670 us | 1684 us | 3870 us | 1205 | 1082 | 3 / 2 |
+| 4 | 16 | 26.568 ms | 8.877 MiB/s | 1027 us | 2477 us | 5425 us | 1889 | 1453 | 6 / 4 |
+| 4 | 32 | 29.290 ms | 8.052 MiB/s | 1191 us | 2705 us | 3574 us | 2011 | 1630 | 6 / 4 |
+| 4 | 64 | 24.651 ms | 9.567 MiB/s | 1212 us | 2715 us | 10334 us | 1841 | 1456 | 7 / 4 |
+| 8 | 16 | 63.979 ms | 7.372 MiB/s | 2677 us | 6148 us | 19081 us | 3080 | 2043 | 11 / 7 |
+| 8 | 32 | 41.240 ms | 11.438 MiB/s | 1377 us | 2896 us | 5449 us | 3058 | 2099 | 9 / 8 |
+| 8 | 64 | 31.126 ms | 15.154 MiB/s | 1184 us | 2583 us | 5242 us | 2965 | 2076 | 10 / 6 |
+
+Notes:
+
+- Single-client behavior is still noisy and does not justify tuning the global
+  default downward. Batch 16 had the best median throughput, while batch 32 had
+  the best p95 and max RTT in this sample.
+- At 2 clients, batch 64 had the best median throughput and the best p95, p99,
+  and max RTT.
+- At 4 clients, batch 64 had the best median throughput and elapsed time, but
+  the worst max RTT. Batch 16 had the better p95/p99 latency, while batch 32 had
+  the best max RTT.
+- At 8 clients, batch 64 was best across median elapsed time, median
+  throughput, p95, p99, and max RTT. This is the strongest current evidence for
+  keeping the relay batch cap at 64 for grouped or multi-session forwarding.
+- Larger caps become meaningful as concurrency rises: observed max ingress
+  batches grew from 1 frame at one client to 10 to 11 frames at eight clients.
+  The next runtime optimization should focus on relay scheduling and fairness
+  under bursty multi-session load, not on lowering the default batch cap.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
@@ -458,7 +534,8 @@ Notes:
 
 Next evidence to collect:
 
-- Repeated multi-client runs with higher sample counts and percentile summaries.
+- Higher sample-count multi-client runs, including at least one 8+ client
+  release-host matrix after the next relay scheduling change.
 - Longer release-host and live-canary samples for
   `ktp-e2e-bench --profile rdp-like` so tunnel tuning compares interactive
   mixed-payload traffic instead of fixed-size frames only.
