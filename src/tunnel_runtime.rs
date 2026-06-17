@@ -402,6 +402,15 @@ impl TunnelTcpRuntime {
         )
     }
 
+    pub fn new_with_limits_and_frame_ready_notifier_for_data_transport(
+        rule_state: SharedTunnelRuleState,
+        limits: TunnelRuntimeLimits,
+        data_transport: &str,
+        notifier: Arc<TunnelFrameReadyNotifier>,
+    ) -> Self {
+        Self::new_internal(rule_state, limits, data_transport, Some(notifier))
+    }
+
     fn new_internal(
         rule_state: SharedTunnelRuleState,
         limits: TunnelRuntimeLimits,

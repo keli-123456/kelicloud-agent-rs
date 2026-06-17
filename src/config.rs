@@ -4,6 +4,8 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 
+use crate::tunnel_async_runtime::{TunnelRelayBatchPolicy, TunnelRuntimeLimits};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentConfig {
     pub endpoint: String,
@@ -14,6 +16,7 @@ pub struct AgentConfig {
     pub tunnel_control_enabled: bool,
     pub tunnel_data_enabled: bool,
     pub tunnel_ktp_tcp_address: String,
+    pub tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy,
     pub interval_seconds: f64,
     pub max_retries: u32,
     pub reconnect_interval_seconds: u64,
@@ -92,6 +95,7 @@ impl AgentConfig {
         let mut tunnel_data_enabled = false;
         let mut tunnel_ktp_tcp_address =
             clean_optional(env_lookup("AGENT_TUNNEL_KTP_TCP_ADDRESS")).unwrap_or_default();
+        let mut tunnel_ktp_relay_batch_policy = TunnelRelayBatchPolicy::Fixed;
         let mut interval_seconds = parse_env_f64(&env_lookup, "AGENT_INTERVAL", 1.0)?;
         let mut max_retries = parse_env_u32(&env_lookup, "AGENT_MAX_RETRIES", 3)?;
         let mut reconnect_interval_seconds =
@@ -170,6 +174,12 @@ impl AgentConfig {
                 }
                 "--tunnel-ktp-tcp-address" | "--ktp-tcp-address" => {
                     tunnel_ktp_tcp_address = next_value(&mut iter, "--tunnel-ktp-tcp-address")?;
+                }
+                "--tunnel-ktp-relay-batch-policy" | "--ktp-relay-batch-policy" => {
+                    tunnel_ktp_relay_batch_policy = parse_tunnel_relay_batch_policy(
+                        "--tunnel-ktp-relay-batch-policy",
+                        &next_value(&mut iter, "--tunnel-ktp-relay-batch-policy")?,
+                    )?;
                 }
                 "--interval" => {
                     interval_seconds =
@@ -360,6 +370,18 @@ impl AgentConfig {
                         clean_required(&arg["--ktp-tcp-address=".len()..], "--ktp-tcp-address")?
                             .unwrap();
                 }
+                _ if arg.starts_with("--tunnel-ktp-relay-batch-policy=") => {
+                    tunnel_ktp_relay_batch_policy = parse_tunnel_relay_batch_policy(
+                        "--tunnel-ktp-relay-batch-policy",
+                        &arg["--tunnel-ktp-relay-batch-policy=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--ktp-relay-batch-policy=") => {
+                    tunnel_ktp_relay_batch_policy = parse_tunnel_relay_batch_policy(
+                        "--ktp-relay-batch-policy",
+                        &arg["--ktp-relay-batch-policy=".len()..],
+                    )?;
+                }
                 _ => {}
             }
         }
@@ -385,6 +407,7 @@ impl AgentConfig {
             "AGENT_TUNNEL_KTP_TCP_ADDRESS",
             &mut tunnel_ktp_tcp_address,
         );
+        apply_tunnel_relay_batch_policy_env(&env_lookup, &mut tunnel_ktp_relay_batch_policy)?;
         apply_f64_env(&env_lookup, "AGENT_INTERVAL", &mut interval_seconds);
         apply_u32_env(&env_lookup, "AGENT_MAX_RETRIES", &mut max_retries);
         apply_u64_env(
@@ -464,6 +487,10 @@ impl AgentConfig {
             if let Some(value) = file_config.tunnel_ktp_tcp_address {
                 tunnel_ktp_tcp_address = clean_config_string(value);
             }
+            if let Some(value) = file_config.tunnel_ktp_relay_batch_policy {
+                tunnel_ktp_relay_batch_policy =
+                    parse_tunnel_relay_batch_policy("tunnel_ktp_relay_batch_policy", &value)?;
+            }
             if let Some(value) = file_config.interval {
                 interval_seconds = validate_positive_f64("interval", value)?;
             }
@@ -536,6 +563,7 @@ impl AgentConfig {
             tunnel_control_enabled,
             tunnel_data_enabled,
             tunnel_ktp_tcp_address,
+            tunnel_ktp_relay_batch_policy,
             interval_seconds,
             max_retries,
             reconnect_interval_seconds,
@@ -557,6 +585,12 @@ impl AgentConfig {
             once,
         })
     }
+
+    pub fn tunnel_runtime_limits(&self) -> TunnelRuntimeLimits {
+        let mut limits = TunnelRuntimeLimits::default();
+        limits.relay_batch_policy = self.tunnel_ktp_relay_batch_policy;
+        limits
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -569,6 +603,7 @@ struct FileConfig {
     tunnel_control_enabled: Option<bool>,
     tunnel_data_enabled: Option<bool>,
     tunnel_ktp_tcp_address: Option<String>,
+    tunnel_ktp_relay_batch_policy: Option<String>,
     interval: Option<f64>,
     max_retries: Option<u32>,
     reconnect_interval: Option<u64>,
@@ -648,6 +683,14 @@ fn parse_tunnel_control_enabled(value: &str) -> Option<bool> {
         "0" | "false" | "disabled" | "disable" | "off" | "no" => Some(false),
         _ => None,
     }
+}
+
+fn parse_tunnel_relay_batch_policy(
+    flag: &'static str,
+    value: &str,
+) -> Result<TunnelRelayBatchPolicy, ConfigError> {
+    TunnelRelayBatchPolicy::parse_config_value(&value.trim().to_ascii_lowercase())
+        .ok_or_else(|| ConfigError::InvalidValue(flag, value.trim().to_string()))
 }
 
 fn parse_env_f64<F>(env_lookup: &F, key: &'static str, default: f64) -> Result<f64, ConfigError>
@@ -740,6 +783,19 @@ where
     {
         *target = value;
     }
+}
+
+fn apply_tunnel_relay_batch_policy_env<F>(
+    env_lookup: &F,
+    target: &mut TunnelRelayBatchPolicy,
+) -> Result<(), ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY")) {
+        *target = parse_tunnel_relay_batch_policy("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY", &value)?;
+    }
+    Ok(())
 }
 
 fn apply_f64_env<F>(env_lookup: &F, key: &'static str, target: &mut f64)

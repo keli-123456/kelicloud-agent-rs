@@ -65,6 +65,10 @@ Supported flags:
 - `--host-proc <path>` or `HOST_PROC`
 - `AGENT_TUNNEL_DATA_ENABLED=true` enables the tunnel data plane used by
   tunnel forwarding rules. The installer exposes this as `--enable-tunnel-data`.
+- `--tunnel-ktp-relay-batch-policy <fixed|adaptive>` or
+  `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY` selects the KTP TCP runtime relay batch
+  policy. The default is `fixed`; `adaptive` is an explicit tuning option for
+  high-concurrency KTP canaries.
 
 ## Linux Install
 
@@ -82,7 +86,8 @@ You can also install with an explicit client token:
 sudo ./install.sh install \
   --endpoint https://panel.example.com \
   --token TOKEN \
-  --enable-tunnel-data
+  --enable-tunnel-data \
+  --tunnel-ktp-relay-batch-policy adaptive
 ```
 
 The same options can use the shorter panel aliases:

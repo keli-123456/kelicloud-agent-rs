@@ -4,6 +4,7 @@ use kelicloud_agent_rs::transport::{
     access_headers, build_basic_info_url, HttpTransport, ReportSocket, ReqwestHttpTransport,
     TransportError, TungsteniteWebSocketTransport, WebSocketTransport,
 };
+use kelicloud_agent_rs::tunnel_async_runtime::TunnelRelayBatchPolicy;
 use std::io::{Read, Write};
 use std::net::{TcpListener, UdpSocket};
 
@@ -17,6 +18,7 @@ fn config_with_cf(id: &str, secret: &str) -> AgentConfig {
         tunnel_control_enabled: true,
         tunnel_data_enabled: false,
         tunnel_ktp_tcp_address: String::new(),
+        tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
         interval_seconds: 1.0,
         max_retries: 3,
         reconnect_interval_seconds: 5,

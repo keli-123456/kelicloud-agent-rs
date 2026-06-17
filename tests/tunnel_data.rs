@@ -1646,7 +1646,9 @@ fn main_wires_tunnel_control_state_into_data_ready_source() {
     assert!(source.contains("TunnelFrameReadyNotifier::new"));
     assert!(source.contains("SharedTunnelDataDiagnostics::new"));
     assert!(source.contains("tunnel_data_diagnostics_line"));
-    assert!(source.contains("TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport"));
+    assert!(source.contains("config.tunnel_runtime_limits()"));
+    assert!(source
+        .contains("TunnelTcpRuntime::new_with_limits_and_frame_ready_notifier_for_data_transport"));
     assert!(source.contains("run_tunnel_control_once_with_rule_sink"));
     assert!(source.contains("run_tunnel_control_session_with_rule_sink"));
     assert!(source

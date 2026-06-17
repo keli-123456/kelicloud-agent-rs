@@ -6,6 +6,7 @@ use kelicloud_agent_rs::auto_discovery::{
 };
 use kelicloud_agent_rs::config::AgentConfig;
 use kelicloud_agent_rs::transport::TransportError;
+use kelicloud_agent_rs::tunnel_async_runtime::TunnelRelayBatchPolicy;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -241,6 +242,7 @@ fn auto_config() -> AgentConfig {
         tunnel_control_enabled: true,
         tunnel_data_enabled: false,
         tunnel_ktp_tcp_address: String::new(),
+        tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
         interval_seconds: 1.0,
         max_retries: 3,
         reconnect_interval_seconds: 5,

@@ -31,6 +31,7 @@ INCLUDE_MOUNTPOINTS=""
 MONTH_ROTATE=""
 TUNNEL_DATA_ENABLED=""
 TUNNEL_KTP_TCP_ADDRESS=""
+TUNNEL_KTP_RELAY_BATCH_POLICY=""
 KEEP_CONFIG="false"
 COMMAND=""
 
@@ -78,6 +79,8 @@ Install options:
   --enable-tunnel-data           Set AGENT_TUNNEL_DATA_ENABLED=true
   --tunnel-ktp-tcp-address ADDRESS
                                   Set AGENT_TUNNEL_KTP_TCP_ADDRESS
+  --tunnel-ktp-relay-batch-policy POLICY
+                                  Set AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY
 EOF
 }
 
@@ -246,6 +249,11 @@ parse_args() {
                 TUNNEL_KTP_TCP_ADDRESS="$2"
                 shift 2
                 ;;
+            --tunnel-ktp-relay-batch-policy|--ktp-relay-batch-policy)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_RELAY_BATCH_POLICY="$2"
+                shift 2
+                ;;
             --keep-config)
                 KEEP_CONFIG="true"
                 shift
@@ -360,6 +368,7 @@ render_env() {
     emit_env "AGENT_MONTH_ROTATE" "$MONTH_ROTATE"
     emit_env "AGENT_TUNNEL_DATA_ENABLED" "$TUNNEL_DATA_ENABLED"
     emit_env "AGENT_TUNNEL_KTP_TCP_ADDRESS" "$TUNNEL_KTP_TCP_ADDRESS"
+    emit_env "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY" "$TUNNEL_KTP_RELAY_BATCH_POLICY"
 }
 
 render_service() {

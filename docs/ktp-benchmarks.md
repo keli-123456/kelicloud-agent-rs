@@ -816,7 +816,9 @@ Tunnel-data receive batch foundation:
   benchmark tooling and the production tunnel runtime. Production defaults stay
   `fixed`; `adaptive` is an explicit runtime-limit choice so it can be tested or
   rolled back without changing the KTP frame format, backend schema, or default
-  WebSocket behavior.
+  WebSocket behavior. Operators can opt into it with
+  `--tunnel-ktp-relay-batch-policy adaptive` or
+  `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=adaptive`.
 
 Linux debug smoke sample:
 

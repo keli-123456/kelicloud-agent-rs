@@ -32,7 +32,7 @@ pub enum TunnelRelayBatchPolicy {
 
 impl TunnelRelayBatchPolicy {
     pub fn parse_config_value(raw: &str) -> Option<Self> {
-        match raw {
+        match raw.trim().to_ascii_lowercase().as_str() {
             "fixed" => Some(Self::Fixed),
             "adaptive" => Some(Self::Adaptive),
             _ => None,

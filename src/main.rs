@@ -193,13 +193,15 @@ fn main() {
         let tunnel_data_agent_version = env!("CARGO_PKG_VERSION").to_string();
         let tunnel_data_shared_token = shared_token.clone();
         let tunnel_data_ready_state = tunnel_ready_state.clone();
+        let tunnel_data_runtime_limits = config.tunnel_runtime_limits();
         std::thread::spawn(move || {
             let frame_ready_notifier =
                 ktp_tcp_enabled.then(|| Arc::new(TunnelFrameReadyNotifier::new()));
             let tunnel_data_diagnostics = SharedTunnelDataDiagnostics::new();
             let mut tunnel_runtime = if ktp_tcp_enabled {
-                TunnelTcpRuntime::new_with_frame_ready_notifier_for_data_transport(
+                TunnelTcpRuntime::new_with_limits_and_frame_ready_notifier_for_data_transport(
                     tunnel_data_ready_state.clone(),
+                    tunnel_data_runtime_limits,
                     TUNNEL_DATA_TRANSPORT_KTP_TCP,
                     frame_ready_notifier
                         .as_ref()
