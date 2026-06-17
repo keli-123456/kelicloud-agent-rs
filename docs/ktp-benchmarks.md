@@ -820,6 +820,31 @@ This sample proves the smoke path and metric shape on the release host. It is
 not a release throughput baseline because the smoke uses a debug build and a
 small workload.
 
+Carrier direction matrix:
+
+```bash
+KTP_CARRIER_MATRIX_CSV=/tmp/ktp-carrier-matrix.csv \
+  bash scripts/ktp-carrier-matrix.sh
+```
+
+The matrix runs `ktp-tunnel-bench` in release mode across carrier directions,
+frame counts, and payload sizes. It writes a CSV with direction, run count,
+payload shape, optional `read_batch_frames`, and min/median/max elapsed and
+throughput fields. Use this for carrier-layer before/after comparisons; keep
+runtime/RDP fairness comparisons in `scripts/ktp-relay-batch-matrix.sh`.
+
+Linux release smoke sample:
+
+```text
+direction,runs,frames,payload_bytes,read_batch_frames,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max
+client_to_relay,2,64,1024,0,0.940,1.544,2.149,29.088,47.806,66.524
+relay_to_client_batch_read,2,64,1024,64,0.862,1.998,3.135,19.937,46.224,72.511
+```
+
+This sample was intentionally small so it can run as a quick release-mode
+verification. Larger matrices should raise frame counts, payload sizes, and run
+count before being used as tuning evidence.
+
 ## 2026-06-18 KTP Local Backend Smoke
 
 Code:
