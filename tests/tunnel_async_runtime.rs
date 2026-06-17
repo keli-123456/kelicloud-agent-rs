@@ -156,6 +156,59 @@ fn async_ingress_listener_queues_open_data_and_writes_response() {
     });
 }
 
+#[test]
+fn async_runtime_rejects_session_when_agent_limit_is_reached() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let mut limits = TunnelRuntimeLimits::default();
+        limits.max_sessions_per_agent = 1;
+        let core = AsyncTunnelCore::new(limits);
+        let (target_port, _hold_thread) = hold_one_target_connection();
+
+        core.open_egress_session(1, 7, "127.0.0.1", target_port, session_open_payload(7))
+            .await
+            .expect("first session should open");
+        assert_eq!(core.stats_snapshot().active_sessions, 1);
+
+        let err = core
+            .open_egress_session(2, 7, "127.0.0.1", target_port, session_open_payload(7))
+            .await
+            .expect_err("second session should exceed agent limit");
+        assert_eq!(err.code(), "session_limit");
+        assert_eq!(core.stats_snapshot().active_sessions, 1);
+    });
+}
+
+#[test]
+fn async_runtime_close_session_removes_active_count() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let core = AsyncTunnelCore::new(TunnelRuntimeLimits::default());
+        let (target_port, _hold_thread) = hold_one_target_connection();
+        core.open_egress_session(10, 7, "127.0.0.1", target_port, session_open_payload(7))
+            .await
+            .expect("session should open");
+
+        assert_eq!(core.stats_snapshot().active_sessions, 1);
+        core.close_session(10, "test_close")
+            .await
+            .expect("session should close");
+        assert_eq!(core.stats_snapshot().active_sessions, 0);
+    });
+}
+
 fn frame(session_id: u64, payload: &[u8]) -> KtpFrame {
     KtpFrame {
         frame_type: FrameType::SessionData,
@@ -164,6 +217,17 @@ fn frame(session_id: u64, payload: &[u8]) -> KtpFrame {
         session_id,
         payload: payload.to_vec(),
     }
+}
+
+fn hold_one_target_connection() -> (u16, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind target listener");
+    let port = listener.local_addr().expect("target addr").port();
+    let thread = thread::spawn(move || {
+        if let Ok((_stream, _)) = listener.accept() {
+            thread::sleep(std::time::Duration::from_secs(5));
+        }
+    });
+    (port, thread)
 }
 
 fn free_tcp_port() -> u16 {

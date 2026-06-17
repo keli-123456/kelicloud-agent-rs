@@ -175,10 +175,16 @@ pub struct TunnelIngressListenerSpec {
 pub struct AsyncTunnelCore {
     limits: TunnelRuntimeLimits,
     outbound: AsyncTunnelFrameQueue,
-    sessions: Arc<Mutex<HashMap<u64, mpsc::Sender<Vec<u8>>>>>,
+    sessions: Arc<Mutex<HashMap<u64, AsyncTunnelSession>>>,
     listeners: Arc<Mutex<HashMap<u64, tokio::task::JoinHandle<()>>>>,
     next_session_id: Arc<AtomicU64>,
     stats: TunnelRuntimeStats,
+}
+
+#[derive(Clone)]
+struct AsyncTunnelSession {
+    rule_id: u64,
+    to_tcp: mpsc::Sender<Vec<u8>>,
 }
 
 impl AsyncTunnelCore {
@@ -241,6 +247,7 @@ impl AsyncTunnelCore {
         target_port: u16,
         _open_payload: Vec<u8>,
     ) -> Result<Vec<KtpFrame>, TunnelRuntimeError> {
+        self.ensure_agent_session_capacity()?;
         let target = format!("{}:{}", target_host.trim(), target_port);
         let stream =
             tokio::time::timeout(self.limits.target_dial_timeout, TcpStream::connect(&target))
@@ -253,7 +260,13 @@ impl AsyncTunnelCore {
         self.sessions
             .lock()
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
-            .insert(session_id, tx);
+            .insert(
+                session_id,
+                AsyncTunnelSession {
+                    rule_id,
+                    to_tcp: tx,
+                },
+            );
         self.stats.session_opened(rule_id);
         self.spawn_session_reader(reader, session_id, rule_id, FrameLeg::Egress);
         self.spawn_session_writer(writer, rx, rule_id);
@@ -274,13 +287,20 @@ impl AsyncTunnelCore {
         stream: TcpStream,
         source_addr: String,
     ) -> Result<(), TunnelRuntimeError> {
+        self.ensure_agent_session_capacity()?;
         let (reader, writer) = stream.into_split();
         let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
 
         self.sessions
             .lock()
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
-            .insert(session_id, tx);
+            .insert(
+                session_id,
+                AsyncTunnelSession {
+                    rule_id,
+                    to_tcp: tx,
+                },
+            );
         self.stats.session_opened(rule_id);
 
         let payload = encode_session_open_payload(&TunnelSessionOpenPayload {
@@ -313,7 +333,7 @@ impl AsyncTunnelCore {
             .lock()
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
             .get(&session_id)
-            .cloned()
+            .map(|session| session.to_tcp.clone())
             .ok_or_else(|| TunnelRuntimeError::runtime_unavailable("session not found"))?;
 
         sender
@@ -323,6 +343,37 @@ impl AsyncTunnelCore {
 
     pub async fn next_frame(&self) -> Option<KtpFrame> {
         self.outbound.pop()
+    }
+
+    pub async fn close_session(
+        &self,
+        session_id: u64,
+        _reason: &str,
+    ) -> Result<(), TunnelRuntimeError> {
+        let removed = self
+            .sessions
+            .lock()
+            .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
+            .remove(&session_id);
+        if let Some(session) = removed {
+            self.stats.session_closed(session.rule_id);
+            Ok(())
+        } else {
+            Err(TunnelRuntimeError::runtime_unavailable("session not found"))
+        }
+    }
+
+    pub fn stats_snapshot(&self) -> TunnelRuntimeStatsSnapshot {
+        self.stats.snapshot()
+    }
+
+    fn ensure_agent_session_capacity(&self) -> Result<(), TunnelRuntimeError> {
+        if self.stats.snapshot().active_sessions >= self.limits.max_sessions_per_agent {
+            return Err(TunnelRuntimeError::session_limit(
+                "agent tunnel session limit reached",
+            ));
+        }
+        Ok(())
     }
 
     fn spawn_session_reader(
@@ -363,10 +414,13 @@ impl AsyncTunnelCore {
                     Err(_) => break,
                 }
             }
-            if let Ok(mut sessions) = sessions.lock() {
-                sessions.remove(&session_id);
+            let removed = sessions
+                .lock()
+                .ok()
+                .and_then(|mut sessions| sessions.remove(&session_id));
+            if removed.is_some() {
+                stats.session_closed(rule_id);
             }
-            stats.session_closed(rule_id);
         });
     }
 
@@ -399,6 +453,13 @@ impl TunnelRuntimeError {
     pub fn listen_bind_failed(message: impl Into<String>) -> Self {
         Self {
             code: "listen_bind_failed",
+            message: message.into(),
+        }
+    }
+
+    pub fn session_limit(message: impl Into<String>) -> Self {
+        Self {
+            code: "session_limit",
             message: message.into(),
         }
     }
