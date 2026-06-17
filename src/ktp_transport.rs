@@ -557,6 +557,32 @@ impl KtpEncryptedTcpStream {
 pub struct KtpEncryptedTcpRelayStats {
     pub frames_left_to_right: u64,
     pub frames_right_to_left: u64,
+    pub batches_left_to_right: u64,
+    pub batches_right_to_left: u64,
+    pub max_batch_frames_left_to_right: u64,
+    pub max_batch_frames_right_to_left: u64,
+}
+
+impl KtpEncryptedTcpRelayStats {
+    fn record_left_to_right_batch(&mut self, frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        self.frames_left_to_right += frames as u64;
+        self.batches_left_to_right += 1;
+        self.max_batch_frames_left_to_right =
+            self.max_batch_frames_left_to_right.max(frames as u64);
+    }
+
+    fn record_right_to_left_batch(&mut self, frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        self.frames_right_to_left += frames as u64;
+        self.batches_right_to_left += 1;
+        self.max_batch_frames_right_to_left =
+            self.max_batch_frames_right_to_left.max(frames as u64);
+    }
 }
 
 pub struct KtpEncryptedTcpFrameRelay {
@@ -583,14 +609,14 @@ impl KtpEncryptedTcpFrameRelay {
     pub async fn relay_next_left_to_right(&mut self) -> Result<KtpFrame, KtpTcpTransportError> {
         let frame = self.left.next_frame().await?;
         self.right.send_frame(&frame).await?;
-        self.stats.frames_left_to_right += 1;
+        self.stats.record_left_to_right_batch(1);
         Ok(frame)
     }
 
     pub async fn relay_next_right_to_left(&mut self) -> Result<KtpFrame, KtpTcpTransportError> {
         let frame = self.right.next_frame().await?;
         self.left.send_frame(&frame).await?;
-        self.stats.frames_right_to_left += 1;
+        self.stats.record_right_to_left_batch(1);
         Ok(frame)
     }
 
@@ -600,7 +626,7 @@ impl KtpEncryptedTcpFrameRelay {
     ) -> Result<Vec<KtpFrame>, KtpTcpTransportError> {
         let frames = self.left.next_frames(max_frames).await?;
         self.right.send_frames(&frames).await?;
-        self.stats.frames_left_to_right += frames.len() as u64;
+        self.stats.record_left_to_right_batch(frames.len());
         Ok(frames)
     }
 
@@ -610,7 +636,7 @@ impl KtpEncryptedTcpFrameRelay {
     ) -> Result<Vec<KtpFrame>, KtpTcpTransportError> {
         let frames = self.right.next_frames(max_frames).await?;
         self.left.send_frames(&frames).await?;
-        self.stats.frames_right_to_left += frames.len() as u64;
+        self.stats.record_right_to_left_batch(frames.len());
         Ok(frames)
     }
 

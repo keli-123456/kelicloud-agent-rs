@@ -99,6 +99,28 @@ struct RelayStats {
     egress_frames: usize,
     ingress_data_frames: usize,
     egress_data_frames: usize,
+    ingress_batches: usize,
+    egress_batches: usize,
+    ingress_max_batch_frames: usize,
+    egress_max_batch_frames: usize,
+}
+
+impl RelayStats {
+    fn record_ingress_batch(&mut self, frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        self.ingress_batches += 1;
+        self.ingress_max_batch_frames = self.ingress_max_batch_frames.max(frames);
+    }
+
+    fn record_egress_batch(&mut self, frames: usize) {
+        if frames == 0 {
+            return;
+        }
+        self.egress_batches += 1;
+        self.egress_max_batch_frames = self.egress_max_batch_frames.max(frames);
+    }
 }
 
 fn main() {
@@ -384,9 +406,17 @@ fn diagnostics_suffix(config: BenchConfig, samples: &[BenchSample]) -> String {
         total.egress_frames += sample.relay_stats.egress_frames;
         total.ingress_data_frames += sample.relay_stats.ingress_data_frames;
         total.egress_data_frames += sample.relay_stats.egress_data_frames;
+        total.ingress_batches += sample.relay_stats.ingress_batches;
+        total.egress_batches += sample.relay_stats.egress_batches;
+        total.ingress_max_batch_frames = total
+            .ingress_max_batch_frames
+            .max(sample.relay_stats.ingress_max_batch_frames);
+        total.egress_max_batch_frames = total
+            .egress_max_batch_frames
+            .max(sample.relay_stats.egress_max_batch_frames);
     }
     format!(
-        " relay_turns={} relay_empty_turns={} relay_yield_turns={} relay_wait_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={}",
+        " relay_turns={} relay_empty_turns={} relay_yield_turns={} relay_wait_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={} ingress_batches={} egress_batches={} ingress_max_batch_frames={} egress_max_batch_frames={}",
         total.relay_turns,
         total.relay_empty_turns,
         total.relay_yield_turns,
@@ -394,7 +424,11 @@ fn diagnostics_suffix(config: BenchConfig, samples: &[BenchSample]) -> String {
         total.ingress_frames,
         total.egress_frames,
         total.ingress_data_frames,
-        total.egress_data_frames
+        total.egress_data_frames,
+        total.ingress_batches,
+        total.egress_batches,
+        total.ingress_max_batch_frames,
+        total.egress_max_batch_frames
     )
 }
 
@@ -487,6 +521,9 @@ fn relay_data_batches(
                 }
             }
         }
+
+        stats.record_ingress_batch(ingress_frames.len());
+        stats.record_egress_batch(egress_frames.len());
 
         for frame in ingress_frames {
             stats.ingress_frames += 1;

@@ -568,6 +568,10 @@ fn encrypted_tcp_frame_relay_drains_ready_batches_per_round() {
         let stats = relay_task.await.expect("relay task");
         assert_eq!(stats.frames_left_to_right, 3);
         assert_eq!(stats.frames_right_to_left, 3);
+        assert_eq!(stats.batches_left_to_right, 1);
+        assert_eq!(stats.batches_right_to_left, 1);
+        assert_eq!(stats.max_batch_frames_left_to_right, 3);
+        assert_eq!(stats.max_batch_frames_right_to_left, 3);
 
         for expected_session_id in 2300..=2302 {
             let frame = timeout(Duration::from_secs(1), right_client.next_frame())

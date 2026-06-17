@@ -167,6 +167,10 @@ fn ktp_e2e_bench_cli_reports_relay_diagnostics_when_requested() {
     assert!(stdout.contains("egress_frames="));
     assert!(stdout.contains("ingress_data_frames="));
     assert!(stdout.contains("egress_data_frames="));
+    assert!(stdout.contains("ingress_batches="));
+    assert!(stdout.contains("egress_batches="));
+    assert!(stdout.contains("ingress_max_batch_frames="));
+    assert!(stdout.contains("egress_max_batch_frames="));
 }
 
 #[test]
