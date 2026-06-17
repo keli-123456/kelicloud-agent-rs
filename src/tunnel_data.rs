@@ -385,6 +385,11 @@ fn update_atomic_max(target: &AtomicU64, candidate: u64) {
 
 pub trait TunnelDataSocket {
     fn send_frame(&mut self, frame: &[u8]) -> Result<(), TransportError>;
+    fn send_ktp_frame(&mut self, frame: &KtpFrame) -> Result<(), TransportError> {
+        let bytes = encode_frame(frame)
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        self.send_frame(&bytes)
+    }
     fn read_frame(&mut self) -> Result<Vec<u8>, TransportError>;
     fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
         self.read_frame().map(Some)
@@ -544,6 +549,12 @@ impl TunnelDataSocket for KtpEncryptedTcpTunnelDataSocket {
             .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
         self.runtime
             .block_on(self.stream.send_frame(&frame))
+            .map_err(ktp_tcp_transport_error_to_transport)
+    }
+
+    fn send_ktp_frame(&mut self, frame: &KtpFrame) -> Result<(), TransportError> {
+        self.runtime
+            .block_on(self.stream.send_frame(frame))
             .map_err(ktp_tcp_transport_error_to_transport)
     }
 
@@ -767,9 +778,8 @@ where
     };
 
     let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &ready.revision)?;
-    let hello_frame = encode_frame(&KtpFrame::connection(FrameType::Hello, hello_payload))
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    if send_tunnel_data_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
+    let hello_frame = KtpFrame::connection(FrameType::Hello, hello_payload);
+    if send_tunnel_data_ktp_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
         return Ok(());
     }
 
@@ -778,9 +788,8 @@ where
     }
 
     let ready_payload = encode_ready_payload(ready)?;
-    let ready_frame = encode_frame(&KtpFrame::connection(FrameType::Ready, ready_payload))
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    if send_tunnel_data_frame(&mut socket, &ready_frame)? == SendFrameOutcome::Closed {
+    let ready_frame = KtpFrame::connection(FrameType::Ready, ready_payload);
+    if send_tunnel_data_ktp_frame(&mut socket, &ready_frame)? == SendFrameOutcome::Closed {
         return Ok(());
     }
 
@@ -915,9 +924,8 @@ where
 
     let hello_ready = ready_source.current_ready();
     let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &hello_ready.revision)?;
-    let hello_frame = encode_frame(&KtpFrame::connection(FrameType::Hello, hello_payload))
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    if send_tunnel_data_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
+    let hello_frame = KtpFrame::connection(FrameType::Hello, hello_payload);
+    if send_tunnel_data_ktp_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
         return Ok(());
     }
 
@@ -1011,9 +1019,8 @@ where
     S: TunnelDataSocket,
 {
     let ready_payload = encode_ready_payload(ready)?;
-    let ready_frame = encode_frame(&KtpFrame::connection(FrameType::Ready, ready_payload))
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    send_tunnel_data_frame(socket, &ready_frame)
+    let ready_frame = KtpFrame::connection(FrameType::Ready, ready_payload);
+    send_tunnel_data_ktp_frame(socket, &ready_frame)
 }
 
 pub fn tunnel_data_startup_line(url: &str, enabled: bool) -> String {
@@ -1052,14 +1059,14 @@ enum ReadFrameOutcome {
     Closed,
 }
 
-fn send_tunnel_data_frame<S>(
+fn send_tunnel_data_ktp_frame<S>(
     socket: &mut S,
-    frame: &[u8],
+    frame: &KtpFrame,
 ) -> Result<SendFrameOutcome, TransportError>
 where
     S: TunnelDataSocket,
 {
-    match socket.send_frame(frame) {
+    match socket.send_ktp_frame(frame) {
         Ok(()) => Ok(SendFrameOutcome::Sent),
         Err(TransportError::SocketClosed) => Ok(SendFrameOutcome::Closed),
         Err(error) => Err(error),
@@ -1131,9 +1138,7 @@ where
     S: TunnelDataSocket,
 {
     for frame in frames {
-        let bytes = encode_frame(&frame)
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-        let _ = send_tunnel_data_frame(socket, &bytes)?;
+        let _ = send_tunnel_data_ktp_frame(socket, &frame)?;
     }
     Ok(())
 }
@@ -1151,9 +1156,8 @@ where
         .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
     match frame.frame_type {
         FrameType::Ping => {
-            let pong = encode_frame(&KtpFrame::connection(FrameType::Pong, frame.payload))
-                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-            let _ = send_tunnel_data_frame(socket, &pong)?;
+            let pong = KtpFrame::connection(FrameType::Pong, frame.payload);
+            let _ = send_tunnel_data_ktp_frame(socket, &pong)?;
         }
         FrameType::SessionOpen
         | FrameType::SessionAccept
@@ -1162,9 +1166,7 @@ where
         | FrameType::SessionClose
         | FrameType::SessionError => {
             for response in runtime.handle_server_frame(frame)? {
-                let bytes = encode_frame(&response)
-                    .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-                let _ = send_tunnel_data_frame(socket, &bytes)?;
+                let _ = send_tunnel_data_ktp_frame(socket, &response)?;
             }
         }
         _ => {}

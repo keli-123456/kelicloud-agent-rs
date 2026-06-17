@@ -47,6 +47,16 @@ struct FakeTunnelDataSocket {
     optional_read_timeouts: Vec<Duration>,
 }
 
+struct DirectOnlyTunnelDataTransport {
+    events: Rc<RefCell<Vec<String>>>,
+    inbound: Vec<Result<Vec<u8>, TransportError>>,
+}
+
+struct DirectOnlyTunnelDataSocket {
+    events: Rc<RefCell<Vec<String>>>,
+    inbound: Vec<Result<Vec<u8>, TransportError>>,
+}
+
 impl FakeTunnelDataTransport {
     fn with_hello_ack(events: Rc<RefCell<Vec<String>>>) -> Self {
         Self {
@@ -82,6 +92,22 @@ impl TunnelDataTransport for FakeTunnelDataTransport {
             optional_read_hook: self.optional_read_hook.take(),
             optional_read_count: 0,
             optional_read_timeouts: Vec::new(),
+        })
+    }
+}
+
+impl TunnelDataTransport for DirectOnlyTunnelDataTransport {
+    type Socket = DirectOnlyTunnelDataSocket;
+
+    fn connect_tunnel_data(
+        &mut self,
+        url: &str,
+        _headers: &[HeaderPair],
+    ) -> Result<Self::Socket, TransportError> {
+        self.events.borrow_mut().push(format!("connect:{url}"));
+        Ok(DirectOnlyTunnelDataSocket {
+            events: Rc::clone(&self.events),
+            inbound: self.inbound.drain(..).collect(),
         })
     }
 }
@@ -126,6 +152,55 @@ impl TunnelDataSocket for FakeTunnelDataSocket {
             .push(format!("read_optional_timeout:{}us", timeout.as_micros()));
         self.optional_read_timeouts.push(timeout);
         self.read_optional_frame()
+    }
+}
+
+impl TunnelDataSocket for DirectOnlyTunnelDataSocket {
+    fn send_frame(&mut self, _frame: &[u8]) -> Result<(), TransportError> {
+        self.events.borrow_mut().push("bytes_send".to_string());
+        Err(TransportError::RequestFailed(
+            "wire bytes send path should not be used".to_string(),
+        ))
+    }
+
+    fn send_ktp_frame(&mut self, frame: &KtpFrame) -> Result<(), TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("direct:{:?}", frame.frame_type));
+        Ok(())
+    }
+
+    fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
+        self.events.borrow_mut().push("read".to_string());
+        self.inbound.remove(0).map_err(|error| error.clone())
+    }
+
+    fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        self.events.borrow_mut().push("read_optional".to_string());
+        self.inbound
+            .remove(0)
+            .map(Some)
+            .map_err(|error| error.clone())
+    }
+
+    fn read_optional_frame_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<Vec<u8>>, TransportError> {
+        self.events
+            .borrow_mut()
+            .push(format!("read_optional_timeout:{}us", timeout.as_micros()));
+        self.read_optional_frame()
+    }
+}
+
+struct OneClientFrameRuntime {
+    frame: Option<KtpFrame>,
+}
+
+impl TunnelSessionRuntime for OneClientFrameRuntime {
+    fn next_client_frame(&mut self) -> Result<Option<KtpFrame>, TransportError> {
+        Ok(self.frame.take())
     }
 }
 
@@ -196,6 +271,44 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
             "listen_bind_failed".to_string(),
             "cannot bind listener 127.0.0.1:10088".to_string(),
         )]
+    );
+}
+
+#[test]
+fn tunnel_data_session_uses_direct_ktp_frame_sends_when_socket_supports_it() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = DirectOnlyTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+    };
+    let mut runtime = OneClientFrameRuntime {
+        frame: Some(session_data_frame(77, b"direct")),
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-direct"),
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("data session should use direct frame sends");
+
+    let events = events.borrow();
+    assert!(
+        !events.iter().any(|event| event == "bytes_send"),
+        "direct-capable sockets should not use wire bytes send path: {events:?}"
+    );
+    let direct_sends = events
+        .iter()
+        .filter(|event| event.starts_with("direct:"))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        direct_sends,
+        vec!["direct:Hello", "direct:Ready", "direct:SessionData"]
     );
 }
 
