@@ -5,6 +5,8 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use std::error::Error;
 use std::fmt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 pub const KTP_CRYPTO_MAGIC: &[u8; 4] = b"KTE1";
 pub const KTP_CRYPTO_VERSION: u8 = 1;
@@ -385,4 +387,82 @@ fn nonce(direction: KtpCryptoDirection, sequence: u64) -> Nonce {
     bytes[0] = direction.id();
     bytes[4..12].copy_from_slice(&sequence.to_be_bytes());
     *Nonce::from_slice(&bytes)
+}
+
+#[derive(Debug)]
+pub enum KtpTcpTransportError {
+    Io(std::io::Error),
+    Crypto(KtpCryptoError),
+    Closed,
+}
+
+impl fmt::Display for KtpTcpTransportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => write!(f, "{error}"),
+            Self::Crypto(error) => write!(f, "{error}"),
+            Self::Closed => write!(f, "KTP encrypted TCP stream closed"),
+        }
+    }
+}
+
+impl Error for KtpTcpTransportError {}
+
+pub struct KtpEncryptedTcpStream {
+    stream: TcpStream,
+    seal: KtpCryptoSeal,
+    codec: KtpCryptoRecordCodec,
+    read_buffer: Vec<u8>,
+}
+
+impl KtpEncryptedTcpStream {
+    pub fn from_stream(
+        stream: TcpStream,
+        key: KtpCryptoKey,
+        seal_direction: KtpCryptoDirection,
+        open_direction: KtpCryptoDirection,
+        max_payload_len: usize,
+        max_buffer_len: usize,
+    ) -> Self {
+        Self {
+            stream,
+            seal: KtpCryptoSeal::new(key.clone(), seal_direction),
+            codec: KtpCryptoRecordCodec::new(key, open_direction, max_payload_len, max_buffer_len),
+            read_buffer: vec![0u8; 16 * 1024],
+        }
+    }
+
+    pub async fn send_frame(&mut self, frame: &KtpFrame) -> Result<(), KtpTcpTransportError> {
+        let record = self
+            .seal
+            .seal_frame(frame)
+            .map_err(KtpTcpTransportError::Crypto)?;
+        self.stream
+            .write_all(&record)
+            .await
+            .map_err(KtpTcpTransportError::Io)
+    }
+
+    pub async fn next_frame(&mut self) -> Result<KtpFrame, KtpTcpTransportError> {
+        loop {
+            if let Some(frame) = self
+                .codec
+                .next_frame()
+                .map_err(KtpTcpTransportError::Crypto)?
+            {
+                return Ok(frame);
+            }
+            let read = self
+                .stream
+                .read(&mut self.read_buffer)
+                .await
+                .map_err(KtpTcpTransportError::Io)?;
+            if read == 0 {
+                return Err(KtpTcpTransportError::Closed);
+            }
+            self.codec
+                .push(&self.read_buffer[..read])
+                .map_err(KtpTcpTransportError::Crypto)?;
+        }
+    }
 }

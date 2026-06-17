@@ -4,8 +4,9 @@ use kelicloud_agent_rs::ktp::{
 };
 use kelicloud_agent_rs::ktp_transport::{
     KtpCryptoDirection, KtpCryptoKey, KtpCryptoOpen, KtpCryptoRecordCodec, KtpCryptoSeal,
-    KtpStreamCodec, KtpStreamCodecError,
+    KtpEncryptedTcpStream, KtpStreamCodec, KtpStreamCodecError,
 };
+use tokio::net::{TcpListener, TcpStream};
 
 #[test]
 fn stream_codec_decodes_frame_split_across_tcp_chunks() {
@@ -150,6 +151,61 @@ fn crypto_record_codec_decodes_split_encrypted_records() {
 
     assert_eq!(codec.next_frame().expect("decode frame"), Some(frame));
     assert_eq!(codec.next_frame().expect("decode empty"), None);
+}
+
+#[test]
+fn encrypted_tcp_stream_round_trips_frame_over_loopback() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let server_key = key.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept encrypted tcp");
+            let mut server = KtpEncryptedTcpStream::from_stream(
+                stream,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            let request = server.next_frame().await.expect("read request");
+            assert_eq!(request, session_data(801, b"hello relay"));
+            server
+                .send_frame(&session_data(802, b"hello client"))
+                .await
+                .expect("send response");
+        });
+
+        let stream = TcpStream::connect(addr).await.expect("connect client");
+        let mut client = KtpEncryptedTcpStream::from_stream(
+            stream,
+            key,
+            KtpCryptoDirection::ClientToRelay,
+            KtpCryptoDirection::RelayToClient,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        );
+        client
+            .send_frame(&session_data(801, b"hello relay"))
+            .await
+            .expect("send request");
+        assert_eq!(
+            client.next_frame().await.expect("read response"),
+            session_data(802, b"hello client")
+        );
+        server.await.expect("server task");
+    });
 }
 
 fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
