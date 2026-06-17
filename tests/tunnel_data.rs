@@ -1,17 +1,22 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use kelicloud_agent_rs::ktp::{
     decode_frame, encode_frame, FrameLeg, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN,
 };
+use kelicloud_agent_rs::ktp_transport::{KtpCryptoDirection, KtpCryptoKey, KtpEncryptedTcpStream};
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
 use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_once, run_tunnel_data_session, run_tunnel_data_session_with_ready_source,
     run_tunnel_data_session_with_ready_source_and_runtime, tunnel_data_startup_line,
-    SharedTunnelDataReadyState, TungsteniteTunnelDataTransport, TunnelDataReadySource,
-    TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
+    KtpEncryptedTcpTunnelDataTransport, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
+    TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket,
+    TunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::TunnelSessionRuntime;
 
@@ -174,6 +179,74 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
             "cannot bind listener 127.0.0.1:10088".to_string(),
         )]
     );
+}
+
+#[test]
+fn ktp_encrypted_tcp_tunnel_data_transport_runs_hello_ready_flow() {
+    let key = test_tunnel_data_crypto_key();
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ktp tcp listener");
+    std_listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    let addr = std_listener.local_addr().expect("listener addr");
+    let (tx, rx) = mpsc::channel();
+    let server_key = key.clone();
+    let server = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("build ktp tcp server runtime");
+        runtime.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).expect("tokio listener");
+            let (stream, _) = listener.accept().await.expect("accept ktp tcp client");
+            let mut server = KtpEncryptedTcpStream::from_stream(
+                stream,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            let hello = server.next_frame().await.expect("read tunnel hello");
+            server
+                .send_frame(&KtpFrame::connection(FrameType::HelloAck, Vec::new()))
+                .await
+                .expect("send tunnel hello ack");
+            let ready = server.next_frame().await.expect("read tunnel ready");
+            tx.send((hello, ready)).expect("send captured frames");
+        });
+    });
+
+    let mut ready = TunnelDataReadyState::empty("rev-ktp");
+    ready.ingress_rule_ids.push(7);
+    ready.egress_rule_ids.push(9);
+    let mut transport = KtpEncryptedTcpTunnelDataTransport::new(key);
+
+    run_tunnel_data_once(
+        &format!("ktp+tcp://{addr}"),
+        &[],
+        "node-ktp",
+        "0.2.1",
+        &ready,
+        &mut transport,
+    )
+    .expect("ktp tcp tunnel data once should succeed");
+
+    let (hello, ready) = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("server should capture hello and ready frames");
+    assert_eq!(hello.frame_type, FrameType::Hello);
+    assert_eq!(ready.frame_type, FrameType::Ready);
+    let hello_payload = parse_hello_payload(&hello.payload);
+    assert_eq!(hello_payload.agent_id_hint, "node-ktp");
+    assert_eq!(hello_payload.agent_version, "0.2.1");
+    assert_eq!(hello_payload.revision, "rev-ktp");
+    let ready_payload = parse_ready_payload(&ready.payload);
+    assert_eq!(ready_payload.revision, "rev-ktp");
+    assert_eq!(ready_payload.ingress_rule_ids, [7]);
+    assert_eq!(ready_payload.egress_rule_ids, [9]);
+    server.join().expect("server thread should finish");
 }
 
 #[test]
@@ -724,6 +797,10 @@ impl TunnelSessionRuntime for FakeSessionRuntime {
 fn hello_ack_frame() -> Vec<u8> {
     encode_frame(&KtpFrame::connection(FrameType::HelloAck, Vec::new()))
         .expect("hello_ack frame should encode")
+}
+
+fn test_tunnel_data_crypto_key() -> KtpCryptoKey {
+    KtpCryptoKey::from_bytes([11u8; 32])
 }
 
 fn frame_type_from_event(event: &str) -> FrameType {

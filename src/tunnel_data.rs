@@ -1,4 +1,7 @@
 use crate::ktp::{decode_frame, encode_frame, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN};
+use crate::ktp_transport::{
+    KtpCryptoDirection, KtpCryptoKey, KtpEncryptedTcpStream, KtpTcpTransportError,
+};
 use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
 use crate::tunnel_control::SelectedTunnelRule;
 use crate::tunnel_runtime::{NoopTunnelSessionRuntime, TunnelSessionRuntime};
@@ -6,6 +9,9 @@ use std::io::ErrorKind;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::net::TcpStream as TokioTcpStream;
+use tokio::runtime::Runtime;
+use tokio::time::timeout;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderName, HeaderValue};
 use tungstenite::stream::MaybeTlsStream;
@@ -121,6 +127,129 @@ pub trait TunnelDataTransport {
         url: &str,
         headers: &[HeaderPair],
     ) -> Result<Self::Socket, TransportError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct KtpEncryptedTcpTunnelDataTransport {
+    key: KtpCryptoKey,
+    read_timeout: Duration,
+    max_payload_len: usize,
+    max_buffer_len: usize,
+}
+
+impl KtpEncryptedTcpTunnelDataTransport {
+    pub fn new(key: KtpCryptoKey) -> Self {
+        Self {
+            key,
+            read_timeout: Duration::from_secs(2),
+            max_payload_len: KTP_MAX_PAYLOAD_LEN,
+            max_buffer_len: 1024 * 1024,
+        }
+    }
+
+    pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
+        self.read_timeout = timeout;
+        self
+    }
+}
+
+impl TunnelDataTransport for KtpEncryptedTcpTunnelDataTransport {
+    type Socket = KtpEncryptedTcpTunnelDataSocket;
+
+    fn connect_tunnel_data(
+        &mut self,
+        url: &str,
+        _headers: &[HeaderPair],
+    ) -> Result<Self::Socket, TransportError> {
+        let address = parse_ktp_tcp_tunnel_data_address(url)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        let stream = runtime
+            .block_on(TokioTcpStream::connect(&address))
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        let stream = KtpEncryptedTcpStream::from_stream(
+            stream,
+            self.key.clone(),
+            KtpCryptoDirection::ClientToRelay,
+            KtpCryptoDirection::RelayToClient,
+            self.max_payload_len,
+            self.max_buffer_len,
+        );
+        Ok(KtpEncryptedTcpTunnelDataSocket {
+            runtime,
+            stream,
+            read_timeout: self.read_timeout,
+            max_payload_len: self.max_payload_len,
+        })
+    }
+}
+
+pub struct KtpEncryptedTcpTunnelDataSocket {
+    runtime: Runtime,
+    stream: KtpEncryptedTcpStream,
+    read_timeout: Duration,
+    max_payload_len: usize,
+}
+
+impl TunnelDataSocket for KtpEncryptedTcpTunnelDataSocket {
+    fn send_frame(&mut self, frame: &[u8]) -> Result<(), TransportError> {
+        let frame = decode_frame(frame, self.max_payload_len)
+            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+        self.runtime
+            .block_on(self.stream.send_frame(&frame))
+            .map_err(ktp_tcp_transport_error_to_transport)
+    }
+
+    fn read_frame(&mut self) -> Result<Vec<u8>, TransportError> {
+        let frame = self
+            .runtime
+            .block_on(self.stream.next_frame())
+            .map_err(ktp_tcp_transport_error_to_transport)?;
+        encode_frame(&frame).map_err(|error| TransportError::RequestFailed(error.to_string()))
+    }
+
+    fn read_optional_frame(&mut self) -> Result<Option<Vec<u8>>, TransportError> {
+        let result = self
+            .runtime
+            .block_on(timeout(self.read_timeout, self.stream.next_frame()));
+        match result {
+            Ok(Ok(frame)) => encode_frame(&frame)
+                .map(Some)
+                .map_err(|error| TransportError::RequestFailed(error.to_string())),
+            Ok(Err(error)) => Err(ktp_tcp_transport_error_to_transport(error)),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+fn parse_ktp_tcp_tunnel_data_address(url: &str) -> Result<String, TransportError> {
+    let trimmed = url.trim();
+    let Some(rest) = trimmed
+        .strip_prefix("ktp+tcp://")
+        .or_else(|| trimmed.strip_prefix("tcp://"))
+    else {
+        return Err(TransportError::UnsupportedScheme(trimmed.to_string()));
+    };
+    let address = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if address.is_empty() {
+        return Err(TransportError::EmptyEndpoint);
+    }
+    Ok(address)
+}
+
+fn ktp_tcp_transport_error_to_transport(error: KtpTcpTransportError) -> TransportError {
+    match error {
+        KtpTcpTransportError::Closed => TransportError::SocketClosed,
+        other => TransportError::RequestFailed(format!("ktp tcp tunnel data error: {other}")),
+    }
 }
 
 #[derive(Debug, Default, Clone)]
