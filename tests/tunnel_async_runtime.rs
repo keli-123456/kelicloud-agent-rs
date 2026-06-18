@@ -39,7 +39,11 @@ fn relay_batch_policy_keeps_default_fixed_and_caps_adaptive_only_at_high_concurr
     );
     assert_eq!(
         TunnelRelayBatchPolicy::Adaptive.effective_batch_frames(64, 8),
-        32
+        16
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames(64, 12),
+        16
     );
     assert_eq!(
         TunnelRelayBatchPolicy::Adaptive.effective_batch_frames(64, 16),

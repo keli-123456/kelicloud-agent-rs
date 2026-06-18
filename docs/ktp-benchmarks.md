@@ -832,13 +832,13 @@ Conservative adaptive cap update:
   `clients >= 8 => cap 16`. Later repeated two-run samples showed the
   four-client cap could lose throughput, RTT p95, and client p95 spread at the
   same time.
-- The candidate policy is now deliberately less aggressive:
+- The candidate policy is now deliberately low-concurrency safe and
+  high-fan-out conservative:
   - fewer than 8 clients: keep the configured batch cap;
-  - 8 to 15 clients: cap at 32 frames;
-  - 16 or more clients: cap at 16 frames.
+  - 8 or more clients: cap at 16 frames.
 - This keeps the low-concurrency RDP-like case on the known-good fixed batch
-  path while still leaving a measurable adaptive branch for higher fan-out
-  experiments.
+  path while moving higher fan-out forwarding toward lower tail latency and
+  smaller per-client p95 spread.
 
 Validation after the conservative cap:
 
@@ -858,6 +858,11 @@ Summary:
 clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=64 throughput_delta_pct=17.48 rtt_p95_delta_pct=-28.70 client_p95_spread_delta_pct=-48.73 verdict=same_effective
 KTP_SMOKE_POLICY_GATE=1 bash scripts/tunnel-relay-local-smoke.sh completed successfully.
 ```
+
+The 4-client validation remains useful after tightening the high-fan-out cap:
+it proves adaptive still does not change the lower-concurrency path. Use the
+8-client policy/matrix rows to evaluate the stricter `adaptive_effective=16`
+branch.
 
 Encrypted carrier repeated-run statistics:
 

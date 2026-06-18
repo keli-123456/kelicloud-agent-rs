@@ -274,7 +274,7 @@ fn ktp_e2e_bench_cli_caps_adaptive_batch_at_eight_clients() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("relay_batch_policy=adaptive"));
     assert!(stdout.contains("relay_batch_frames=64"));
-    assert!(stdout.contains("relay_batch_frames_effective=32"));
+    assert!(stdout.contains("relay_batch_frames_effective=16"));
 }
 
 #[test]

@@ -54,8 +54,7 @@ impl TunnelRelayBatchPolicy {
         let configured_batch_frames = configured_batch_frames.max(1);
         match self {
             Self::Fixed => configured_batch_frames,
-            Self::Adaptive if active_sessions >= 16 => configured_batch_frames.min(16),
-            Self::Adaptive if active_sessions >= 8 => configured_batch_frames.min(32),
+            Self::Adaptive if active_sessions >= 8 => configured_batch_frames.min(16),
             Self::Adaptive => configured_batch_frames,
         }
     }
