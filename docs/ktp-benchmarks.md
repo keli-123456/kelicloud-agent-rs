@@ -175,6 +175,19 @@ so a passing live canary proves the production KTP TCP socket batch-read path
 was active during the observation window. Treat the generated Markdown file as
 the live-log companion to `ktp-e2e-bench --latency` output.
 
+KTP codec cursor microbench:
+
+```bash
+./target/release/ktp-codec-bench --mode stream --frames 4096 --payload-bytes 16384 --chunk-frames 64 --runs 3
+./target/release/ktp-codec-bench --mode crypto --frames 4096 --payload-bytes 16384 --chunk-frames 64 --runs 3
+```
+
+The codec bench prebuilds encoded KTP chunks before the timed section, then
+measures only stream or crypto-record decode throughput. Its report includes
+`cursor_compaction=1`, `chunk_frames`, elapsed min/median/max, and throughput
+min/median/max. Use it after codec-buffer changes to catch regressions in the
+cursor-based decoder path without running a full backend smoke.
+
 For stricter performance-path evidence, set
 `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2` before running the helper. That keeps
 ordinary live canaries tolerant of low traffic, while a dedicated performance
