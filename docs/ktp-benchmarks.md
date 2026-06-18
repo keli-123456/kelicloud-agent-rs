@@ -940,6 +940,24 @@ default. The TSV records `carrier`, whether KTP TCP was enabled, pass/fail
 status, the run log directory, `agent.summary.md`, and the KTP live-canary
 evidence path when that carrier produces one.
 
+Tunnel concurrency matrix smoke:
+
+```bash
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2 4 8" \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=8 \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=8192 \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR=/tmp/kelicloud-local-backend-tunnel-matrix/logs \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR=/tmp/kelicloud-local-backend-tunnel-matrix/work \
+  bash scripts/ktp-local-backend-tunnel-matrix.sh
+```
+
+The tunnel matrix wrapper runs KTP TCP local-backend smoke once per client
+count, always with `KELICLOUD_SMOKE_KTP_TCP=true`. It writes
+`matrix-summary.tsv` with each run's status, `tunnel-echo.evidence.md`,
+`ktp-live-canary.evidence.md`, RTT percentiles, client p95 spread, and socket
+batch-read counters. Use it after runtime scheduling changes to compare real
+backend tunnel forwarding across increasing concurrent session counts.
+
 Result:
 
 - Backend KTP TCP relay listened on `127.0.0.1:40699`.

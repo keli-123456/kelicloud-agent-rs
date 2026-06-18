@@ -1,0 +1,206 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS:-1 2 4 8}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS:-8}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE:-rdp-like}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES:-8192}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES:-2}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR:-smoke-logs/local-backend-tunnel-matrix}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR:-}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN:-0}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY:-}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT:-}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SMOKE_SCRIPT_REL="scripts/smoke-local-backend.sh"
+SMOKE_SCRIPT="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT:-${REPO_ROOT}/${SMOKE_SCRIPT_REL}}"
+MATRIX_LOG_ROOT=""
+MATRIX_WORK_ROOT=""
+MATRIX_SUMMARY_PATH=""
+
+trim_trailing_slash() {
+    local value="$1"
+    while [[ "${value}" == */ && "${value}" != "/" ]]; do
+        value="${value%/}"
+    done
+    printf '%s' "${value}"
+}
+
+require_positive_integer() {
+    local name="$1"
+    local value="$2"
+    [[ "${value}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "${name} must be a positive integer" >&2
+        return 2
+    }
+}
+
+init_matrix_paths() {
+    MATRIX_LOG_ROOT="$(trim_trailing_slash "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR}")"
+    MATRIX_WORK_ROOT="$(trim_trailing_slash "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR}")"
+    if [[ -n "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY}" ]]; then
+        MATRIX_SUMMARY_PATH="$(trim_trailing_slash "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY}")"
+    else
+        MATRIX_SUMMARY_PATH="${MATRIX_LOG_ROOT}/matrix-summary.tsv"
+    fi
+}
+
+init_summary() {
+    if [[ "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN}" == "1" ]]; then
+        return
+    fi
+    mkdir -p "$(dirname "${MATRIX_SUMMARY_PATH}")"
+    printf '%s\n' "clients	rounds	profile	payload_bytes	status	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames" >"${MATRIX_SUMMARY_PATH}"
+}
+
+plain_markdown_value() {
+    local file="$1"
+    local key="$2"
+    if [[ ! -f "${file}" ]]; then
+        printf '%s' "-"
+        return
+    fi
+    local value
+    value="$(grep -E "^- ${key}:" "${file}" | head -n 1 | sed -E "s/^- ${key}:[[:space:]]*//" || true)"
+    if [[ -z "${value}" ]]; then
+        printf '%s' "-"
+    else
+        printf '%s' "${value}"
+    fi
+}
+
+backtick_markdown_value() {
+    local file="$1"
+    local key="$2"
+    if [[ ! -f "${file}" ]]; then
+        printf '%s' "-"
+        return
+    fi
+    local value
+    value="$(grep -E "^- \`${key}\`:" "${file}" | head -n 1 | sed -E "s/^- \`${key}\`:[[:space:]]*\`?([^\`]*)\`?.*/\1/" || true)"
+    if [[ -z "${value}" ]]; then
+        printf '%s' "-"
+    else
+        printf '%s' "${value}"
+    fi
+}
+
+write_summary_row() {
+    local clients="$1"
+    local status="$2"
+    local log_dir="$3"
+    local tunnel_evidence_file="${log_dir}/tunnel-echo.evidence.md"
+    local ktp_evidence_file="${log_dir}/ktp-live-canary.evidence.md"
+    local tunnel_evidence_summary="-"
+    local ktp_evidence_summary="-"
+
+    if [[ -f "${tunnel_evidence_file}" ]]; then
+        tunnel_evidence_summary="${tunnel_evidence_file}"
+    fi
+    if [[ -f "${ktp_evidence_file}" ]]; then
+        ktp_evidence_summary="${ktp_evidence_file}"
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${clients}" \
+        "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS}" \
+        "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE}" \
+        "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}" \
+        "${status}" \
+        "${log_dir}" \
+        "${tunnel_evidence_summary}" \
+        "${ktp_evidence_summary}" \
+        "$(plain_markdown_value "${tunnel_evidence_file}" "total_payload_bytes")" \
+        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p50")" \
+        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p95")" \
+        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p99")" \
+        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_max")" \
+        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_client_p95_spread_micros")" \
+        "$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_batches")" \
+        "$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_frames")" \
+        "$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_max_batch_frames")" >>"${MATRIX_SUMMARY_PATH}"
+}
+
+run_clients() {
+    local clients="$1"
+    local log_dir="${MATRIX_LOG_ROOT}/clients-${clients}"
+    local work_dir=""
+    local smoke_status=0
+    local status
+
+    require_positive_integer "client count" "${clients}"
+    log_dir="$(trim_trailing_slash "${log_dir}")"
+    if [[ -n "${MATRIX_WORK_ROOT}" ]]; then
+        work_dir="${MATRIX_WORK_ROOT}/clients-${clients}"
+    fi
+
+    echo "== ktp local backend tunnel clients=${clients} =="
+    if [[ "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN}" == "1" ]]; then
+        printf 'dry_run: clients=%s KELICLOUD_SMOKE_KTP_TCP=true KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s SMOKE_LOG_DIR=%s' \
+            "${clients}" \
+            "${clients}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES}" \
+            "${log_dir}"
+        if [[ -n "${work_dir}" ]]; then
+            printf ' SMOKE_WORK_DIR=%s' "${work_dir}"
+        fi
+        printf ' bash %s\n' "${SMOKE_SCRIPT_REL}"
+        return 0
+    fi
+
+    mkdir -p "${log_dir}"
+    if [[ -n "${work_dir}" ]]; then
+        mkdir -p "${work_dir}"
+    fi
+
+    (
+        export KELICLOUD_SMOKE_KTP_TCP=true
+        export KELICLOUD_TUNNEL_ECHO_CLIENTS="${clients}"
+        export KELICLOUD_TUNNEL_ECHO_ROUNDS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS}"
+        export KELICLOUD_TUNNEL_ECHO_PROFILE="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE}"
+        export KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}"
+        export KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES}"
+        export SMOKE_LOG_DIR="${log_dir}"
+        if [[ -n "${work_dir}" ]]; then
+            export SMOKE_WORK_DIR="${work_dir}"
+        fi
+        bash "${SMOKE_SCRIPT}"
+    ) || smoke_status=$?
+
+    if [[ "${smoke_status}" == "0" ]]; then
+        status="pass"
+    else
+        status="fail"
+    fi
+    write_summary_row "${clients}" "${status}" "${log_dir}"
+    return "${smoke_status}"
+}
+
+main() {
+    require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS}"
+    require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}"
+    require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES}"
+    init_matrix_paths
+
+    echo "== ktp local backend tunnel matrix =="
+    echo "clients=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}"
+    echo "rounds=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS} profile=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE} payload_bytes=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}"
+    echo "log_dir=${MATRIX_LOG_ROOT}"
+    if [[ -n "${MATRIX_WORK_ROOT}" ]]; then
+        echo "work_dir=${MATRIX_WORK_ROOT}"
+    fi
+    echo "summary=${MATRIX_SUMMARY_PATH}"
+    init_summary
+
+    local clients
+    for clients in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}; do
+        run_clients "${clients}"
+    done
+}
+
+main "$@"
