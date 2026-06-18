@@ -11,6 +11,7 @@ use tokio::net::TcpStream;
 pub const KTP_CRYPTO_MAGIC: &[u8; 4] = b"KTE1";
 pub const KTP_CRYPTO_VERSION: u8 = 1;
 pub const KTP_CRYPTO_HEADER_LEN: usize = 24;
+const KTP_CODEC_COMPACT_MIN_PREFIX: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KtpStreamCodecError {
@@ -43,6 +44,7 @@ impl From<KtpError> for KtpStreamCodecError {
 #[derive(Clone, Debug)]
 pub struct KtpStreamCodec {
     buffer: Vec<u8>,
+    read_offset: usize,
     max_payload_len: usize,
     max_buffer_len: usize,
 }
@@ -51,36 +53,39 @@ impl KtpStreamCodec {
     pub fn new(max_payload_len: usize, max_buffer_len: usize) -> Self {
         Self {
             buffer: Vec::new(),
+            read_offset: 0,
             max_payload_len: max_payload_len.min(KTP_MAX_PAYLOAD_LEN),
             max_buffer_len,
         }
     }
 
     pub fn push(&mut self, chunk: &[u8]) -> Result<(), KtpStreamCodecError> {
-        let attempted = self.buffer.len().saturating_add(chunk.len());
+        let attempted = self.unread_len().saturating_add(chunk.len());
         if attempted > self.max_buffer_len {
             return Err(KtpStreamCodecError::BufferLimit {
                 attempted,
                 limit: self.max_buffer_len,
             });
         }
+        self.compact_if_needed_for_push(chunk.len());
         self.buffer.extend_from_slice(chunk);
         Ok(())
     }
 
     pub fn next_frame(&mut self) -> Result<Option<KtpFrame>, KtpStreamCodecError> {
-        if self.buffer.len() < KTP_HEADER_LEN {
+        let unread = self.unread();
+        if unread.len() < KTP_HEADER_LEN {
             return Ok(None);
         }
 
-        if let Err(error) = decode_frame(&self.buffer[..KTP_HEADER_LEN], self.max_payload_len) {
+        if let Err(error) = decode_frame(&unread[..KTP_HEADER_LEN], self.max_payload_len) {
             if !matches!(error, KtpError::TruncatedPayload) {
                 return Err(error.into());
             }
         }
 
         let payload_len = u32::from_be_bytes(
-            self.buffer[16..20]
+            unread[16..20]
                 .try_into()
                 .expect("KTP payload length slice is present"),
         ) as usize;
@@ -95,13 +100,58 @@ impl KtpStreamCodec {
                 limit: self.max_buffer_len,
             });
         }
-        if self.buffer.len() < frame_len {
+        if unread.len() < frame_len {
             return Ok(None);
         }
 
-        let frame = decode_frame(&self.buffer[..frame_len], self.max_payload_len)?;
-        self.buffer.drain(..frame_len);
+        let frame = decode_frame(&unread[..frame_len], self.max_payload_len)?;
+        self.consume(frame_len);
         Ok(Some(frame))
+    }
+
+    fn unread(&self) -> &[u8] {
+        &self.buffer[self.read_offset..]
+    }
+
+    fn unread_len(&self) -> usize {
+        self.buffer.len().saturating_sub(self.read_offset)
+    }
+
+    fn compact_if_needed_for_push(&mut self, incoming_len: usize) {
+        if self.read_offset > 0
+            && self.buffer.len().saturating_add(incoming_len) > self.max_buffer_len
+        {
+            self.compact();
+        }
+    }
+
+    fn consume(&mut self, len: usize) {
+        self.read_offset += len;
+        self.compact_after_consume();
+    }
+
+    fn compact_after_consume(&mut self) {
+        if self.read_offset == 0 {
+            return;
+        }
+        if self.read_offset == self.buffer.len() {
+            self.buffer.clear();
+            self.read_offset = 0;
+            return;
+        }
+        if self.read_offset >= KTP_CODEC_COMPACT_MIN_PREFIX
+            && self.read_offset.saturating_mul(2) >= self.buffer.len()
+        {
+            self.compact();
+        }
+    }
+
+    fn compact(&mut self) {
+        if self.read_offset == 0 {
+            return;
+        }
+        self.buffer.drain(..self.read_offset);
+        self.read_offset = 0;
     }
 }
 
@@ -299,6 +349,7 @@ impl KtpCryptoOpen {
 #[derive(Clone)]
 pub struct KtpCryptoRecordCodec {
     buffer: Vec<u8>,
+    read_offset: usize,
     open: KtpCryptoOpen,
     max_buffer_len: usize,
 }
@@ -312,25 +363,28 @@ impl KtpCryptoRecordCodec {
     ) -> Self {
         Self {
             buffer: Vec::new(),
+            read_offset: 0,
             open: KtpCryptoOpen::new(key, direction, max_payload_len),
             max_buffer_len,
         }
     }
 
     pub fn push(&mut self, chunk: &[u8]) -> Result<(), KtpCryptoError> {
-        let attempted = self.buffer.len().saturating_add(chunk.len());
+        let attempted = self.unread_len().saturating_add(chunk.len());
         if attempted > self.max_buffer_len {
             return Err(KtpCryptoError::buffer_limit(attempted, self.max_buffer_len));
         }
+        self.compact_if_needed_for_push(chunk.len());
         self.buffer.extend_from_slice(chunk);
         Ok(())
     }
 
     pub fn next_frame(&mut self) -> Result<Option<KtpFrame>, KtpCryptoError> {
-        if self.buffer.len() < KTP_CRYPTO_HEADER_LEN {
+        let unread = self.unread();
+        if unread.len() < KTP_CRYPTO_HEADER_LEN {
             return Ok(None);
         }
-        let header = parse_crypto_header(&self.buffer, self.open.direction)?;
+        let header = parse_crypto_header(unread, self.open.direction)?;
         let record_len = KTP_CRYPTO_HEADER_LEN + header.ciphertext_len;
         if record_len > self.max_buffer_len {
             return Err(KtpCryptoError::buffer_limit(
@@ -338,11 +392,15 @@ impl KtpCryptoRecordCodec {
                 self.max_buffer_len,
             ));
         }
-        if self.buffer.len() < record_len {
+        if unread.len() < record_len {
             return Ok(None);
         }
-        let frame = self.open.open_record(&self.buffer[..record_len])?;
-        self.buffer.drain(..record_len);
+        let record_start = self.read_offset;
+        let record_end = record_start + record_len;
+        let frame = self
+            .open
+            .open_record(&self.buffer[record_start..record_end])?;
+        self.consume(record_len);
         Ok(Some(frame))
     }
 
@@ -359,6 +417,51 @@ impl KtpCryptoRecordCodec {
             frames.push(frame);
         }
         Ok(frames.len())
+    }
+
+    fn unread(&self) -> &[u8] {
+        &self.buffer[self.read_offset..]
+    }
+
+    fn unread_len(&self) -> usize {
+        self.buffer.len().saturating_sub(self.read_offset)
+    }
+
+    fn compact_if_needed_for_push(&mut self, incoming_len: usize) {
+        if self.read_offset > 0
+            && self.buffer.len().saturating_add(incoming_len) > self.max_buffer_len
+        {
+            self.compact();
+        }
+    }
+
+    fn consume(&mut self, len: usize) {
+        self.read_offset += len;
+        self.compact_after_consume();
+    }
+
+    fn compact_after_consume(&mut self) {
+        if self.read_offset == 0 {
+            return;
+        }
+        if self.read_offset == self.buffer.len() {
+            self.buffer.clear();
+            self.read_offset = 0;
+            return;
+        }
+        if self.read_offset >= KTP_CODEC_COMPACT_MIN_PREFIX
+            && self.read_offset.saturating_mul(2) >= self.buffer.len()
+        {
+            self.compact();
+        }
+    }
+
+    fn compact(&mut self) {
+        if self.read_offset == 0 {
+            return;
+        }
+        self.buffer.drain(..self.read_offset);
+        self.read_offset = 0;
     }
 }
 
@@ -681,5 +784,68 @@ impl KtpEncryptedTcpFrameRelay {
                 .await?;
         }
         Ok(self.stats)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ktp::{encode_frame, FrameLeg, FrameType};
+
+    #[test]
+    fn stream_codec_advances_cursor_without_draining_every_frame() {
+        let first = session_data(1, b"first");
+        let second = session_data(2, b"second");
+        let mut bytes = encode_frame(&first).expect("encode first");
+        bytes.extend_from_slice(&encode_frame(&second).expect("encode second"));
+        let mut codec = KtpStreamCodec::new(KTP_MAX_PAYLOAD_LEN, 1024 * 1024);
+
+        codec.push(&bytes).expect("push combined frames");
+        let initial_buffer_len = codec.buffer.len();
+
+        assert_eq!(codec.next_frame().expect("decode first"), Some(first));
+        assert!(codec.read_offset > 0);
+        assert_eq!(codec.buffer.len(), initial_buffer_len);
+
+        assert_eq!(codec.next_frame().expect("decode second"), Some(second));
+        assert_eq!(codec.read_offset, 0);
+        assert_eq!(codec.buffer.len(), 0);
+    }
+
+    #[test]
+    fn crypto_record_codec_advances_cursor_without_draining_every_record() {
+        let key = KtpCryptoKey::from_bytes([9u8; 32]);
+        let first = session_data(11, b"first");
+        let second = session_data(12, b"second");
+        let mut seal = KtpCryptoSeal::new(key.clone(), KtpCryptoDirection::ClientToRelay);
+        let mut records = seal.seal_frame(&first).expect("seal first");
+        records.extend_from_slice(&seal.seal_frame(&second).expect("seal second"));
+        let mut codec = KtpCryptoRecordCodec::new(
+            key,
+            KtpCryptoDirection::ClientToRelay,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        );
+
+        codec.push(&records).expect("push combined records");
+        let initial_buffer_len = codec.buffer.len();
+
+        assert_eq!(codec.next_frame().expect("decode first"), Some(first));
+        assert!(codec.read_offset > 0);
+        assert_eq!(codec.buffer.len(), initial_buffer_len);
+
+        assert_eq!(codec.next_frame().expect("decode second"), Some(second));
+        assert_eq!(codec.read_offset, 0);
+        assert_eq!(codec.buffer.len(), 0);
+    }
+
+    fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
+        KtpFrame {
+            frame_type: FrameType::SessionData,
+            leg: FrameLeg::Ingress,
+            flags: 0,
+            session_id,
+            payload: payload.to_vec(),
+        }
     }
 }
