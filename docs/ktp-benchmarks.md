@@ -223,8 +223,13 @@ strictness is needed for runtime-to-carrier batch writes.
 GitHub Actions also has a `KTP Microbench Matrix` workflow. Pushes that touch
 KTP codec/carrier code or their matrix scripts run a light release-mode sample
 and upload `ktp-codec-matrix.csv` plus `ktp-carrier-matrix.csv` as an artifact.
-Use the workflow's manual inputs to raise `runs`, frame counts, or payload sizes
-when collecting fuller release evidence.
+The workflow also runs `ktp-carrier-matrix-summary --require-ktp-aead
+--require-batch-reuse --require-positive-throughput` and uploads
+`ktp-carrier-matrix.report.txt`, so the dedicated encrypted TCP carrier matrix
+must contain parseable AEAD rows, reusable batch-write and batch-read evidence,
+and positive median throughput for every required direction. Use the workflow's
+manual inputs to raise `runs`, frame counts, or payload sizes when collecting
+fuller release evidence.
 
 Local backend KTP smoke:
 

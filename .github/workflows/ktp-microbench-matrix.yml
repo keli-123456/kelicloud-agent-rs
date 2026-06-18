@@ -10,12 +10,14 @@ on:
       - src/ktp_transport.rs
       - src/bin/ktp-codec-bench.rs
       - src/bin/ktp-tunnel-bench.rs
+      - src/bin/ktp-carrier-matrix-summary.rs
       - scripts/ktp-codec-matrix.sh
       - scripts/ktp-carrier-matrix.sh
       - tests/ktp_codec_bench_cli.rs
       - tests/ktp_codec_matrix_script.rs
       - tests/ktp_bench_cli.rs
       - tests/ktp_carrier_matrix_script.rs
+      - tests/ktp_carrier_matrix_summary_cli.rs
   workflow_dispatch:
     inputs:
       codec_frames:
@@ -70,7 +72,7 @@ jobs:
           rustup default stable
 
       - name: Build microbench binaries
-        run: cargo build --locked --release --bin ktp-codec-bench --bin ktp-tunnel-bench
+        run: cargo build --locked --release --bin ktp-codec-bench --bin ktp-tunnel-bench --bin ktp-carrier-matrix-summary
 
       - name: Prepare log directory
         run: mkdir -p microbench-logs
@@ -81,12 +83,28 @@ jobs:
       - name: Run KTP carrier matrix
         run: bash scripts/ktp-carrier-matrix.sh
 
+      - name: Gate KTP carrier matrix
+        run: |
+          ./target/release/ktp-carrier-matrix-summary \
+            --require-ktp-aead \
+            --require-batch-reuse \
+            --require-positive-throughput \
+            microbench-logs/ktp-carrier-matrix.csv | tee microbench-logs/ktp-carrier-matrix.report.txt
+
       - name: Publish KTP microbench matrix summary
         if: always()
         run: |
           {
             echo "## KTP microbench matrix summary"
             echo
+            if [[ -f "microbench-logs/ktp-carrier-matrix.report.txt" ]]; then
+              echo "### ktp-carrier-matrix.report.txt"
+              echo
+              echo '```text'
+              cat "microbench-logs/ktp-carrier-matrix.report.txt"
+              echo '```'
+              echo
+            fi
             for csv in ktp-codec-matrix.csv ktp-carrier-matrix.csv; do
               path="microbench-logs/${csv}"
               echo "### ${csv}"

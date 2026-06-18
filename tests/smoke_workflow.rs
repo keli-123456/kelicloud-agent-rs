@@ -277,8 +277,10 @@ fn ktp_microbench_matrix_workflow_publishes_codec_and_carrier_csv() {
     assert!(workflow.contains("- src/ktp_transport.rs"));
     assert!(workflow.contains("- src/bin/ktp-codec-bench.rs"));
     assert!(workflow.contains("- src/bin/ktp-tunnel-bench.rs"));
+    assert!(workflow.contains("- src/bin/ktp-carrier-matrix-summary.rs"));
     assert!(workflow.contains("- scripts/ktp-codec-matrix.sh"));
     assert!(workflow.contains("- scripts/ktp-carrier-matrix.sh"));
+    assert!(workflow.contains("- tests/ktp_carrier_matrix_summary_cli.rs"));
     assert!(workflow.contains("workflow_dispatch:"));
     assert!(workflow.contains("codec_frames:"));
     assert!(workflow.contains("carrier_frames:"));
@@ -286,8 +288,16 @@ fn ktp_microbench_matrix_workflow_publishes_codec_and_carrier_csv() {
     assert!(workflow.contains("runs:"));
     assert!(workflow.contains("KTP_CODEC_MATRIX_CSV: microbench-logs/ktp-codec-matrix.csv"));
     assert!(workflow.contains("KTP_CARRIER_MATRIX_CSV: microbench-logs/ktp-carrier-matrix.csv"));
+    assert!(workflow.contains(
+        "cargo build --locked --release --bin ktp-codec-bench --bin ktp-tunnel-bench --bin ktp-carrier-matrix-summary"
+    ));
     assert!(workflow.contains("bash scripts/ktp-codec-matrix.sh"));
     assert!(workflow.contains("bash scripts/ktp-carrier-matrix.sh"));
+    assert!(workflow.contains("ktp-carrier-matrix-summary"));
+    assert!(workflow.contains("--require-ktp-aead"));
+    assert!(workflow.contains("--require-batch-reuse"));
+    assert!(workflow.contains("--require-positive-throughput"));
+    assert!(workflow.contains("ktp-carrier-matrix.report.txt"));
     assert!(workflow.contains("KTP microbench matrix summary"));
     assert!(workflow.contains("ktp-codec-matrix.csv"));
     assert!(workflow.contains("ktp-carrier-matrix.csv"));
