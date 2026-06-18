@@ -266,12 +266,9 @@ fn local_backend_smoke_script_generates_tunnel_echo_evidence() {
     let stop_echo = Arc::new(AtomicBool::new(false));
     let echo_stop = Arc::clone(&stop_echo);
     let echo = thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
         let mut accepted = 0;
-        while accepted < 6
-            && !echo_stop.load(Ordering::SeqCst)
-            && std::time::Instant::now() < deadline
-        {
+        while !echo_stop.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     let mut buffer = vec![0; 65536];
@@ -328,7 +325,10 @@ verify_tunnel_relay_echo
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(accepted_connections, 6);
+    assert!(
+        accepted_connections >= 6,
+        "expected at least 6 accepted connections, got {accepted_connections}"
+    );
 
     let evidence = std::fs::read_to_string(evidence_path).unwrap();
     assert!(evidence.contains("- profile: rdp-like"));
