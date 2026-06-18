@@ -6,14 +6,24 @@ on:
       - main
     paths:
       - .github/workflows/ktp-tunnel-matrix.yml
+      - src/ktp.rs
+      - src/config.rs
       - src/ktp_transport.rs
+      - src/tunnel_control.rs
       - src/tunnel_async_runtime.rs
       - src/tunnel_data.rs
+      - src/tunnel_preflight.rs
       - src/tunnel_runtime.rs
       - src/bin/ktp-tunnel-matrix-summary.rs
+      - tests/ktp.rs
+      - tests/config.rs
       - tests/ktp_transport.rs
+      - tests/tunnel_control.rs
+      - tests/tunnel_async_runtime.rs
       - tests/ktp_tunnel_matrix_summary_cli.rs
       - tests/tunnel_data.rs
+      - tests/tunnel_preflight.rs
+      - tests/tunnel_runtime.rs
       - scripts/ktp-local-backend-tunnel-matrix.sh
   workflow_dispatch:
     inputs:
