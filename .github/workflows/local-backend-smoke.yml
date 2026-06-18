@@ -147,7 +147,24 @@ jobs:
           summary="carrier-matrix-summary/matrix-summary.tsv"
           report="carrier-matrix-summary/matrix-summary.report.txt"
           mkdir -p "carrier-matrix-summary"
-          printf 'carrier\tktp_tcp\tktp_crypto\tstatus\tlog_dir\tsummary_file\tktp_evidence_file\n' >"${summary}"
+          markdown_value() {
+            local file="$1"
+            local key="$2"
+            if [[ -f "${file}" ]]; then
+              grep -E "^- ${key}: " "${file}" | head -n 1 | sed -E "s/^- ${key}: //" || true
+            fi
+          }
+
+          value_or_dash() {
+            local value="${1:-}"
+            if [[ -z "${value}" ]]; then
+              echo "-"
+            else
+              echo "${value}"
+            fi
+          }
+
+          printf 'carrier\tktp_tcp\tktp_crypto\tstatus\tlog_dir\tsummary_file\tktp_evidence_file\ttunnel_evidence_file\ttunnel_profile\ttunnel_clients\ttunnel_rounds\ttunnel_total_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\n' >"${summary}"
 
           for carrier in websocket ktp_tcp; do
             artifact="carrier-matrix-artifacts/kelicloud-agent-rs-local-backend-smoke-${carrier}"
@@ -176,14 +193,47 @@ jobs:
               fi
             fi
 
-            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            tunnel_evidence_file="-"
+            tunnel_profile="-"
+            tunnel_clients="-"
+            tunnel_rounds="-"
+            tunnel_total_payload_bytes="-"
+            rtt_micros_p50="-"
+            rtt_micros_p95="-"
+            rtt_micros_p99="-"
+            rtt_micros_max="-"
+            rtt_client_p95_spread_micros="-"
+            if [[ -f "${artifact}/tunnel-echo.evidence.md" ]]; then
+              tunnel_evidence_file="${artifact}/tunnel-echo.evidence.md"
+              tunnel_profile="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" profile)")"
+              tunnel_clients="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" clients)")"
+              tunnel_rounds="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" rounds)")"
+              tunnel_total_payload_bytes="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" total_payload_bytes)")"
+              rtt_micros_p50="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" rtt_micros_p50)")"
+              rtt_micros_p95="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" rtt_micros_p95)")"
+              rtt_micros_p99="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" rtt_micros_p99)")"
+              rtt_micros_max="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" rtt_micros_max)")"
+              rtt_client_p95_spread_micros="$(value_or_dash "$(markdown_value "${tunnel_evidence_file}" rtt_client_p95_spread_micros)")"
+            fi
+
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
               "${carrier}" \
               "${ktp_tcp}" \
               "${ktp_crypto}" \
               "${status}" \
               "${artifact}" \
               "${summary_file}" \
-              "${ktp_evidence_file}" >>"${summary}"
+              "${ktp_evidence_file}" \
+              "${tunnel_evidence_file}" \
+              "${tunnel_profile}" \
+              "${tunnel_clients}" \
+              "${tunnel_rounds}" \
+              "${tunnel_total_payload_bytes}" \
+              "${rtt_micros_p50}" \
+              "${rtt_micros_p95}" \
+              "${rtt_micros_p99}" \
+              "${rtt_micros_max}" \
+              "${rtt_client_p95_spread_micros}" >>"${summary}"
           done
 
           set +e

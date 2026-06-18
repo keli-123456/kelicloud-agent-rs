@@ -1419,8 +1419,12 @@ Notes:
   `carrier-matrix-summary/matrix-summary.tsv`, runs
   `ktp-local-backend-matrix-summary --require-pass --require-ktp-aead`, and
   uploads `kelicloud-agent-rs-local-backend-carrier-summary` with
-  `matrix-summary.report.txt`. That moves KTP smoke evidence from one-off host
-  logs into CI artifacts on pushes to `main`, with an explicit KTP AEAD gate.
+  `matrix-summary.report.txt`. The TSV/report now also carries
+  `tunnel-echo.evidence.md` profile, client count, rounds, total payload, RTT
+  p50/p95/p99/max, and client p95 spread fields when the artifact contains
+  real tunnel echo evidence. That moves KTP smoke evidence from one-off host
+  logs into CI artifacts on pushes to `main`, with an explicit KTP AEAD gate
+  and a visible real-forwarding latency signal.
 - The `33443f5` active canary adds a stricter gate: KTP local-backend smoke now
   fails unless live diagnostics include positive `socket_read_batches` and
   `socket_read_frames`, so the evidence proves the dedicated KTP TCP

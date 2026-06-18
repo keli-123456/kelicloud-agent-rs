@@ -5,9 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn ktp_local_backend_matrix_summary_reports_carrier_comparison() {
     let summary_path = write_temp_summary(
         "ktp-local-backend-matrix-summary-pass",
-        r#"carrier	ktp_tcp	ktp_crypto	status	log_dir	summary_file	ktp_evidence_file
-websocket	false	-	pass	logs/websocket	logs/websocket/agent.summary.md	-
-ktp_tcp	true	ktp_aead	pass	logs/ktp_tcp	logs/ktp_tcp/agent.summary.md	logs/ktp_tcp/ktp-live-canary.evidence.md
+        r#"carrier	ktp_tcp	ktp_crypto	status	log_dir	summary_file	ktp_evidence_file	tunnel_evidence_file	tunnel_profile	tunnel_clients	tunnel_rounds	tunnel_total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros
+websocket	false	-	pass	logs/websocket	logs/websocket/agent.summary.md	-	logs/websocket/tunnel-echo.evidence.md	fixed	1	1	64	1000	1100	1200	1300	0
+ktp_tcp	true	ktp_aead	pass	logs/ktp_tcp	logs/ktp_tcp/agent.summary.md	logs/ktp_tcp/ktp-live-canary.evidence.md	logs/ktp_tcp/tunnel-echo.evidence.md	rdp-like	4	8	39680	5958	26909	30755	30755	16954
 "#,
     );
 
@@ -30,6 +30,9 @@ ktp_tcp	true	ktp_aead	pass	logs/ktp_tcp	logs/ktp_tcp/agent.summary.md	logs/ktp_t
     ));
     assert!(stdout.contains(
         "carrier=ktp_tcp ktp_tcp=true ktp_crypto=ktp_aead status=pass summary_file=logs/ktp_tcp/agent.summary.md ktp_evidence_file=logs/ktp_tcp/ktp-live-canary.evidence.md"
+    ));
+    assert!(stdout.contains(
+        "tunnel_evidence_file=logs/ktp_tcp/tunnel-echo.evidence.md tunnel_profile=rdp-like tunnel_clients=4 tunnel_rounds=8 tunnel_total_payload_bytes=39680 rtt_micros_p50=5958 rtt_micros_p95=26909 rtt_micros_p99=30755 rtt_micros_max=30755 rtt_client_p95_spread_micros=16954"
     ));
     assert!(stdout.contains("ktp_tcp_crypto=ktp_aead ktp_tcp_evidence=present"));
 }

@@ -89,6 +89,18 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
     assert!(workflow.contains("carrier-matrix-artifacts"));
     assert!(workflow.contains("carrier-matrix-summary/matrix-summary.tsv"));
     assert!(workflow.contains("carrier-matrix-summary/matrix-summary.report.txt"));
+    assert!(workflow.contains("markdown_value()"));
+    assert!(workflow.contains("tunnel-echo.evidence.md"));
+    assert!(workflow.contains("tunnel_evidence_file"));
+    assert!(workflow.contains("tunnel_profile"));
+    assert!(workflow.contains("tunnel_clients"));
+    assert!(workflow.contains("tunnel_rounds"));
+    assert!(workflow.contains("tunnel_total_payload_bytes"));
+    assert!(workflow.contains("rtt_micros_p50"));
+    assert!(workflow.contains("rtt_micros_p95"));
+    assert!(workflow.contains("rtt_micros_p99"));
+    assert!(workflow.contains("rtt_micros_max"));
+    assert!(workflow.contains("rtt_client_p95_spread_micros"));
     assert!(workflow.contains("ktp-local-backend-matrix-summary"));
     assert!(workflow.contains("--require-pass"));
     assert!(workflow.contains("--require-ktp-aead"));

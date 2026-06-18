@@ -12,6 +12,16 @@ struct CarrierRow {
     status: String,
     summary_file: String,
     ktp_evidence_file: String,
+    tunnel_evidence_file: String,
+    tunnel_profile: String,
+    tunnel_clients: String,
+    tunnel_rounds: String,
+    tunnel_total_payload_bytes: String,
+    rtt_micros_p50: String,
+    rtt_micros_p95: String,
+    rtt_micros_p99: String,
+    rtt_micros_max: String,
+    rtt_client_p95_spread_micros: String,
 }
 
 #[derive(Clone, Debug)]
@@ -107,13 +117,23 @@ fn summarize_tsv(
         }
         output.push('\n');
         output.push_str(&format!(
-            "carrier={} ktp_tcp={} ktp_crypto={} status={} summary_file={} ktp_evidence_file={}",
+            "carrier={} ktp_tcp={} ktp_crypto={} status={} summary_file={} ktp_evidence_file={} tunnel_evidence_file={} tunnel_profile={} tunnel_clients={} tunnel_rounds={} tunnel_total_payload_bytes={} rtt_micros_p50={} rtt_micros_p95={} rtt_micros_p99={} rtt_micros_max={} rtt_client_p95_spread_micros={}",
             row.carrier,
             row.ktp_tcp,
             row.ktp_crypto,
             row.status,
             row.summary_file,
-            row.ktp_evidence_file
+            row.ktp_evidence_file,
+            row.tunnel_evidence_file,
+            row.tunnel_profile,
+            row.tunnel_clients,
+            row.tunnel_rounds,
+            row.tunnel_total_payload_bytes,
+            row.rtt_micros_p50,
+            row.rtt_micros_p95,
+            row.rtt_micros_p99,
+            row.rtt_micros_max,
+            row.rtt_client_p95_spread_micros
         ));
     }
 
@@ -153,6 +173,18 @@ fn parse_row(line: &str, indexes: &CarrierIndexes) -> SummaryResult<CarrierRow> 
         summary_file: field(&fields, indexes.summary_file, "summary_file")?.to_string(),
         ktp_evidence_file: field(&fields, indexes.ktp_evidence_file, "ktp_evidence_file")?
             .to_string(),
+        tunnel_evidence_file: optional_field(&fields, indexes.tunnel_evidence_file).to_string(),
+        tunnel_profile: optional_field(&fields, indexes.tunnel_profile).to_string(),
+        tunnel_clients: optional_field(&fields, indexes.tunnel_clients).to_string(),
+        tunnel_rounds: optional_field(&fields, indexes.tunnel_rounds).to_string(),
+        tunnel_total_payload_bytes: optional_field(&fields, indexes.tunnel_total_payload_bytes)
+            .to_string(),
+        rtt_micros_p50: optional_field(&fields, indexes.rtt_micros_p50).to_string(),
+        rtt_micros_p95: optional_field(&fields, indexes.rtt_micros_p95).to_string(),
+        rtt_micros_p99: optional_field(&fields, indexes.rtt_micros_p99).to_string(),
+        rtt_micros_max: optional_field(&fields, indexes.rtt_micros_max).to_string(),
+        rtt_client_p95_spread_micros: optional_field(&fields, indexes.rtt_client_p95_spread_micros)
+            .to_string(),
     })
 }
 
@@ -164,6 +196,13 @@ fn field<'a>(fields: &'a [&str], index: usize, name: &str) -> SummaryResult<&'a 
         .ok_or_else(|| format!("missing field {name}").into())
 }
 
+fn optional_field<'a>(fields: &'a [&str], index: Option<usize>) -> &'a str {
+    index
+        .and_then(|index| fields.get(index).copied())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-")
+}
+
 #[derive(Clone, Copy, Debug)]
 struct CarrierIndexes {
     carrier: usize,
@@ -172,6 +211,16 @@ struct CarrierIndexes {
     status: usize,
     summary_file: usize,
     ktp_evidence_file: usize,
+    tunnel_evidence_file: Option<usize>,
+    tunnel_profile: Option<usize>,
+    tunnel_clients: Option<usize>,
+    tunnel_rounds: Option<usize>,
+    tunnel_total_payload_bytes: Option<usize>,
+    rtt_micros_p50: Option<usize>,
+    rtt_micros_p95: Option<usize>,
+    rtt_micros_p99: Option<usize>,
+    rtt_micros_max: Option<usize>,
+    rtt_client_p95_spread_micros: Option<usize>,
 }
 
 impl CarrierIndexes {
@@ -188,6 +237,19 @@ impl CarrierIndexes {
             status: required_column(&positions, "status")?,
             summary_file: required_column(&positions, "summary_file")?,
             ktp_evidence_file: required_column(&positions, "ktp_evidence_file")?,
+            tunnel_evidence_file: optional_column(&positions, "tunnel_evidence_file"),
+            tunnel_profile: optional_column(&positions, "tunnel_profile"),
+            tunnel_clients: optional_column(&positions, "tunnel_clients"),
+            tunnel_rounds: optional_column(&positions, "tunnel_rounds"),
+            tunnel_total_payload_bytes: optional_column(&positions, "tunnel_total_payload_bytes"),
+            rtt_micros_p50: optional_column(&positions, "rtt_micros_p50"),
+            rtt_micros_p95: optional_column(&positions, "rtt_micros_p95"),
+            rtt_micros_p99: optional_column(&positions, "rtt_micros_p99"),
+            rtt_micros_max: optional_column(&positions, "rtt_micros_max"),
+            rtt_client_p95_spread_micros: optional_column(
+                &positions,
+                "rtt_client_p95_spread_micros",
+            ),
         })
     }
 }
@@ -197,6 +259,10 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
         .get(name)
         .copied()
         .ok_or_else(|| format!("missing required column: {name}").into())
+}
+
+fn optional_column(positions: &HashMap<String, usize>, name: &str) -> Option<usize> {
+    positions.get(name).copied()
 }
 
 fn print_usage() {
