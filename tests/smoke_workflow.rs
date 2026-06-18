@@ -112,16 +112,17 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("node-version: \"22\""));
     assert!(workflow.contains("rustup toolchain install stable"));
     assert!(workflow.contains("mysql-client"));
+    assert!(workflow.contains("cancel-in-progress: true"));
     assert!(workflow
-        .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ inputs.clients || '1 2 4 8' }}"));
+        .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.clients || '1 2' }}"));
     assert!(
-        workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ inputs.rounds || '8' }}")
+        workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '4' }}")
     );
     assert!(workflow.contains(
-        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ inputs.payload_bytes || '8192' }}"
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.payload_bytes || '4096' }}"
     ));
     assert!(workflow.contains(
-        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ inputs.min_max_batch_frames || '2' }}"
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.min_max_batch_frames || '2' }}"
     ));
     assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs"));
     assert!(workflow
