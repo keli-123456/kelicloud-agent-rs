@@ -164,9 +164,8 @@ fn ktp_live_canary_script_can_require_multi_frame_socket_batch_reads() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains(
-            "expected socket_read_max_batch_frames >= 2, found 1"
-        ),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("expected socket_read_max_batch_frames >= 2, found 1"),
         "stderr should explain the stricter active batch-read threshold: {}",
         String::from_utf8_lossy(&output.stderr)
     );

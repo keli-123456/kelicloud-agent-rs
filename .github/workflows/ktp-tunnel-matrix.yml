@@ -1,0 +1,100 @@
+name: KTP Tunnel Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      clients:
+        description: Space-separated tunnel client counts to run.
+        required: true
+        default: "1 2 4 8"
+      rounds:
+        description: Echo rounds per client.
+        required: true
+        default: "8"
+      payload_bytes:
+        description: Payload size for the RDP-like tunnel echo profile.
+        required: true
+        default: "8192"
+      min_max_batch_frames:
+        description: Minimum required max frame batch size in the KTP canary.
+        required: true
+        default: "2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ktp-tunnel-matrix-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  KOMARI_DB_HOST: 127.0.0.1
+  KOMARI_DB_PORT: 3306
+  KOMARI_DB_USER: root
+  KOMARI_DB_PASS: rootpass
+  KOMARI_DB_NAME: komari_tunnel_matrix
+  KELICLOUD_BACKEND_REF: main
+  KOMARI_FRONTEND_REF: main
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ inputs.clients }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ inputs.rounds }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ inputs.payload_bytes }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ inputs.min_max_batch_frames }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work
+
+jobs:
+  linux:
+    name: Linux KTP Tunnel Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: komari_tunnel_matrix
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.11"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install MySQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
+
+      - name: Run KTP tunnel matrix
+        run: bash scripts/ktp-local-backend-tunnel-matrix.sh
+
+      - name: Upload tunnel matrix logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kelicloud-agent-rs-ktp-tunnel-matrix
+          path: tunnel-matrix-logs/**/*
+          if-no-files-found: ignore

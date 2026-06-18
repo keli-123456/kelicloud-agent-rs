@@ -61,8 +61,14 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN", "1")
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS", "1 4")
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS", "8")
-        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR", "/tmp/ktp-tunnel-logs")
-        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR", "/tmp/ktp-tunnel-work")
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR",
+            "/tmp/ktp-tunnel-logs",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR",
+            "/tmp/ktp-tunnel-work",
+        )
         .arg(script_path())
         .output()
         .expect("tunnel matrix dry-run should run");

@@ -63,26 +63,13 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
     assert!(workflow.contains("tunnel_echo_payload_bytes: \"0\""));
     assert!(workflow.contains("tunnel_echo_payload_bytes: \"8192\""));
     assert!(workflow.contains("KELICLOUD_SMOKE_KTP_TCP: ${{ matrix.ktp_tcp }}"));
-    assert!(
-        workflow
-            .contains("KELICLOUD_TUNNEL_ECHO_ROUNDS: ${{ matrix.tunnel_echo_rounds }}")
-    );
-    assert!(
-        workflow.contains("KELICLOUD_TUNNEL_ECHO_CLIENTS: ${{ matrix.tunnel_echo_clients }}")
-    );
-    assert!(
-        workflow.contains("KELICLOUD_TUNNEL_ECHO_PROFILE: ${{ matrix.tunnel_echo_profile }}")
-    );
-    assert!(
-        workflow.contains(
-            "KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES: ${{ matrix.tunnel_echo_payload_bytes }}"
-        )
-    );
-    assert!(
-        workflow.contains(
-            "KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES: ${{ matrix.ktp_min_max_batch_frames }}"
-        )
-    );
+    assert!(workflow.contains("KELICLOUD_TUNNEL_ECHO_ROUNDS: ${{ matrix.tunnel_echo_rounds }}"));
+    assert!(workflow.contains("KELICLOUD_TUNNEL_ECHO_CLIENTS: ${{ matrix.tunnel_echo_clients }}"));
+    assert!(workflow.contains("KELICLOUD_TUNNEL_ECHO_PROFILE: ${{ matrix.tunnel_echo_profile }}"));
+    assert!(workflow
+        .contains("KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES: ${{ matrix.tunnel_echo_payload_bytes }}"));
+    assert!(workflow
+        .contains("KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES: ${{ matrix.ktp_min_max_batch_frames }}"));
     assert!(workflow.contains("KOMARI_DB_NAME: komari_${{ matrix.data_plane }}"));
     assert!(workflow.contains("SMOKE_LOG_DIR: smoke-logs-${{ matrix.data_plane }}"));
     assert!(workflow.contains("bash scripts/smoke-local-backend.sh"));
@@ -96,6 +83,51 @@ fn local_backend_smoke_workflow_path() -> PathBuf {
         .join(".github")
         .join("workflows")
         .join("local-backend-smoke.yml")
+}
+
+#[test]
+fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
+    let workflow = std::fs::read_to_string(ktp_tunnel_matrix_workflow_path()).unwrap();
+
+    assert!(workflow.contains("name: KTP Tunnel Matrix"));
+    assert!(workflow.contains("workflow_dispatch:"));
+    assert!(workflow.contains("clients:"));
+    assert!(workflow.contains("rounds:"));
+    assert!(workflow.contains("payload_bytes:"));
+    assert!(workflow.contains("min_max_batch_frames:"));
+    assert!(workflow.contains("default: \"1 2 4 8\""));
+    assert!(workflow.contains("default: \"8\""));
+    assert!(workflow.contains("default: \"8192\""));
+    assert!(workflow.contains("default: \"2\""));
+    assert!(workflow.contains("mysql:8.4"));
+    assert!(workflow.contains("KOMARI_DB_HOST: 127.0.0.1"));
+    assert!(workflow.contains("actions/setup-go@v5"));
+    assert!(workflow.contains("go-version: \"1.24.11\""));
+    assert!(workflow.contains("actions/setup-node@v4"));
+    assert!(workflow.contains("node-version: \"22\""));
+    assert!(workflow.contains("rustup toolchain install stable"));
+    assert!(workflow.contains("mysql-client"));
+    assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ inputs.clients }}"));
+    assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ inputs.rounds }}"));
+    assert!(workflow
+        .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ inputs.payload_bytes }}"));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ inputs.min_max_batch_frames }}"
+    ));
+    assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs"));
+    assert!(workflow
+        .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work"));
+    assert!(workflow.contains("bash scripts/ktp-local-backend-tunnel-matrix.sh"));
+    assert!(workflow.contains("actions/upload-artifact@v4"));
+    assert!(workflow.contains("kelicloud-agent-rs-ktp-tunnel-matrix"));
+    assert!(workflow.contains("tunnel-matrix-logs/**/*"));
+}
+
+fn ktp_tunnel_matrix_workflow_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".github")
+        .join("workflows")
+        .join("ktp-tunnel-matrix.yml")
 }
 
 #[test]
