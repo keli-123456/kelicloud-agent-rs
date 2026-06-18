@@ -51,6 +51,14 @@ matrix_identity_name() {
     printf '%s-c%s' "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX}" "${clients}"
 }
 
+pick_free_tcp_port() {
+    python3 -c 'import socket
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()'
+}
+
 init_matrix_paths() {
     MATRIX_LOG_ROOT="$(trim_trailing_slash "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR}")"
     MATRIX_WORK_ROOT="$(trim_trailing_slash "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR}")"
@@ -143,6 +151,8 @@ run_clients() {
     local work_dir=""
     local db_name
     local identity_name
+    local backend_listen
+    local backend_endpoint
     local smoke_status=0
     local status
 
@@ -150,14 +160,18 @@ run_clients() {
     log_dir="$(trim_trailing_slash "${log_dir}")"
     db_name="$(matrix_db_name "${clients}")"
     identity_name="$(matrix_identity_name "${clients}")"
+    backend_listen="auto"
+    backend_endpoint="auto"
     if [[ -n "${MATRIX_WORK_ROOT}" ]]; then
         work_dir="${MATRIX_WORK_ROOT}/clients-${clients}"
     fi
 
     echo "== ktp local backend tunnel clients=${clients} =="
     if [[ "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN}" == "1" ]]; then
-        printf 'dry_run: clients=%s KELICLOUD_SMOKE_KTP_TCP=true KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s SMOKE_LOG_DIR=%s' \
+        printf 'dry_run: clients=%s KELICLOUD_SMOKE_KTP_TCP=true BACKEND_LISTEN=%s BACKEND_ENDPOINT=%s KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s SMOKE_LOG_DIR=%s' \
             "${clients}" \
+            "${backend_listen}" \
+            "${backend_endpoint}" \
             "${db_name}" \
             "${identity_name}" \
             "${identity_name}" \
@@ -178,9 +192,13 @@ run_clients() {
     if [[ -n "${work_dir}" ]]; then
         mkdir -p "${work_dir}"
     fi
+    backend_listen="127.0.0.1:$(pick_free_tcp_port)"
+    backend_endpoint="http://${backend_listen}"
 
     (
         export KELICLOUD_SMOKE_KTP_TCP=true
+        export BACKEND_LISTEN="${backend_listen}"
+        export BACKEND_ENDPOINT="${backend_endpoint}"
         export KOMARI_DB_NAME="${db_name}"
         export SMOKE_AGENT_HOSTNAME="${identity_name}"
         export SMOKE_TUNNEL_GROUP="${identity_name}"

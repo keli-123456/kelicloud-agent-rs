@@ -18,6 +18,9 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("SMOKE_AGENT_HOSTNAME"));
     assert!(script.contains("SMOKE_TUNNEL_GROUP"));
     assert!(script.contains("matrix_db_name"));
+    assert!(script.contains("pick_free_tcp_port"));
+    assert!(script.contains("BACKEND_LISTEN"));
+    assert!(script.contains("BACKEND_ENDPOINT"));
     assert!(script.contains("KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES"));
     assert!(script.contains("tunnel-echo.evidence.md"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
@@ -86,6 +89,8 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
     assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-c4"));
     assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-c1"));
     assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-c4"));
+    assert!(stdout.contains("BACKEND_LISTEN=auto"));
+    assert!(stdout.contains("BACKEND_ENDPOINT=auto"));
 }
 
 #[test]
