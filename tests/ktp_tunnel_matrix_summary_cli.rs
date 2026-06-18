@@ -226,6 +226,70 @@ adaptive	4	8	rdp-like	8192	pass	1000	logs/adaptive/clients-4	logs/adaptive/clien
 }
 
 #[test]
+fn ktp_tunnel_matrix_summary_expect_matrix_rejects_missing_policy_client_rows() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-missing-expected-row",
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	1	8	rdp-like	8192	pass	500	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	9920	700	1000	1200	1500	0	12	40	2
+adaptive	1	8	rdp-like	8192	pass	450	logs/adaptive/clients-1	logs/adaptive/clients-1/tunnel-echo.evidence.md	logs/adaptive/clients-1/ktp-live-canary.evidence.md	9920	500	800	900	1000	0	14	40	3
+fixed	2	8	rdp-like	8192	pass	500	logs/fixed/clients-2	logs/fixed/clients-2/tunnel-echo.evidence.md	logs/fixed/clients-2/ktp-live-canary.evidence.md	19840	700	1000	1200	1500	200	12	80	4
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--expect-policies")
+        .arg("fixed adaptive")
+        .arg("--expect-clients")
+        .arg("1 2")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "missing expected row should exit 3: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("ktp_tunnel_matrix_summary rows=3 pass=3 fail=0 timeout=0 status=pass"));
+    assert!(stderr.contains("missing tunnel matrix row policy=adaptive clients=2"));
+}
+
+#[test]
+fn ktp_tunnel_matrix_summary_expect_matrix_accepts_all_policy_client_rows() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-all-expected-rows",
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	1	8	rdp-like	8192	pass	500	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	9920	700	1000	1200	1500	0	12	40	2
+adaptive	1	8	rdp-like	8192	pass	450	logs/adaptive/clients-1	logs/adaptive/clients-1/tunnel-echo.evidence.md	logs/adaptive/clients-1/ktp-live-canary.evidence.md	9920	500	800	900	1000	0	14	40	3
+fixed	2	8	rdp-like	8192	pass	500	logs/fixed/clients-2	logs/fixed/clients-2/tunnel-echo.evidence.md	logs/fixed/clients-2/ktp-live-canary.evidence.md	19840	700	1000	1200	1500	200	12	80	4
+adaptive	2	8	rdp-like	8192	pass	450	logs/adaptive/clients-2	logs/adaptive/clients-2/tunnel-echo.evidence.md	logs/adaptive/clients-2/ktp-live-canary.evidence.md	19840	500	800	900	1000	100	14	80	5
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--expect-policies")
+        .arg("fixed,adaptive")
+        .arg("--expect-clients")
+        .arg("1,2")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert!(
+        output.status.success(),
+        "summary failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("expected_matrix policies=fixed,adaptive clients=1,2 status=pass"));
+}
+
+#[test]
 fn ktp_tunnel_matrix_summary_rejects_missing_required_columns() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-missing-column",

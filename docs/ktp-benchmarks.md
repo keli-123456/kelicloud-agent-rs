@@ -1235,6 +1235,11 @@ keep the light `fixed` policy self-check; manual workflow dispatch defaults to
 `fixed adaptive` so scheduling experiments can collect comparable real
 forwarding rows without editing the workflow. Manual dispatch also exposes
 `min_throughput_mib_s` for the optional summary throughput gate.
+The workflow passes the requested policy list and client-count list to
+`ktp-tunnel-matrix-summary` with `--expect-policies` and `--expect-clients`.
+That makes the report fail when a policy/client combination is missing, even if
+every produced row is `pass`, so partial matrices cannot masquerade as complete
+release-host evidence.
 
 Result:
 

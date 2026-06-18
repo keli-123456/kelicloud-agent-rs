@@ -203,6 +203,8 @@ jobs:
             if [[ -n "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_THROUGHPUT_MIB_S}" ]]; then
               summary_args+=(--min-throughput-mib-s "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_THROUGHPUT_MIB_S}")
             fi
+            summary_args+=(--expect-policies "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}")
+            summary_args+=(--expect-clients "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}")
             cargo run --locked --bin ktp-tunnel-matrix-summary -- "${summary_args[@]}" "${summary}" | tee "${report}"
           else
             mkdir -p "$(dirname "${report}")"

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fs;
 
@@ -31,11 +31,13 @@ struct MatrixReport {
     gate_failures: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct GateConfig {
     max_rtt_p95_micros: Option<u64>,
     max_client_p95_spread_micros: Option<u64>,
     min_throughput_mib_s: Option<f64>,
+    expected_policies: Vec<String>,
+    expected_clients: Vec<String>,
 }
 
 fn main() {
@@ -83,10 +85,20 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
                 gate_config.min_throughput_mib_s =
                     Some(next_f64_arg(&mut args, "--min-throughput-mib-s")?);
             }
+            "--expect-policies" => {
+                gate_config.expected_policies = next_list_arg(&mut args, "--expect-policies")?;
+            }
+            "--expect-clients" => {
+                gate_config.expected_clients = next_list_arg(&mut args, "--expect-clients")?;
+            }
             _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("unexpected extra argument".into()),
         }
+    }
+
+    if gate_config.expected_policies.is_empty() != gate_config.expected_clients.is_empty() {
+        return Err("--expect-policies and --expect-clients must be provided together".into());
     }
 
     let path = path.ok_or("matrix-summary.tsv path is required")?;
@@ -128,6 +140,35 @@ fn next_f64_arg(args: &mut impl Iterator<Item = String>, flag: &str) -> SummaryR
         return Err(format!("{flag} must be greater than or equal to 0").into());
     }
     Ok(parsed)
+}
+
+fn next_list_arg(
+    args: &mut impl Iterator<Item = String>,
+    flag: &str,
+) -> SummaryResult<Vec<String>> {
+    let value = args
+        .next()
+        .ok_or_else(|| format!("{flag} requires a value"))?;
+    let values = parse_list_arg(&value);
+    if values.is_empty() {
+        return Err(format!("{flag} requires at least one value").into());
+    }
+    Ok(values)
+}
+
+fn parse_list_arg(value: &str) -> Vec<String> {
+    let mut seen = BTreeSet::<String>::new();
+    let mut values = Vec::new();
+    for item in value
+        .split(|character: char| character == ',' || character.is_whitespace())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        if seen.insert(item.to_string()) {
+            values.push(item.to_string());
+        }
+    }
+    values
 }
 
 fn summarize_tsv(
@@ -337,6 +378,23 @@ fn summarize_tsv(
         min_throughput.clients.as_deref().unwrap_or("-")
     ));
 
+    if !gate_config.expected_policies.is_empty() {
+        let missing = record_expected_matrix_failures(
+            &mut gate_failures,
+            &rows,
+            &gate_config.expected_policies,
+            &gate_config.expected_clients,
+        );
+        output.push('\n');
+        output.push_str(&format!(
+            "expected_matrix policies={} clients={} status={} missing={}",
+            gate_config.expected_policies.join(","),
+            gate_config.expected_clients.join(","),
+            if missing == 0 { "pass" } else { "fail" },
+            missing
+        ));
+    }
+
     for comparison in policy_comparisons(&rows) {
         output.push('\n');
         output.push_str(&comparison.report_line());
@@ -354,6 +412,35 @@ fn summarize_tsv(
         output,
         gate_failures,
     })
+}
+
+fn record_expected_matrix_failures(
+    gate_failures: &mut Vec<String>,
+    rows: &[MatrixRow],
+    expected_policies: &[String],
+    expected_clients: &[String],
+) -> usize {
+    let observed = rows
+        .iter()
+        .map(|row| {
+            (
+                row.relay_batch_policy.as_str().to_string(),
+                row.clients.as_str().to_string(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let mut missing = 0;
+    for policy in expected_policies {
+        for clients in expected_clients {
+            if !observed.contains(&(policy.clone(), clients.clone())) {
+                missing += 1;
+                gate_failures.push(format!(
+                    "missing tunnel matrix row policy={policy} clients={clients}"
+                ));
+            }
+        }
+    }
+    missing
 }
 
 fn record_min_throughput_gate_failure(
@@ -868,6 +955,6 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 
 fn print_usage() {
     eprintln!(
-        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] <matrix-summary.tsv>"
+        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] [--expect-policies LIST --expect-clients LIST] <matrix-summary.tsv>"
     );
 }

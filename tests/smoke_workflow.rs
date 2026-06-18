@@ -253,6 +253,12 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains(
         "summary_args+=(--min-throughput-mib-s \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_THROUGHPUT_MIB_S}\")"
     ));
+    assert!(workflow.contains(
+        "summary_args+=(--expect-policies \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}\")"
+    ));
+    assert!(workflow.contains(
+        "summary_args+=(--expect-clients \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}\")"
+    ));
     assert!(workflow.contains("cargo run --locked --bin ktp-tunnel-matrix-summary -- \"${summary_args[@]}\" \"${summary}\" | tee \"${report}\""));
     assert!(workflow.contains("matrix-summary.report.txt"));
     assert!(workflow.contains("KTP tunnel matrix summary"));
