@@ -175,6 +175,12 @@ so a passing live canary proves the production KTP TCP socket batch-read path
 was active during the observation window. Treat the generated Markdown file as
 the live-log companion to `ktp-e2e-bench --latency` output.
 
+For stricter performance-path evidence, set
+`KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2` before running the helper. That keeps
+ordinary live canaries tolerant of low traffic, while a dedicated performance
+canary can fail unless at least one socket batch read contains multiple KTP
+frames.
+
 Local backend KTP smoke:
 
 ```bash
@@ -984,6 +990,12 @@ Result:
   report send, ping upload, exec upload, terminal, and CN connectivity checks.
 - `ktp-live-canary-evidence.sh` observed positive socket batch-read counters:
   `socket_read_batches=3` and `socket_read_frames=5`.
+- Re-running the evidence helper against the same live smoke log with
+  `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2` generated
+  `/tmp/kelicloud-agent-rs-ktp-active-batch-33443f5/logs/ktp-live-canary-minmax2.evidence.md`.
+  It recorded `socket_read_max_batch_frames=2`, so the performance canary can
+  now require at least one multi-frame socket batch read when that stricter
+  threshold is useful.
 
 Latest active batch-read diagnostics:
 

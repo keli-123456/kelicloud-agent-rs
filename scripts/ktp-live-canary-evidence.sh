@@ -6,6 +6,7 @@ SINCE="30 minutes ago"
 LOG_FILE=""
 EVIDENCE_FILE="ktp-live-canary.evidence.md"
 MIN_LINES=1
+MIN_MAX_BATCH_FRAMES="${KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES:-1}"
 
 usage() {
     cat <<'USAGE'
@@ -21,6 +22,11 @@ Options:
   --evidence-file PATH      Markdown output, default: ktp-live-canary.evidence.md
   --min-lines N             minimum tunnel data diagnostics lines, default: 1
   -h, --help                show this help
+
+Environment:
+  KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES
+                            require socket_read_max_batch_frames to reach this
+                            value, default: 1
 
 The script validates that live KTP tunnel data diagnostics include runtime wait,
 outbound queue dwell, and socket batch-read fields, then writes a small evidence
@@ -78,6 +84,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 require_positive_integer "--min-lines" "$MIN_LINES"
+require_positive_integer "KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES" "$MIN_MAX_BATCH_FRAMES"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -140,6 +147,11 @@ for field in "${POSITIVE_FIELDS[@]}"; do
     (( value > 0 )) || die "expected positive diagnostics field: ${field}"
 done
 
+max_batch_frames="$(max_metric_value "socket_read_max_batch_frames")"
+if (( max_batch_frames < MIN_MAX_BATCH_FRAMES )); then
+    die "expected socket_read_max_batch_frames >= ${MIN_MAX_BATCH_FRAMES}, found ${max_batch_frames}"
+fi
+
 mkdir -p "$(dirname "$EVIDENCE_FILE")"
 {
     printf '# KTP Live Canary Evidence\n\n'
@@ -159,6 +171,9 @@ mkdir -p "$(dirname "$EVIDENCE_FILE")"
     for field in "${POSITIVE_FIELDS[@]}"; do
         printf -- '- `%s`: `%s`\n' "$field" "$(max_metric_value "${field}")"
     done
+    printf '\n## Batch Thresholds\n\n'
+    printf -- '- `socket_read_max_batch_frames`: `%s`\n' "$max_batch_frames"
+    printf -- '- `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES`: `%s`\n' "$MIN_MAX_BATCH_FRAMES"
     printf '\n## Latest Diagnostics\n\n'
     printf '```text\n'
     tail -n 5 "$DIAGNOSTICS_LOG"
