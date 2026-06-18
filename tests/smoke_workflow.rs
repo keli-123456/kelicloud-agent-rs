@@ -114,6 +114,11 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("payload_bytes:"));
     assert!(workflow.contains("min_max_batch_frames:"));
     assert!(workflow.contains("min_max_write_batch_frames:"));
+    assert!(workflow.contains("adaptive_high_sessions:"));
+    assert!(workflow.contains("adaptive_elevated_dwell_us:"));
+    assert!(workflow.contains("adaptive_severe_dwell_us:"));
+    assert!(workflow.contains("adaptive_elevated_cap:"));
+    assert!(workflow.contains("adaptive_severe_cap:"));
     assert!(workflow.contains("client_timeout_seconds:"));
     assert!(workflow.contains("max_rtt_p95_micros:"));
     assert!(workflow.contains("max_client_p95_spread_micros:"));
@@ -122,6 +127,9 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("default: \"8\""));
     assert!(workflow.contains("default: \"8192\""));
     assert!(workflow.contains("default: \"900\""));
+    assert!(workflow.contains("default: \"50000\""));
+    assert!(workflow.contains("default: \"250000\""));
+    assert!(workflow.contains("default: \"16\""));
     assert!(workflow.contains("default: \"2\""));
     assert!(workflow.contains("default: \"\""));
     assert!(workflow.contains("mysql:8.4"));
@@ -149,6 +157,21 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     ));
     assert!(workflow.contains(
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.min_max_write_batch_frames || '2' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.adaptive_high_sessions || '8' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US: ${{ github.event_name == 'workflow_dispatch' && inputs.adaptive_elevated_dwell_us || '50000' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US: ${{ github.event_name == 'workflow_dispatch' && inputs.adaptive_severe_dwell_us || '250000' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP: ${{ github.event_name == 'workflow_dispatch' && inputs.adaptive_elevated_cap || '16' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP: ${{ github.event_name == 'workflow_dispatch' && inputs.adaptive_severe_cap || '8' }}"
     ));
     assert!(workflow.contains(
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.client_timeout_seconds || '900' }}"
