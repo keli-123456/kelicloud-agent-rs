@@ -1,6 +1,11 @@
 name: KTP Tunnel Matrix
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/ktp-tunnel-matrix.yml
   workflow_dispatch:
     inputs:
       clients:
@@ -36,10 +41,10 @@ env:
   KOMARI_DB_NAME: komari_tunnel_matrix
   KELICLOUD_BACKEND_REF: main
   KOMARI_FRONTEND_REF: main
-  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ inputs.clients }}
-  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ inputs.rounds }}
-  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ inputs.payload_bytes }}
-  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ inputs.min_max_batch_frames }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ inputs.clients || '1 2 4 8' }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ inputs.rounds || '8' }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ inputs.payload_bytes || '8192' }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ inputs.min_max_batch_frames || '2' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work
 
@@ -90,6 +95,22 @@ jobs:
 
       - name: Run KTP tunnel matrix
         run: bash scripts/ktp-local-backend-tunnel-matrix.sh
+
+      - name: Publish tunnel matrix summary
+        if: always()
+        run: |
+          summary="tunnel-matrix-logs/matrix-summary.tsv"
+          {
+            echo "## KTP tunnel matrix summary"
+            echo
+            if [[ -f "${summary}" ]]; then
+              echo '```tsv'
+              cat "${summary}"
+              echo '```'
+            else
+              echo "matrix-summary.tsv was not generated."
+            fi
+          } >>"${GITHUB_STEP_SUMMARY}"
 
       - name: Upload tunnel matrix logs
         if: always()

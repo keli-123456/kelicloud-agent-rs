@@ -90,6 +90,11 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     let workflow = std::fs::read_to_string(ktp_tunnel_matrix_workflow_path()).unwrap();
 
     assert!(workflow.contains("name: KTP Tunnel Matrix"));
+    assert!(workflow.contains("push:"));
+    assert!(workflow.contains("branches:"));
+    assert!(workflow.contains("- main"));
+    assert!(workflow.contains("paths:"));
+    assert!(workflow.contains("- .github/workflows/ktp-tunnel-matrix.yml"));
     assert!(workflow.contains("workflow_dispatch:"));
     assert!(workflow.contains("clients:"));
     assert!(workflow.contains("rounds:"));
@@ -107,17 +112,24 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("node-version: \"22\""));
     assert!(workflow.contains("rustup toolchain install stable"));
     assert!(workflow.contains("mysql-client"));
-    assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ inputs.clients }}"));
-    assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ inputs.rounds }}"));
     assert!(workflow
-        .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ inputs.payload_bytes }}"));
+        .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ inputs.clients || '1 2 4 8' }}"));
+    assert!(
+        workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ inputs.rounds || '8' }}")
+    );
     assert!(workflow.contains(
-        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ inputs.min_max_batch_frames }}"
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ inputs.payload_bytes || '8192' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ inputs.min_max_batch_frames || '2' }}"
     ));
     assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs"));
     assert!(workflow
         .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work"));
     assert!(workflow.contains("bash scripts/ktp-local-backend-tunnel-matrix.sh"));
+    assert!(workflow.contains("KTP tunnel matrix summary"));
+    assert!(workflow.contains("matrix-summary.tsv"));
+    assert!(workflow.contains("GITHUB_STEP_SUMMARY"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(workflow.contains("kelicloud-agent-rs-ktp-tunnel-matrix"));
     assert!(workflow.contains("tunnel-matrix-logs/**/*"));
