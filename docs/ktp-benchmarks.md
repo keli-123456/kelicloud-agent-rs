@@ -1065,12 +1065,14 @@ cargo run --locked --bin ktp-tunnel-matrix-summary -- \
   smoke-logs/local-backend-tunnel-matrix/matrix-summary.tsv
 ```
 
-The report emits row counts, per-client latency and batch-read highlights, plus
-the maximum RTT p95, maximum per-client p95 spread, and maximum socket batch
-size across passing rows, including the policy/client combination that produced
-each maximum. When a TSV has passing `fixed` and `adaptive` rows for the same
-client count, the report also emits a `policy_compare` line with elapsed, RTT
-p95, and per-client p95-spread deltas plus a verdict such as
+The report emits row counts, per-client latency and socket batch-read/write
+highlights, plus the maximum RTT p95, maximum per-client p95 spread, and maximum
+socket batch sizes across passing rows, including the policy/client combination
+that produced each maximum. Older TSV artifacts without `socket_write_*` columns
+remain readable and show write batch metrics as `-`. When a TSV has passing
+`fixed` and `adaptive` rows for the same client count, the report also emits a
+`policy_compare` line with elapsed, RTT p95, and per-client p95-spread deltas
+plus a verdict such as
 `adaptive_better`, `fixed_better`, `same`, or `mixed`. Add `--require-pass`
 when the summary itself should fail with exit code `3` if any matrix row has
 `fail`, `timeout`, or another non-pass status. Add `--fail-on-fixed-better`
@@ -1341,7 +1343,8 @@ Notes:
   local-backend smoke state from leaking between matrix rows.
 - The first live matrix validation confirmed the wrapper can run repeated real
   backend KTP tunnel smokes and emit a combined TSV summary that pairs
-  forwarding RTT evidence with KTP socket batch-read counters.
+  forwarding RTT evidence with KTP socket batch-read counters. Newer summaries
+  also include socket batch-write counters from `ktp-live-canary.evidence.md`.
 - The `KTP Tunnel Matrix` workflow keeps `workflow_dispatch` for full manual
   `1 2 4 8` runs, but its `push` self-check uses the lighter `1 2` matrix and
   publishes `matrix-summary.tsv` to the Actions job summary plus artifact.

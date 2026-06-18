@@ -13,6 +13,7 @@ struct MatrixRow {
     rtt_micros_p95: Option<u64>,
     client_p95_spread_micros: Option<u64>,
     socket_read_max_batch_frames: Option<u64>,
+    socket_write_max_batch_frames: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -100,6 +101,7 @@ fn summarize_tsv(
     let mut max_rtt = MaxMetric::default();
     let mut max_spread = MaxMetric::default();
     let mut max_socket_batch = MaxMetric::default();
+    let mut max_socket_write_batch = MaxMetric::default();
     let mut gate_failures = Vec::new();
 
     for row in &rows {
@@ -113,16 +115,18 @@ fn summarize_tsv(
         let rtt = metric_text(row.rtt_micros_p95);
         let spread = metric_text(row.client_p95_spread_micros);
         let socket_batch = metric_text(row.socket_read_max_batch_frames);
+        let socket_write_batch = metric_text(row.socket_write_max_batch_frames);
         output.push('\n');
         output.push_str(&format!(
-            "policy={} clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={}",
+            "policy={} clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={}",
             row.relay_batch_policy,
             row.clients,
             row.status,
             row.elapsed_millis,
             rtt,
             spread,
-            socket_batch
+            socket_batch,
+            socket_write_batch
         ));
 
         if row.status == "pass" {
@@ -136,6 +140,11 @@ fn summarize_tsv(
                 &row.relay_batch_policy,
                 &row.clients,
                 row.socket_read_max_batch_frames,
+            );
+            max_socket_write_batch.record(
+                &row.relay_batch_policy,
+                &row.clients,
+                row.socket_write_max_batch_frames,
             );
         }
     }
@@ -160,6 +169,13 @@ fn summarize_tsv(
         metric_text(max_socket_batch.value),
         max_socket_batch.policy.as_deref().unwrap_or("-"),
         max_socket_batch.clients.as_deref().unwrap_or("-")
+    ));
+    output.push('\n');
+    output.push_str(&format!(
+        "max_socket_write_max_batch_frames={} policy={} clients={}",
+        metric_text(max_socket_write_batch.value),
+        max_socket_write_batch.policy.as_deref().unwrap_or("-"),
+        max_socket_write_batch.clients.as_deref().unwrap_or("-")
     ));
 
     for comparison in policy_comparisons(&rows) {
@@ -220,6 +236,14 @@ fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> Summary
             line_number,
             &clients,
         )?,
+        socket_write_max_batch_frames: parse_optional_metric(
+            &fields,
+            indexes.socket_write_max_batch_frames,
+            "socket_write_max_batch_frames",
+            pass_row,
+            line_number,
+            &clients,
+        )?,
     })
 }
 
@@ -255,6 +279,20 @@ fn parse_metric(
         return Ok(None);
     }
     Ok(Some(value.parse::<u64>()?))
+}
+
+fn parse_optional_metric(
+    fields: &[&str],
+    index: Option<usize>,
+    name: &str,
+    required: bool,
+    line_number: usize,
+    clients: &str,
+) -> SummaryResult<Option<u64>> {
+    let Some(index) = index else {
+        return Ok(None);
+    };
+    parse_metric(fields, index, name, required, line_number, clients)
 }
 
 fn metric_text(value: Option<u64>) -> String {
@@ -436,6 +474,7 @@ struct MatrixIndexes {
     rtt_micros_p95: usize,
     rtt_client_p95_spread_micros: usize,
     socket_read_max_batch_frames: usize,
+    socket_write_max_batch_frames: Option<usize>,
 }
 
 impl MatrixIndexes {
@@ -459,6 +498,7 @@ impl MatrixIndexes {
                 &positions,
                 "socket_read_max_batch_frames",
             )?,
+            socket_write_max_batch_frames: positions.get("socket_write_max_batch_frames").copied(),
         })
     }
 }
