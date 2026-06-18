@@ -1058,8 +1058,10 @@ KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS=5000 \
 These gates only evaluate rows whose smoke status is `pass`. The script still
 writes `matrix-summary.tsv`, then exits with code `3` if any passing row exceeds
 the configured RTT p95 or per-client p95 spread threshold. The manual
-`KTP Tunnel Matrix` workflow exposes the same thresholds as optional inputs so
-release-host runs can collect artifacts and fail loudly on latency regressions.
+`KTP Tunnel Matrix` workflow exposes the read and write batch thresholds as
+`min_max_batch_frames` and `min_max_write_batch_frames` inputs, so release-host
+runs can collect artifacts and fail loudly on latency regressions or missing
+multi-frame socket batches.
 
 To publish a concise matrix report from the TSV artifact:
 
@@ -1386,10 +1388,11 @@ Notes:
   dedicated performance canaries that must prove at least one multi-frame write.
 - The `Local Backend Smoke` GitHub Actions matrix now keeps the WebSocket row
   on the single-round compatibility smoke while the `ktp_tcp` row runs
-  `KELICLOUD_TUNNEL_ECHO_ROUNDS=8` and
-  `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2`. This turns the dedicated KTP CI row
-  into a continuous multi-round tunnel echo and multi-frame socket batch-read
-  gate.
+  `KELICLOUD_TUNNEL_ECHO_ROUNDS=8`,
+  `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2`, and
+  `KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES=2`. This turns the dedicated KTP
+  CI row into a continuous multi-round tunnel echo and multi-frame socket
+  batch-read/write gate.
 - The local backend smoke now also writes `tunnel-echo.evidence.md` with
   per-round tunnel echo payload sizes and RTT percentiles. The GitHub Actions
   `ktp_tcp` row runs that echo as `KELICLOUD_TUNNEL_ECHO_PROFILE=rdp-like` with

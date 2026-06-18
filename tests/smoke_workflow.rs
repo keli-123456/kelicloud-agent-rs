@@ -58,6 +58,8 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
     assert!(workflow.contains("tunnel_echo_clients: \"4\""));
     assert!(workflow.contains("ktp_min_max_batch_frames: \"1\""));
     assert!(workflow.contains("ktp_min_max_batch_frames: \"2\""));
+    assert!(workflow.contains("ktp_min_max_write_batch_frames: \"1\""));
+    assert!(workflow.contains("ktp_min_max_write_batch_frames: \"2\""));
     assert!(workflow.contains("tunnel_echo_profile: fixed"));
     assert!(workflow.contains("tunnel_echo_profile: rdp-like"));
     assert!(workflow.contains("tunnel_echo_payload_bytes: \"0\""));
@@ -70,6 +72,9 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
         .contains("KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES: ${{ matrix.tunnel_echo_payload_bytes }}"));
     assert!(workflow
         .contains("KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES: ${{ matrix.ktp_min_max_batch_frames }}"));
+    assert!(workflow.contains(
+        "KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES: ${{ matrix.ktp_min_max_write_batch_frames }}"
+    ));
     assert!(workflow.contains("KOMARI_DB_NAME: komari_${{ matrix.data_plane }}"));
     assert!(workflow.contains("SMOKE_LOG_DIR: smoke-logs-${{ matrix.data_plane }}"));
     assert!(workflow.contains("bash scripts/smoke-local-backend.sh"));
@@ -108,6 +113,7 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("rounds:"));
     assert!(workflow.contains("payload_bytes:"));
     assert!(workflow.contains("min_max_batch_frames:"));
+    assert!(workflow.contains("min_max_write_batch_frames:"));
     assert!(workflow.contains("client_timeout_seconds:"));
     assert!(workflow.contains("max_rtt_p95_micros:"));
     assert!(workflow.contains("max_client_p95_spread_micros:"));
@@ -140,6 +146,9 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     ));
     assert!(workflow.contains(
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.min_max_batch_frames || '2' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.min_max_write_batch_frames || '2' }}"
     ));
     assert!(workflow.contains(
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.client_timeout_seconds || '900' }}"
