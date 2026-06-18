@@ -76,6 +76,39 @@ fn config_can_enable_tunnel_data_from_environment() {
 }
 
 #[test]
+fn config_defaults_ktp_relay_batch_policy_to_adaptive_when_tunnel_data_is_enabled() {
+    let config = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_TUNNEL_DATA_ENABLED" => Some("true".to_string()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert_eq!(
+        config.tunnel_ktp_relay_batch_policy,
+        TunnelRelayBatchPolicy::Adaptive
+    );
+}
+
+#[test]
+fn config_preserves_explicit_fixed_ktp_relay_batch_policy_when_tunnel_data_is_enabled() {
+    let config = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_TUNNEL_DATA_ENABLED" => Some("true".to_string()),
+        "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY" => Some("fixed".to_string()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert_eq!(
+        config.tunnel_ktp_relay_batch_policy,
+        TunnelRelayBatchPolicy::Fixed
+    );
+}
+
+#[test]
 fn config_reads_ktp_tcp_tunnel_data_address_from_environment_and_cli() {
     let config = AgentConfig::from_args_and_env(
         [

@@ -67,12 +67,12 @@ Supported flags:
   tunnel forwarding rules. The installer exposes this as `--enable-tunnel-data`.
 - `--tunnel-ktp-relay-batch-policy <fixed|adaptive>` or
   `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY` selects the KTP TCP runtime relay batch
-  policy. The runtime default is `fixed`, while the Linux installer writes
-  `adaptive` automatically when `--enable-tunnel-data` is used. Adaptive keeps
-  low-concurrency drains large, caps high-concurrency drains, and tightens the
-  cap further when recent outbound queue dwell p95 rises. Diagnostics expose
-  both lifetime and recent dwell so the adaptive decision can be checked from
-  agent logs.
+  policy. When tunnel data is enabled and no policy is explicit, the agent and
+  Linux installer default to `adaptive`. Adaptive keeps low-concurrency drains
+  large, caps high-concurrency drains, and tightens the cap further when recent
+  outbound queue dwell p95 rises. Set `fixed` explicitly to roll back.
+  Diagnostics expose both lifetime and recent dwell so the adaptive decision
+  can be checked from agent logs.
 
 ## Linux Install
 

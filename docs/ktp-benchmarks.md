@@ -923,10 +923,9 @@ Tunnel-data receive batch foundation:
   the largest and lowest effective runtime batch cap plus the latest cap that
   fixed/adaptive scheduling selected.
 - The conservative `fixed|adaptive` relay batch policy is now shared by
-  benchmark tooling and the production tunnel runtime. The runtime default stays
-  `fixed`; the Linux installer writes `adaptive` automatically when
-  `--enable-tunnel-data` is used, and explicit
-  `--tunnel-ktp-relay-batch-policy fixed|adaptive` or
+  benchmark tooling and the production tunnel runtime. When tunnel data is
+  enabled and no policy is explicit, the agent and Linux installer default to
+  `adaptive`; explicit `--tunnel-ktp-relay-batch-policy fixed|adaptive` or
   `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=fixed|adaptive` remains the rollback
   lever. This changes neither the KTP frame format, backend schema, nor default
   WebSocket behavior.

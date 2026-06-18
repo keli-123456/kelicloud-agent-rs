@@ -99,6 +99,7 @@ impl AgentConfig {
         let mut tunnel_ktp_tcp_address =
             clean_optional(env_lookup("AGENT_TUNNEL_KTP_TCP_ADDRESS")).unwrap_or_default();
         let mut tunnel_ktp_relay_batch_policy = TunnelRelayBatchPolicy::Fixed;
+        let mut tunnel_ktp_relay_batch_policy_explicit = false;
         let mut tunnel_ktp_relay_batch_tuning = TunnelRelayBatchTuning::default();
         let mut interval_seconds = parse_env_f64(&env_lookup, "AGENT_INTERVAL", 1.0)?;
         let mut max_retries = parse_env_u32(&env_lookup, "AGENT_MAX_RETRIES", 3)?;
@@ -184,6 +185,7 @@ impl AgentConfig {
                         "--tunnel-ktp-relay-batch-policy",
                         &next_value(&mut iter, "--tunnel-ktp-relay-batch-policy")?,
                     )?;
+                    tunnel_ktp_relay_batch_policy_explicit = true;
                 }
                 "--tunnel-ktp-relay-adaptive-high-sessions"
                 | "--ktp-relay-adaptive-high-sessions" => {
@@ -413,12 +415,14 @@ impl AgentConfig {
                         "--tunnel-ktp-relay-batch-policy",
                         &arg["--tunnel-ktp-relay-batch-policy=".len()..],
                     )?;
+                    tunnel_ktp_relay_batch_policy_explicit = true;
                 }
                 _ if arg.starts_with("--ktp-relay-batch-policy=") => {
                     tunnel_ktp_relay_batch_policy = parse_tunnel_relay_batch_policy(
                         "--ktp-relay-batch-policy",
                         &arg["--ktp-relay-batch-policy=".len()..],
                     )?;
+                    tunnel_ktp_relay_batch_policy_explicit = true;
                 }
                 _ if arg.starts_with("--tunnel-ktp-relay-adaptive-high-sessions=") => {
                     tunnel_ktp_relay_batch_tuning.high_session_threshold = parse_usize(
@@ -505,7 +509,8 @@ impl AgentConfig {
             "AGENT_TUNNEL_KTP_TCP_ADDRESS",
             &mut tunnel_ktp_tcp_address,
         );
-        apply_tunnel_relay_batch_policy_env(&env_lookup, &mut tunnel_ktp_relay_batch_policy)?;
+        tunnel_ktp_relay_batch_policy_explicit |=
+            apply_tunnel_relay_batch_policy_env(&env_lookup, &mut tunnel_ktp_relay_batch_policy)?;
         apply_tunnel_relay_batch_tuning_env(&env_lookup, &mut tunnel_ktp_relay_batch_tuning)?;
         apply_f64_env(&env_lookup, "AGENT_INTERVAL", &mut interval_seconds);
         apply_u32_env(&env_lookup, "AGENT_MAX_RETRIES", &mut max_retries);
@@ -589,6 +594,7 @@ impl AgentConfig {
             if let Some(value) = file_config.tunnel_ktp_relay_batch_policy {
                 tunnel_ktp_relay_batch_policy =
                     parse_tunnel_relay_batch_policy("tunnel_ktp_relay_batch_policy", &value)?;
+                tunnel_ktp_relay_batch_policy_explicit = true;
             }
             if let Some(value) = file_config.tunnel_ktp_relay_adaptive_high_sessions {
                 tunnel_ktp_relay_batch_tuning.high_session_threshold =
@@ -664,6 +670,10 @@ impl AgentConfig {
             if let Some(value) = file_config.host_proc {
                 host_proc = clean_config_string(value);
             }
+        }
+
+        if tunnel_data_enabled && !tunnel_ktp_relay_batch_policy_explicit {
+            tunnel_ktp_relay_batch_policy = TunnelRelayBatchPolicy::Adaptive;
         }
 
         validate_tunnel_relay_batch_tuning(&tunnel_ktp_relay_batch_tuning)?;
@@ -916,14 +926,15 @@ where
 fn apply_tunnel_relay_batch_policy_env<F>(
     env_lookup: &F,
     target: &mut TunnelRelayBatchPolicy,
-) -> Result<(), ConfigError>
+) -> Result<bool, ConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     if let Some(value) = clean_optional(env_lookup("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY")) {
         *target = parse_tunnel_relay_batch_policy("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY", &value)?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 fn apply_tunnel_relay_batch_tuning_env<F>(
