@@ -997,6 +997,43 @@ Result:
   now require at least one multi-frame socket batch read when that stricter
   threshold is useful.
 
+Strict local-backend KTP smoke:
+
+- Agent commit: `e7bffc5`
+- Backend commit: `334a82c`
+- Backend KTP TCP relay listened on `127.0.0.1:46855`.
+- Tunnel rule echo succeeded through `127.0.0.1:59701`.
+- Evidence file:
+  `/tmp/kelicloud-agent-rs-ktp-strict-e7bffc5/logs/ktp-live-canary.evidence.md`
+- The full smoke ran with `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2`, so the
+  helper would fail unless the latest run produced at least one multi-frame
+  socket batch read.
+
+Command shape:
+
+```bash
+PATH=/usr/local/go1.24.11/bin:$PATH \
+KELICLOUD_SMOKE_KTP_TCP=true \
+KELICLOUD_PREPARE_FRONTEND=false \
+KELICLOUD_BACKEND_PATH=/root/kelicloud-backend-live-smoke-active-batch \
+KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2 \
+KOMARI_DB_USER=komari_smoke \
+KOMARI_DB_PASS=komari-smoke-pass \
+KOMARI_DB_NAME=komari_ktp_strict_e7bffc5 \
+BACKEND_LISTEN=127.0.0.1:26976 \
+BACKEND_ENDPOINT=http://127.0.0.1:26976 \
+KTP_DIAGNOSTICS_TIMEOUT_SECONDS=90 \
+SMOKE_LOG_DIR=/tmp/kelicloud-agent-rs-ktp-strict-e7bffc5/logs \
+SMOKE_WORK_DIR=/tmp/kelicloud-agent-rs-ktp-strict-e7bffc5/work \
+  bash scripts/smoke-local-backend.sh
+```
+
+Strict smoke diagnostics:
+
+```text
+tunnel data diagnostics: runtime_wait_attempts=2627 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=497549 runtime_wait_elapsed_micros_max=3825 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=250 runtime_wait_elapsed_p99_micros=500 outbound_runtime_frames=5 outbound_queue_dwell_frames=5 outbound_queue_dwell_micros_total=14335 outbound_queue_dwell_micros_max=7448 outbound_queue_dwell_p50_micros=100 outbound_queue_dwell_p95_micros=10000 outbound_queue_dwell_p99_micros=10000 socket_idle_reads=2627 socket_idle_empty_reads=2624 socket_read_batches=3 socket_read_frames=5 socket_read_max_batch_frames=2
+```
+
 Latest active batch-read diagnostics:
 
 ```text
