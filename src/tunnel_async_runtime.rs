@@ -361,6 +361,18 @@ impl AsyncTunnelFrameQueue {
             .collect()
     }
 
+    pub fn clear(&self) -> usize {
+        self.inner
+            .frames
+            .lock()
+            .map(|mut inner| {
+                let count = inner.len();
+                inner.clear();
+                count
+            })
+            .unwrap_or(0)
+    }
+
     pub fn len(&self) -> usize {
         self.inner
             .frames
@@ -889,7 +901,9 @@ impl AsyncTunnelCore {
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
             .remove(&session_id);
         if let Some(session) = removed {
-            session.abort_reader();
+            if let Some(reader) = session.abort_reader() {
+                let _ = reader.await;
+            }
             self.stats.session_closed(session.rule_id);
             Ok(())
         } else {
@@ -905,10 +919,17 @@ impl AsyncTunnelCore {
             .drain()
             .map(|(_, session)| session)
             .collect::<Vec<_>>();
+        let mut reader_tasks = Vec::new();
         for session in removed {
-            session.abort_reader();
+            if let Some(reader) = session.abort_reader() {
+                reader_tasks.push(reader);
+            }
             self.stats.session_closed(session.rule_id);
         }
+        for reader in reader_tasks {
+            let _ = reader.await;
+        }
+        self.outbound.clear();
         Ok(())
     }
 
@@ -1011,12 +1032,14 @@ impl AsyncTunnelSession {
         }
     }
 
-    fn abort_reader(&self) {
+    fn abort_reader(&self) -> Option<tokio::task::JoinHandle<()>> {
         if let Ok(mut tasks) = self.tasks.lock() {
             if let Some(reader) = tasks.reader.take() {
                 reader.abort();
+                return Some(reader);
             }
         }
+        None
     }
 
     fn reserve_pending_bytes(&self, bytes: usize, limit: usize) -> Result<(), TunnelRuntimeError> {
