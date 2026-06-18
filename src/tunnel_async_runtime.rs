@@ -112,6 +112,7 @@ const OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS: [u64; 17] = [
     1_000_000,
     u64::MAX,
 ];
+const OUTBOUND_QUEUE_DWELL_RECENT_SAMPLES: usize = 16;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TunnelRuntimeError {
@@ -346,6 +347,7 @@ pub struct TunnelRuntimeStats {
     bytes_out: Arc<AtomicU64>,
     rule_session_counts: Arc<Mutex<HashMap<u64, usize>>>,
     outbound_queue_dwell: Arc<TunnelQueueDwellStatsInner>,
+    recent_outbound_queue_dwell: Arc<TunnelQueueDwellRecentStatsInner>,
 }
 
 #[derive(Debug, Default)]
@@ -354,6 +356,38 @@ struct TunnelQueueDwellStatsInner {
     micros_total: AtomicU64,
     micros_max: AtomicU64,
     micros_buckets: [AtomicU64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()],
+}
+
+#[derive(Debug, Default)]
+struct TunnelQueueDwellRecentStatsInner {
+    samples: Mutex<VecDeque<u64>>,
+}
+
+impl TunnelQueueDwellRecentStatsInner {
+    fn record(&self, elapsed_micros: u64) {
+        let Ok(mut samples) = self.samples.lock() else {
+            return;
+        };
+        if samples.len() >= OUTBOUND_QUEUE_DWELL_RECENT_SAMPLES {
+            samples.pop_front();
+        }
+        samples.push_back(elapsed_micros);
+    }
+
+    fn snapshot(&self) -> TunnelQueueDwellStatsSnapshot {
+        let Ok(samples) = self.samples.lock() else {
+            return TunnelQueueDwellStatsSnapshot::default();
+        };
+        let mut buckets = [0u64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()];
+        let mut total = 0u64;
+        let mut max = 0u64;
+        for elapsed_micros in samples.iter().copied() {
+            total = total.saturating_add(elapsed_micros);
+            max = max.max(elapsed_micros);
+            buckets[outbound_queue_dwell_bucket_index(elapsed_micros)] += 1;
+        }
+        outbound_queue_dwell_snapshot(samples.len() as u64, total, max, &buckets)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -374,6 +408,7 @@ pub struct TunnelRuntimeStatsSnapshot {
     pub bytes_out: u64,
     pub rule_session_counts: HashMap<u64, usize>,
     pub outbound_queue_dwell: TunnelQueueDwellStatsSnapshot,
+    pub recent_outbound_queue_dwell: TunnelQueueDwellStatsSnapshot,
 }
 
 impl TunnelRuntimeStats {
@@ -416,6 +451,7 @@ impl TunnelRuntimeStats {
         update_atomic_max(&self.outbound_queue_dwell.micros_max, elapsed_micros);
         self.outbound_queue_dwell.micros_buckets[outbound_queue_dwell_bucket_index(elapsed_micros)]
             .fetch_add(1, Ordering::Relaxed);
+        self.recent_outbound_queue_dwell.record(elapsed_micros);
     }
 
     pub fn snapshot(&self) -> TunnelRuntimeStatsSnapshot {
@@ -436,33 +472,32 @@ impl TunnelRuntimeStats {
                 .lock()
                 .map(|counts| counts.clone())
                 .unwrap_or_default(),
-            outbound_queue_dwell: TunnelQueueDwellStatsSnapshot {
-                frames: outbound_queue_dwell_frames,
-                micros_total: self
-                    .outbound_queue_dwell
+            outbound_queue_dwell: outbound_queue_dwell_snapshot(
+                outbound_queue_dwell_frames,
+                self.outbound_queue_dwell
                     .micros_total
                     .load(Ordering::Relaxed),
-                micros_max: outbound_queue_dwell_micros_max,
-                p50_micros: outbound_queue_dwell_percentile(
-                    &outbound_queue_dwell_buckets,
-                    outbound_queue_dwell_frames,
-                    50,
-                    outbound_queue_dwell_micros_max,
-                ),
-                p95_micros: outbound_queue_dwell_percentile(
-                    &outbound_queue_dwell_buckets,
-                    outbound_queue_dwell_frames,
-                    95,
-                    outbound_queue_dwell_micros_max,
-                ),
-                p99_micros: outbound_queue_dwell_percentile(
-                    &outbound_queue_dwell_buckets,
-                    outbound_queue_dwell_frames,
-                    99,
-                    outbound_queue_dwell_micros_max,
-                ),
-            },
+                outbound_queue_dwell_micros_max,
+                &outbound_queue_dwell_buckets,
+            ),
+            recent_outbound_queue_dwell: self.recent_outbound_queue_dwell.snapshot(),
         }
+    }
+}
+
+fn outbound_queue_dwell_snapshot(
+    frames: u64,
+    micros_total: u64,
+    micros_max: u64,
+    buckets: &[u64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()],
+) -> TunnelQueueDwellStatsSnapshot {
+    TunnelQueueDwellStatsSnapshot {
+        frames,
+        micros_total,
+        micros_max,
+        p50_micros: outbound_queue_dwell_percentile(buckets, frames, 50, micros_max),
+        p95_micros: outbound_queue_dwell_percentile(buckets, frames, 95, micros_max),
+        p99_micros: outbound_queue_dwell_percentile(buckets, frames, 99, micros_max),
     }
 }
 
@@ -800,7 +835,7 @@ impl AsyncTunnelCore {
             .effective_batch_frames_with_dwell(
                 configured_batch_frames,
                 stats.active_sessions,
-                stats.outbound_queue_dwell,
+                stats.recent_outbound_queue_dwell,
             )
     }
 

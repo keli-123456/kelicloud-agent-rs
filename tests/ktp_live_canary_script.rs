@@ -14,6 +14,9 @@ fn ktp_live_canary_script_collects_tunnel_data_diagnostics() {
     assert!(script.contains("outbound_queue_dwell_p50_micros"));
     assert!(script.contains("outbound_queue_dwell_p95_micros"));
     assert!(script.contains("outbound_queue_dwell_p99_micros"));
+    assert!(script.contains("recent_outbound_queue_dwell_p50_micros"));
+    assert!(script.contains("recent_outbound_queue_dwell_p95_micros"));
+    assert!(script.contains("recent_outbound_queue_dwell_p99_micros"));
     assert!(script.contains("socket_read_batches"));
     assert!(script.contains("socket_read_frames"));
     assert!(script.contains("socket_read_max_batch_frames"));
@@ -49,7 +52,7 @@ fn ktp_live_canary_script_accepts_sample_log_file() {
     let evidence_file = temp_dir.join("ktp-live-canary.evidence.md");
     std::fs::write(
         &log_file,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7\n",
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7\n",
     )
     .expect("sample log should be written");
 
@@ -76,6 +79,7 @@ fn ktp_live_canary_script_accepts_sample_log_file() {
     assert!(evidence.contains("KTP Live Canary Evidence"));
     assert!(evidence.contains("runtime_wait_elapsed_p99_micros=100"));
     assert!(evidence.contains("outbound_queue_dwell_p99_micros=100"));
+    assert!(evidence.contains("recent_outbound_queue_dwell_p99_micros=50"));
 }
 
 #[test]
@@ -93,7 +97,7 @@ fn ktp_live_canary_script_rejects_zero_socket_batch_reads() {
     let evidence_file = temp_dir.join("ktp-live-canary.evidence.md");
     std::fs::write(
         &log_file,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=0 socket_read_frames=0 socket_read_max_batch_frames=0\n",
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=0 socket_read_frames=0 socket_read_max_batch_frames=0\n",
     )
     .expect("sample log should be written");
 
@@ -139,7 +143,7 @@ fn ktp_live_canary_script_can_require_multi_frame_socket_batch_reads() {
     let evidence_file = temp_dir.join("ktp-live-canary.evidence.md");
     std::fs::write(
         &log_file,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=3 socket_read_frames=3 socket_read_max_batch_frames=1\n",
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=3 socket_read_frames=3 socket_read_max_batch_frames=1\n",
     )
     .expect("sample log should be written");
 

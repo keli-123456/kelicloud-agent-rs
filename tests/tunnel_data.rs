@@ -1386,6 +1386,17 @@ impl TunnelSessionRuntime for RuntimeWaitOrderingRuntime {
             p99_micros: 500,
         })
     }
+
+    fn recent_outbound_queue_dwell_snapshot(&self) -> Option<TunnelQueueDwellStatsSnapshot> {
+        Some(TunnelQueueDwellStatsSnapshot {
+            frames: 1,
+            micros_total: 210,
+            micros_max: 210,
+            p50_micros: 250,
+            p95_micros: 250,
+            p99_micros: 250,
+        })
+    }
 }
 
 struct RuntimeWaitDrainRuntime {
@@ -1585,6 +1596,12 @@ fn tunnel_data_session_records_local_diagnostics_for_runtime_wait_and_idle_read(
     assert_eq!(snapshot.outbound_queue_dwell_p50_micros, 500);
     assert_eq!(snapshot.outbound_queue_dwell_p95_micros, 500);
     assert_eq!(snapshot.outbound_queue_dwell_p99_micros, 500);
+    assert_eq!(snapshot.recent_outbound_queue_dwell_frames, 1);
+    assert_eq!(snapshot.recent_outbound_queue_dwell_micros_total, 210);
+    assert_eq!(snapshot.recent_outbound_queue_dwell_micros_max, 210);
+    assert_eq!(snapshot.recent_outbound_queue_dwell_p50_micros, 250);
+    assert_eq!(snapshot.recent_outbound_queue_dwell_p95_micros, 250);
+    assert_eq!(snapshot.recent_outbound_queue_dwell_p99_micros, 250);
     assert_eq!(snapshot.socket_idle_reads, 1);
     assert_eq!(snapshot.socket_idle_empty_reads, 0);
     assert!(
@@ -1658,6 +1675,12 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
         outbound_queue_dwell_p50_micros: 50,
         outbound_queue_dwell_p95_micros: 100,
         outbound_queue_dwell_p99_micros: 100,
+        recent_outbound_queue_dwell_frames: 4,
+        recent_outbound_queue_dwell_micros_total: 120,
+        recent_outbound_queue_dwell_micros_max: 40,
+        recent_outbound_queue_dwell_p50_micros: 25,
+        recent_outbound_queue_dwell_p95_micros: 50,
+        recent_outbound_queue_dwell_p99_micros: 50,
         socket_idle_reads: 4,
         socket_idle_empty_reads: 1,
         socket_read_batches: 2,
@@ -1670,7 +1693,7 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
     assert!(snapshot.has_activity());
     assert_eq!(
         line,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7"
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7"
     );
     assert!(!line.contains("token"));
 }

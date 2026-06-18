@@ -163,6 +163,43 @@ fn async_frame_queue_records_enqueue_to_drain_dwell() {
 }
 
 #[test]
+fn async_frame_queue_keeps_recent_dwell_window_separate_from_lifetime_dwell() {
+    let stats = TunnelRuntimeStats::default();
+    let queue = AsyncTunnelFrameQueue::new_with_stats(32, stats.clone());
+    queue.try_push(frame(17, b"slow")).expect("push slow frame");
+    thread::sleep(Duration::from_millis(80));
+    assert_eq!(queue.drain(32).len(), 1);
+
+    for index in 0..16 {
+        queue
+            .try_push(frame(100 + index, b"fast"))
+            .expect("push fast frame");
+        assert_eq!(queue.drain(32).len(), 1);
+    }
+
+    let snapshot = stats.snapshot();
+
+    assert!(
+        snapshot.outbound_queue_dwell.p95_micros >= 50_000,
+        "lifetime dwell should still remember the slow frame: {:?}",
+        snapshot.outbound_queue_dwell
+    );
+    assert!(
+        snapshot.recent_outbound_queue_dwell.p95_micros < 50_000,
+        "recent dwell should recover after the fast window: {:?}",
+        snapshot.recent_outbound_queue_dwell
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames_with_dwell(
+            64,
+            4,
+            snapshot.recent_outbound_queue_dwell
+        ),
+        64
+    );
+}
+
+#[test]
 fn async_frame_queue_drain_after_wait_wakes_when_frame_is_pushed() {
     let queue = AsyncTunnelFrameQueue::new(4);
     let producer = queue.clone();

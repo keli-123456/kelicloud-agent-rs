@@ -29,8 +29,8 @@ Environment:
                             value, default: 1
 
 The script validates that live KTP tunnel data diagnostics include runtime wait,
-outbound queue dwell, and socket batch-read fields, then writes a small evidence
-file.
+lifetime and recent outbound queue dwell, and socket batch-read fields, then
+writes a small evidence file.
 USAGE
 }
 
@@ -113,6 +113,9 @@ REQUIRED_FIELDS=(
     "outbound_queue_dwell_p50_micros"
     "outbound_queue_dwell_p95_micros"
     "outbound_queue_dwell_p99_micros"
+    "recent_outbound_queue_dwell_p50_micros"
+    "recent_outbound_queue_dwell_p95_micros"
+    "recent_outbound_queue_dwell_p99_micros"
     "socket_read_batches"
     "socket_read_frames"
     "socket_read_max_batch_frames"

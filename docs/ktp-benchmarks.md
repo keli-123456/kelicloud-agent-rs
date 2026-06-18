@@ -168,8 +168,9 @@ scripts/ktp-live-canary-evidence.sh \
 
 During a real KTP canary window, run the helper after sending tunnel traffic.
 It reads `journalctl` by default, or `--log-file <path>` for captured agent
-logs, and verifies that `tunnel data diagnostics` lines include runtime wait
-and outbound queue dwell percentile fields, plus socket batch-read counters.
+logs, and verifies that `tunnel data diagnostics` lines include runtime wait,
+lifetime outbound queue dwell, recent outbound queue dwell, and socket
+batch-read counters.
 It also requires positive `socket_read_batches` and `socket_read_frames` values,
 so a passing live canary proves the production KTP TCP socket batch-read path
 was active during the observation window. Treat the generated Markdown file as
@@ -913,9 +914,13 @@ Tunnel-data receive batch foundation:
   WebSocket behavior.
 - Adaptive now uses both active session count and observed outbound queue dwell:
   it keeps the configured batch at low concurrency, caps to 16 frames when
-  active sessions reach 8 or queue dwell p95 reaches 50 ms, and caps to 8 frames
-  when queue dwell p95 reaches 250 ms. This gives the data plane a local
-  backpressure response before queues reach the overflow dwell bucket.
+  active sessions reach 8 or recent queue dwell p95 reaches 50 ms, and caps to
+  8 frames when recent queue dwell p95 reaches 250 ms. The recent dwell window
+  tracks the last 16 dequeued outbound frames, while the lifetime dwell counters
+  remain available for long-running diagnostics. This gives the data plane a
+  local backpressure response before queues reach the overflow dwell bucket,
+  without letting one old congestion event keep the runtime permanently
+  conservative.
 
 Linux debug smoke sample:
 

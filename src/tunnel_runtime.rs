@@ -332,6 +332,10 @@ pub trait TunnelSessionRuntime {
     fn outbound_queue_dwell_snapshot(&self) -> Option<TunnelQueueDwellStatsSnapshot> {
         None
     }
+
+    fn recent_outbound_queue_dwell_snapshot(&self) -> Option<TunnelQueueDwellStatsSnapshot> {
+        None
+    }
 }
 
 #[derive(Debug, Default)]
@@ -660,6 +664,10 @@ impl TunnelSessionRuntime for TunnelTcpRuntime {
 
     fn outbound_queue_dwell_snapshot(&self) -> Option<TunnelQueueDwellStatsSnapshot> {
         Some(self.core.stats_snapshot().outbound_queue_dwell)
+    }
+
+    fn recent_outbound_queue_dwell_snapshot(&self) -> Option<TunnelQueueDwellStatsSnapshot> {
+        Some(self.core.stats_snapshot().recent_outbound_queue_dwell)
     }
 }
 
