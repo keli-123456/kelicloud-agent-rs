@@ -10,7 +10,9 @@ on:
       - src/tunnel_async_runtime.rs
       - src/tunnel_data.rs
       - src/tunnel_runtime.rs
+      - src/bin/ktp-tunnel-matrix-summary.rs
       - tests/ktp_transport.rs
+      - tests/ktp_tunnel_matrix_summary_cli.rs
       - tests/tunnel_data.rs
       - scripts/ktp-local-backend-tunnel-matrix.sh
   workflow_dispatch:
@@ -118,13 +120,32 @@ jobs:
       - name: Run KTP tunnel matrix
         run: bash scripts/ktp-local-backend-tunnel-matrix.sh
 
+      - name: Summarize tunnel matrix report
+        if: always()
+        run: |
+          summary="tunnel-matrix-logs/matrix-summary.tsv"
+          report="tunnel-matrix-logs/matrix-summary.report.txt"
+          if [[ -f "${summary}" ]]; then
+            cargo run --locked --bin ktp-tunnel-matrix-summary -- "${summary}" | tee "${report}"
+          else
+            mkdir -p "$(dirname "${report}")"
+            echo "matrix-summary.tsv was not generated." | tee "${report}"
+          fi
+
       - name: Publish tunnel matrix summary
         if: always()
         run: |
           summary="tunnel-matrix-logs/matrix-summary.tsv"
+          report="tunnel-matrix-logs/matrix-summary.report.txt"
           {
             echo "## KTP tunnel matrix summary"
             echo
+            if [[ -f "${report}" ]]; then
+              echo '```text'
+              cat "${report}"
+              echo '```'
+              echo
+            fi
             if [[ -f "${summary}" ]]; then
               echo '```tsv'
               cat "${summary}"

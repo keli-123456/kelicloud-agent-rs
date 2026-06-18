@@ -1030,6 +1030,20 @@ the configured RTT p95 or per-client p95 spread threshold. The manual
 `KTP Tunnel Matrix` workflow exposes the same thresholds as optional inputs so
 release-host runs can collect artifacts and fail loudly on latency regressions.
 
+To publish a concise matrix report from the TSV artifact:
+
+```bash
+cargo run --locked --bin ktp-tunnel-matrix-summary -- \
+  smoke-logs/local-backend-tunnel-matrix/matrix-summary.tsv
+```
+
+The report emits row counts, per-client latency and batch-read highlights, plus
+the maximum RTT p95, maximum per-client p95 spread, and maximum socket batch
+size across passing rows. Add `--require-pass` when the summary itself should
+fail with exit code `3` if any matrix row has `fail`, `timeout`, or another
+non-pass status. The `KTP Tunnel Matrix` workflow now writes this output to
+`matrix-summary.report.txt` beside the raw TSV artifact.
+
 Result:
 
 - Backend KTP TCP relay listened on `127.0.0.1:40699`.

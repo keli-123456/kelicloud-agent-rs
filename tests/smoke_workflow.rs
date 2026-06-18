@@ -149,6 +149,8 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow
         .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work"));
     assert!(workflow.contains("bash scripts/ktp-local-backend-tunnel-matrix.sh"));
+    assert!(workflow.contains("ktp-tunnel-matrix-summary"));
+    assert!(workflow.contains("matrix-summary.report.txt"));
     assert!(workflow.contains("KTP tunnel matrix summary"));
     assert!(workflow.contains("matrix-summary.tsv"));
     assert!(workflow.contains("GITHUB_STEP_SUMMARY"));
