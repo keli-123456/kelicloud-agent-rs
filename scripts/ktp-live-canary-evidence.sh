@@ -128,6 +128,8 @@ REQUIRED_FIELDS=(
     "socket_write_frames"
     "socket_write_max_batch_frames"
     "socket_write_batch_limit_max"
+    "socket_write_batch_limit_min"
+    "socket_write_batch_limit_last"
 )
 
 POSITIVE_FIELDS=(
@@ -138,6 +140,8 @@ POSITIVE_FIELDS=(
     "socket_write_frames"
     "socket_write_max_batch_frames"
     "socket_write_batch_limit_max"
+    "socket_write_batch_limit_min"
+    "socket_write_batch_limit_last"
 )
 
 max_metric_value() {
@@ -155,12 +159,59 @@ max_metric_value() {
     ' "$DIAGNOSTICS_LOG"
 }
 
+min_positive_metric_value() {
+    local field="$1"
+    awk -v field="${field}" '
+        {
+            for (i = 1; i <= NF; i++) {
+                split($i, pair, "=")
+                if (pair[1] == field && pair[2] ~ /^[0-9]+$/ && pair[2] + 0 > 0) {
+                    if (min == "" || pair[2] + 0 < min) {
+                        min = pair[2] + 0
+                    }
+                }
+            }
+        }
+        END { print min == "" ? 0 : min }
+    ' "$DIAGNOSTICS_LOG"
+}
+
+last_metric_value() {
+    local field="$1"
+    awk -v field="${field}" '
+        {
+            for (i = 1; i <= NF; i++) {
+                split($i, pair, "=")
+                if (pair[1] == field && pair[2] ~ /^[0-9]+$/) {
+                    value = pair[2] + 0
+                }
+            }
+        }
+        END { print value + 0 }
+    ' "$DIAGNOSTICS_LOG"
+}
+
+evidence_metric_value() {
+    local field="$1"
+    case "${field}" in
+        socket_write_batch_limit_min)
+            min_positive_metric_value "${field}"
+            ;;
+        socket_write_batch_limit_last)
+            last_metric_value "${field}"
+            ;;
+        *)
+            max_metric_value "${field}"
+            ;;
+    esac
+}
+
 for field in "${REQUIRED_FIELDS[@]}"; do
     grep -F "${field}=" "$DIAGNOSTICS_LOG" >/dev/null || die "missing diagnostics field: ${field}"
 done
 
 for field in "${POSITIVE_FIELDS[@]}"; do
-    value="$(max_metric_value "${field}")"
+    value="$(evidence_metric_value "${field}")"
     (( value > 0 )) || die "expected positive diagnostics field: ${field}"
 done
 
@@ -191,7 +242,7 @@ mkdir -p "$(dirname "$EVIDENCE_FILE")"
     done
     printf '\n## Positive Fields\n\n'
     for field in "${POSITIVE_FIELDS[@]}"; do
-        printf -- '- `%s`: `%s`\n' "$field" "$(max_metric_value "${field}")"
+        printf -- '- `%s`: `%s`\n' "$field" "$(evidence_metric_value "${field}")"
     done
     printf '\n## Batch Thresholds\n\n'
     printf -- '- `socket_read_max_batch_frames`: `%s`\n' "$max_batch_frames"

@@ -171,6 +171,8 @@ struct TunnelDataDiagnosticsInner {
     socket_write_frames: AtomicU64,
     socket_write_max_batch_frames: AtomicU64,
     socket_write_batch_limit_max: AtomicU64,
+    socket_write_batch_limit_min: AtomicU64,
+    socket_write_batch_limit_last: AtomicU64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -204,6 +206,8 @@ pub struct TunnelDataDiagnosticsSnapshot {
     pub socket_write_frames: u64,
     pub socket_write_max_batch_frames: u64,
     pub socket_write_batch_limit_max: u64,
+    pub socket_write_batch_limit_min: u64,
+    pub socket_write_batch_limit_last: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -212,11 +216,20 @@ struct TunnelDataWriteBatchStats {
     frames: usize,
     max_batch_frames: usize,
     max_batch_limit: usize,
+    min_batch_limit: usize,
+    last_batch_limit: usize,
 }
 
 impl TunnelDataWriteBatchStats {
     fn record_batch_limit(&mut self, max_frames: usize) {
+        let max_frames = max_frames.max(1);
         self.max_batch_limit = self.max_batch_limit.max(max_frames);
+        self.min_batch_limit = if self.min_batch_limit == 0 {
+            max_frames
+        } else {
+            self.min_batch_limit.min(max_frames)
+        };
+        self.last_batch_limit = max_frames;
     }
 
     fn record_batch(&mut self, frame_count: usize) {
@@ -233,6 +246,14 @@ impl TunnelDataWriteBatchStats {
         self.frames += other.frames;
         self.max_batch_frames = self.max_batch_frames.max(other.max_batch_frames);
         self.max_batch_limit = self.max_batch_limit.max(other.max_batch_limit);
+        self.min_batch_limit = match (self.min_batch_limit, other.min_batch_limit) {
+            (0, value) => value,
+            (value, 0) => value,
+            (left, right) => left.min(right),
+        };
+        if other.last_batch_limit > 0 {
+            self.last_batch_limit = other.last_batch_limit;
+        }
     }
 }
 
@@ -346,6 +367,14 @@ impl SharedTunnelDataDiagnostics {
                 .inner
                 .socket_write_batch_limit_max
                 .load(Ordering::Relaxed),
+            socket_write_batch_limit_min: self
+                .inner
+                .socket_write_batch_limit_min
+                .load(Ordering::Relaxed),
+            socket_write_batch_limit_last: self
+                .inner
+                .socket_write_batch_limit_last
+                .load(Ordering::Relaxed),
         }
     }
 
@@ -454,6 +483,15 @@ impl SharedTunnelDataDiagnostics {
             &self.inner.socket_write_batch_limit_max,
             stats.max_batch_limit as u64,
         );
+        update_atomic_min_nonzero(
+            &self.inner.socket_write_batch_limit_min,
+            stats.min_batch_limit as u64,
+        );
+        if stats.last_batch_limit > 0 {
+            self.inner
+                .socket_write_batch_limit_last
+                .store(stats.last_batch_limit as u64, Ordering::Relaxed);
+        }
         if stats.frames == 0 || stats.batches == 0 {
             return;
         }
@@ -488,7 +526,7 @@ impl TunnelDataDiagnosticsSnapshot {
 
 pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) -> String {
     format!(
-        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} recent_outbound_queue_dwell_frames={} recent_outbound_queue_dwell_micros_total={} recent_outbound_queue_dwell_micros_max={} recent_outbound_queue_dwell_p50_micros={} recent_outbound_queue_dwell_p95_micros={} recent_outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={} socket_read_batches={} socket_read_frames={} socket_read_max_batch_frames={} socket_write_batches={} socket_write_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={}",
+        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} recent_outbound_queue_dwell_frames={} recent_outbound_queue_dwell_micros_total={} recent_outbound_queue_dwell_micros_max={} recent_outbound_queue_dwell_p50_micros={} recent_outbound_queue_dwell_p95_micros={} recent_outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={} socket_read_batches={} socket_read_frames={} socket_read_max_batch_frames={} socket_write_batches={} socket_write_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={}",
         snapshot.runtime_wait_attempts,
         snapshot.runtime_wait_hits,
         snapshot.runtime_wait_elapsed_micros_total,
@@ -517,7 +555,9 @@ pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) ->
         snapshot.socket_write_batches,
         snapshot.socket_write_frames,
         snapshot.socket_write_max_batch_frames,
-        snapshot.socket_write_batch_limit_max
+        snapshot.socket_write_batch_limit_max,
+        snapshot.socket_write_batch_limit_min,
+        snapshot.socket_write_batch_limit_last
     )
 }
 
@@ -554,6 +594,27 @@ fn update_atomic_max(target: &AtomicU64, candidate: u64) {
         {
             Ok(_) => break,
             Err(next) => current = next,
+        }
+    }
+}
+
+fn update_atomic_min_nonzero(target: &AtomicU64, candidate: u64) {
+    if candidate == 0 {
+        return;
+    }
+    let mut current = target.load(Ordering::Relaxed);
+    loop {
+        let next = if current == 0 {
+            candidate
+        } else {
+            current.min(candidate)
+        };
+        if next == current {
+            break;
+        }
+        match target.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
         }
     }
 }

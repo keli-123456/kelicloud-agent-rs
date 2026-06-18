@@ -36,6 +36,8 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("socket_read_max_batch_frames"));
     assert!(script.contains("socket_write_max_batch_frames"));
     assert!(script.contains("socket_write_batch_limit_max"));
+    assert!(script.contains("socket_write_batch_limit_min"));
+    assert!(script.contains("socket_write_batch_limit_last"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS"));
     assert!(script.contains("performance_gate_failures"));
@@ -202,7 +204,7 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
     );
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert!(summary.contains(
-        "relay_batch_policy\tclients\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max"
+        "relay_batch_policy\tclients\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last"
     ));
     assert_summary_row(
         &summary,
@@ -238,6 +240,8 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
             "2",
             "40",
             "5",
+            "64",
+            "64",
             "64",
         ],
     );
@@ -275,6 +279,8 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
             "10",
             "236",
             "12",
+            "64",
+            "16",
             "16",
         ],
     );
@@ -340,6 +346,8 @@ sleep 5
                 .join("clients-1")
                 .display()
                 .to_string(),
+            "-",
+            "-",
             "-",
             "-",
             "-",
@@ -438,6 +446,8 @@ fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summa
             "40",
             "5",
             "64",
+            "64",
+            "64",
         ],
     );
     assert_summary_row(
@@ -474,6 +484,8 @@ fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summa
             "10",
             "236",
             "12",
+            "64",
+            "16",
             "16",
         ],
     );
@@ -535,7 +547,9 @@ if [[ "${KELICLOUD_TUNNEL_ECHO_CLIENTS}" == "1" ]]; then
   socket_write_batches=2
   socket_write_frames=40
   socket_write_max_batch=5
-  socket_write_batch_limit=64
+  socket_write_batch_limit_max=64
+  socket_write_batch_limit_min=64
+  socket_write_batch_limit_last=64
 else
   total_payload_bytes=39680
   rtt_p50=500
@@ -549,7 +563,9 @@ else
   socket_write_batches=10
   socket_write_frames=236
   socket_write_max_batch=12
-  socket_write_batch_limit=16
+  socket_write_batch_limit_max=64
+  socket_write_batch_limit_min=16
+  socket_write_batch_limit_last=16
 fi
 cat >"${SMOKE_LOG_DIR}/tunnel-echo.evidence.md" <<EOF
 # Tunnel Echo Evidence
@@ -574,7 +590,9 @@ cat >"${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md" <<EOF
 - \`socket_write_batches\`: \`${socket_write_batches}\`
 - \`socket_write_frames\`: \`${socket_write_frames}\`
 - \`socket_write_max_batch_frames\`: \`${socket_write_max_batch}\`
-- \`socket_write_batch_limit_max\`: \`${socket_write_batch_limit}\`
+- \`socket_write_batch_limit_max\`: \`${socket_write_batch_limit_max}\`
+- \`socket_write_batch_limit_min\`: \`${socket_write_batch_limit_min}\`
+- \`socket_write_batch_limit_last\`: \`${socket_write_batch_limit_last}\`
 
 ## Batch Thresholds
 
