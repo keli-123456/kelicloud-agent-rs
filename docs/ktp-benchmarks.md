@@ -949,6 +949,48 @@ Latest observed diagnostics:
 tunnel data diagnostics: runtime_wait_attempts=9350 runtime_wait_hits=1 runtime_wait_elapsed_micros_total=5649352 runtime_wait_elapsed_micros_max=19949 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=5000 runtime_wait_elapsed_p99_micros=10000 outbound_runtime_frames=5 outbound_queue_dwell_frames=5 outbound_queue_dwell_micros_total=11385 outbound_queue_dwell_micros_max=5494 outbound_queue_dwell_p50_micros=250 outbound_queue_dwell_p95_micros=10000 outbound_queue_dwell_p99_micros=10000 socket_idle_reads=9350 socket_idle_empty_reads=9345
 ```
 
+Active socket batch-read canary:
+
+- Agent commit: `33443f5`
+- Backend commit: `334a82c`
+- Backend checkout: `/root/kelicloud-backend-live-smoke-active-batch`
+- Agent checkout: `/root/kelicloud-agent-rs-live-smoke-active-batch`
+- Evidence file:
+  `/tmp/kelicloud-agent-rs-ktp-active-batch-33443f5/logs/ktp-live-canary.evidence.md`
+
+Command shape:
+
+```bash
+PATH=/usr/local/go1.24.11/bin:$PATH \
+KELICLOUD_SMOKE_KTP_TCP=true \
+KELICLOUD_PREPARE_FRONTEND=false \
+KELICLOUD_BACKEND_PATH=/root/kelicloud-backend-live-smoke-active-batch \
+KOMARI_DB_USER=komari_smoke \
+KOMARI_DB_PASS=komari-smoke-pass \
+KOMARI_DB_NAME=komari_ktp_active_33443f5 \
+BACKEND_LISTEN=127.0.0.1:26876 \
+BACKEND_ENDPOINT=http://127.0.0.1:26876 \
+KTP_DIAGNOSTICS_TIMEOUT_SECONDS=90 \
+SMOKE_LOG_DIR=/tmp/kelicloud-agent-rs-ktp-active-batch-33443f5/logs \
+SMOKE_WORK_DIR=/tmp/kelicloud-agent-rs-ktp-active-batch-33443f5/work \
+  bash scripts/smoke-local-backend.sh
+```
+
+Result:
+
+- Backend KTP TCP relay listened on `127.0.0.1:60227`.
+- Tunnel rule echo succeeded through `127.0.0.1:41065`.
+- `smoke-summary --require-pass` passed startup, basic info, report WebSocket,
+  report send, ping upload, exec upload, terminal, and CN connectivity checks.
+- `ktp-live-canary-evidence.sh` observed positive socket batch-read counters:
+  `socket_read_batches=3` and `socket_read_frames=5`.
+
+Latest active batch-read diagnostics:
+
+```text
+tunnel data diagnostics: runtime_wait_attempts=7560 runtime_wait_hits=0 runtime_wait_elapsed_micros_total=2268762 runtime_wait_elapsed_micros_max=13983 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=1000 runtime_wait_elapsed_p99_micros=5000 outbound_runtime_frames=5 outbound_queue_dwell_frames=5 outbound_queue_dwell_micros_total=51929 outbound_queue_dwell_micros_max=11075 outbound_queue_dwell_p50_micros=25000 outbound_queue_dwell_p95_micros=25000 outbound_queue_dwell_p99_micros=25000 socket_idle_reads=7562 socket_idle_empty_reads=7559 socket_read_batches=3 socket_read_frames=5 socket_read_max_batch_frames=2
+```
+
 Notes:
 
 - The first real KTP local-backend smoke on `c61617c` reached rule creation but
@@ -963,6 +1005,10 @@ Notes:
   a matrix over `websocket` and `ktp_tcp`, with separate artifacts for each data
   carrier. That moves KTP smoke evidence from one-off host logs into CI
   artifacts on pushes to `main`.
+- The `33443f5` active canary adds a stricter gate: KTP local-backend smoke now
+  fails unless live diagnostics include positive `socket_read_batches` and
+  `socket_read_frames`, so the evidence proves the dedicated KTP TCP
+  batch-read path was used by real tunnel traffic.
 
 Next evidence to collect:
 
