@@ -1,5 +1,8 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
-use kelicloud_agent_rs::tunnel_async_runtime::{TunnelFrameReadyNotifier, TunnelRelayBatchPolicy};
+use kelicloud_agent_rs::tunnel_async_runtime::{
+    TunnelFrameReadyNotifier, TunnelQueueDwellStatsSnapshot, TunnelRelayBatchPolicy,
+    TunnelRelayBatchTuning,
+};
 use kelicloud_agent_rs::tunnel_control::{
     SelectedTunnelRule, TunnelRuleStateSink, TUNNEL_DATA_TRANSPORT_KTP_TCP,
 };
@@ -71,6 +74,7 @@ struct BenchConfig {
     latency: bool,
     relay_batch_policy: TunnelRelayBatchPolicy,
     relay_batch_frames: usize,
+    relay_batch_tuning: TunnelRelayBatchTuning,
     relay_wait_timeout: Duration,
 }
 
@@ -83,8 +87,12 @@ impl BenchConfig {
     }
 
     fn effective_relay_batch_frames(self) -> usize {
-        self.relay_batch_policy
-            .effective_batch_frames(self.relay_batch_frames, self.clients)
+        self.relay_batch_policy.effective_batch_frames_with_tuning(
+            self.relay_batch_frames,
+            self.clients,
+            TunnelQueueDwellStatsSnapshot::default(),
+            self.relay_batch_tuning,
+        )
     }
 }
 
@@ -159,6 +167,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
     let mut latency = false;
     let mut relay_batch_policy = TunnelRelayBatchPolicy::Fixed;
     let mut relay_batch_frames = RELAY_BATCH_FRAMES;
+    let mut relay_batch_tuning = TunnelRelayBatchTuning::default();
     let mut relay_wait_timeout = Duration::ZERO;
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
@@ -184,6 +193,36 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
                     "--relay-batch-policy",
                 )?)
                 .ok_or("--relay-batch-policy must be fixed or adaptive")?
+            }
+            "--relay-adaptive-high-sessions" => {
+                relay_batch_tuning.high_session_threshold = parse_positive_usize(
+                    next_value(&mut args, "--relay-adaptive-high-sessions")?,
+                    "--relay-adaptive-high-sessions",
+                )?
+            }
+            "--relay-adaptive-elevated-dwell-us" => {
+                relay_batch_tuning.elevated_dwell_p95_micros = parse_positive_usize(
+                    next_value(&mut args, "--relay-adaptive-elevated-dwell-us")?,
+                    "--relay-adaptive-elevated-dwell-us",
+                )? as u64
+            }
+            "--relay-adaptive-severe-dwell-us" => {
+                relay_batch_tuning.severe_dwell_p95_micros = parse_positive_usize(
+                    next_value(&mut args, "--relay-adaptive-severe-dwell-us")?,
+                    "--relay-adaptive-severe-dwell-us",
+                )? as u64
+            }
+            "--relay-adaptive-elevated-cap" => {
+                relay_batch_tuning.elevated_batch_cap = parse_positive_usize(
+                    next_value(&mut args, "--relay-adaptive-elevated-cap")?,
+                    "--relay-adaptive-elevated-cap",
+                )?
+            }
+            "--relay-adaptive-severe-cap" => {
+                relay_batch_tuning.severe_batch_cap = parse_positive_usize(
+                    next_value(&mut args, "--relay-adaptive-severe-cap")?,
+                    "--relay-adaptive-severe-cap",
+                )?
             }
             "--runs" => runs = parse_positive_usize(next_value(&mut args, "--runs")?, "--runs")?,
             "--clients" => {
@@ -213,6 +252,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> BenchResult<BenchConfig> {
         latency,
         relay_batch_policy,
         relay_batch_frames,
+        relay_batch_tuning,
         relay_wait_timeout,
     })
 }
@@ -460,10 +500,15 @@ fn diagnostics_suffix(config: BenchConfig, samples: &[BenchSample]) -> String {
             .max(sample.relay_stats.egress_max_batch_frames);
     }
     format!(
-        " relay_batch_policy={} relay_batch_frames={} relay_batch_frames_effective={} relay_turns={} relay_empty_turns={} relay_yield_turns={} relay_wait_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={} ingress_batches={} egress_batches={} ingress_max_batch_frames={} egress_max_batch_frames={}",
+        " relay_batch_policy={} relay_batch_frames={} relay_batch_frames_effective={} relay_adaptive_high_sessions={} relay_adaptive_elevated_dwell_us={} relay_adaptive_severe_dwell_us={} relay_adaptive_elevated_cap={} relay_adaptive_severe_cap={} relay_turns={} relay_empty_turns={} relay_yield_turns={} relay_wait_turns={} ingress_frames={} egress_frames={} ingress_data_frames={} egress_data_frames={} ingress_batches={} egress_batches={} ingress_max_batch_frames={} egress_max_batch_frames={}",
         config.relay_batch_policy.config_value(),
         config.relay_batch_frames,
         config.effective_relay_batch_frames(),
+        config.relay_batch_tuning.high_session_threshold,
+        config.relay_batch_tuning.elevated_dwell_p95_micros,
+        config.relay_batch_tuning.severe_dwell_p95_micros,
+        config.relay_batch_tuning.elevated_batch_cap,
+        config.relay_batch_tuning.severe_batch_cap,
         total.relay_turns,
         total.relay_empty_turns,
         total.relay_yield_turns,
@@ -701,5 +746,5 @@ fn selected_rule(id: u64, role: &str) -> SelectedTunnelRule {
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--latency] [--profile fixed|rdp-like] [--relay-batch-policy fixed|adaptive] [--relay-batch-frames N] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
+    eprintln!("usage: ktp-e2e-bench [--diagnostics] [--latency] [--profile fixed|rdp-like] [--relay-batch-policy fixed|adaptive] [--relay-batch-frames N] [--relay-adaptive-high-sessions N] [--relay-adaptive-elevated-dwell-us MICROS] [--relay-adaptive-severe-dwell-us MICROS] [--relay-adaptive-elevated-cap N] [--relay-adaptive-severe-cap N] [--relay-wait-timeout-us MICROS] [--runs N] [--clients N] [--frames N] [--payload-bytes BYTES]");
 }

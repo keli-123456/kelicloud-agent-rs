@@ -278,6 +278,55 @@ fn ktp_e2e_bench_cli_caps_adaptive_batch_at_eight_clients() {
 }
 
 #[test]
+fn ktp_e2e_bench_cli_applies_custom_adaptive_batch_tuning() {
+    let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
+        .expect("ktp-e2e-bench binary should be built by cargo");
+
+    let output = Command::new(exe)
+        .args([
+            "--diagnostics",
+            "--relay-batch-policy",
+            "adaptive",
+            "--relay-batch-frames",
+            "64",
+            "--relay-adaptive-high-sessions",
+            "4",
+            "--relay-adaptive-elevated-cap",
+            "24",
+            "--relay-adaptive-severe-cap",
+            "6",
+            "--relay-adaptive-elevated-dwell-us",
+            "40000",
+            "--relay-adaptive-severe-dwell-us",
+            "120000",
+            "--clients",
+            "4",
+            "--frames",
+            "2",
+            "--payload-bytes",
+            "128",
+        ])
+        .output()
+        .expect("ktp-e2e-bench should run");
+
+    assert!(
+        output.status.success(),
+        "ktp-e2e-bench failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("relay_batch_policy=adaptive"));
+    assert!(stdout.contains("relay_batch_frames=64"));
+    assert!(stdout.contains("relay_adaptive_high_sessions=4"));
+    assert!(stdout.contains("relay_adaptive_elevated_cap=24"));
+    assert!(stdout.contains("relay_adaptive_severe_cap=6"));
+    assert!(stdout.contains("relay_adaptive_elevated_dwell_us=40000"));
+    assert!(stdout.contains("relay_adaptive_severe_dwell_us=120000"));
+    assert!(stdout.contains("relay_batch_frames_effective=24"));
+}
+
+#[test]
 fn ktp_e2e_bench_cli_rejects_unknown_relay_batch_policy() {
     let exe = std::env::var("CARGO_BIN_EXE_ktp-e2e-bench")
         .expect("ktp-e2e-bench binary should be built by cargo");

@@ -19,9 +19,14 @@ CSV_PATH="${KTP_BATCH_MATRIX_CSV:-}"
 FAIL_ON_FIXED_BETTER="${KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER:-0}"
 MAX_ADAPTIVE_RTT_P95_MICROS="${KTP_BATCH_MATRIX_MAX_ADAPTIVE_RTT_P95_MICROS:-}"
 MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS="${KTP_BATCH_MATRIX_MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS:-}"
+ADAPTIVE_HIGH_SESSIONS="${KTP_BATCH_MATRIX_ADAPTIVE_HIGH_SESSIONS:-}"
+ADAPTIVE_ELEVATED_DWELL_US="${KTP_BATCH_MATRIX_ADAPTIVE_ELEVATED_DWELL_US:-}"
+ADAPTIVE_SEVERE_DWELL_US="${KTP_BATCH_MATRIX_ADAPTIVE_SEVERE_DWELL_US:-}"
+ADAPTIVE_ELEVATED_CAP="${KTP_BATCH_MATRIX_ADAPTIVE_ELEVATED_CAP:-}"
+ADAPTIVE_SEVERE_CAP="${KTP_BATCH_MATRIX_ADAPTIVE_SEVERE_CAP:-}"
 
 csv_header() {
-  printf '%s\n' "profile,runs,clients,frames,payload_bytes,client_payload_reused,relay_batch_frames,relay_batch_policy,relay_batch_frames_effective,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max,rtt_micros_p50,rtt_micros_p95,rtt_micros_p99,rtt_micros_max,rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max,relay_turns,relay_wait_turns,ingress_batches,egress_batches,ingress_max_batch_frames,egress_max_batch_frames"
+  printf '%s\n' "profile,runs,clients,frames,payload_bytes,client_payload_reused,relay_batch_frames,relay_batch_policy,relay_batch_frames_effective,relay_adaptive_high_sessions,relay_adaptive_elevated_dwell_us,relay_adaptive_severe_dwell_us,relay_adaptive_elevated_cap,relay_adaptive_severe_cap,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max,rtt_micros_p50,rtt_micros_p95,rtt_micros_p99,rtt_micros_max,rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max,relay_turns,relay_wait_turns,ingress_batches,egress_batches,ingress_max_batch_frames,egress_max_batch_frames"
 }
 
 metric_value() {
@@ -66,12 +71,19 @@ write_csv_row() {
   local rtt_client_p95_micros_min rtt_client_p95_micros_max
   local rtt_client_p95_spread_micros rtt_client_max_micros_max
   local relay_batch_policy relay_batch_frames_effective
+  local relay_adaptive_high_sessions relay_adaptive_elevated_dwell_us
+  local relay_adaptive_severe_dwell_us relay_adaptive_elevated_cap relay_adaptive_severe_cap
   local relay_turns relay_wait_turns ingress_batches egress_batches
   local ingress_max_batch_frames egress_max_batch_frames
 
   client_payload_reused="$(required_metric_value "${output}" client_payload_reused)"
   relay_batch_policy="$(required_metric_value "${output}" relay_batch_policy)"
   relay_batch_frames_effective="$(required_metric_value "${output}" relay_batch_frames_effective relay_batch_frames)"
+  relay_adaptive_high_sessions="$(required_metric_value "${output}" relay_adaptive_high_sessions)"
+  relay_adaptive_elevated_dwell_us="$(required_metric_value "${output}" relay_adaptive_elevated_dwell_us)"
+  relay_adaptive_severe_dwell_us="$(required_metric_value "${output}" relay_adaptive_severe_dwell_us)"
+  relay_adaptive_elevated_cap="$(required_metric_value "${output}" relay_adaptive_elevated_cap)"
+  relay_adaptive_severe_cap="$(required_metric_value "${output}" relay_adaptive_severe_cap)"
   elapsed_ms_min="$(required_metric_value "${output}" elapsed_ms_min elapsed_ms)"
   elapsed_ms_median="$(required_metric_value "${output}" elapsed_ms_median elapsed_ms)"
   elapsed_ms_max="$(required_metric_value "${output}" elapsed_ms_max elapsed_ms)"
@@ -93,7 +105,7 @@ write_csv_row() {
   ingress_max_batch_frames="$(required_metric_value "${output}" ingress_max_batch_frames)"
   egress_max_batch_frames="$(required_metric_value "${output}" egress_max_batch_frames)"
 
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "${PROFILE}" \
     "${RUNS}" \
     "${clients}" \
@@ -103,6 +115,11 @@ write_csv_row() {
     "${batch}" \
     "${relay_batch_policy}" \
     "${relay_batch_frames_effective}" \
+    "${relay_adaptive_high_sessions}" \
+    "${relay_adaptive_elevated_dwell_us}" \
+    "${relay_adaptive_severe_dwell_us}" \
+    "${relay_adaptive_elevated_cap}" \
+    "${relay_adaptive_severe_cap}" \
     "${elapsed_ms_min}" \
     "${elapsed_ms_median}" \
     "${elapsed_ms_max}" \
@@ -126,7 +143,7 @@ write_csv_row() {
 }
 
 echo "== ktp relay batch matrix =="
-echo "profile=${PROFILE} runs=${RUNS} clients=${CLIENTS} frames=${FRAMES} payload_bytes=${PAYLOAD_BYTES} relay_batch_policies=${RELAY_BATCH_POLICIES} relay_wait_timeout_us=${RELAY_WAIT_TIMEOUT_US}"
+echo "profile=${PROFILE} runs=${RUNS} clients=${CLIENTS} frames=${FRAMES} payload_bytes=${PAYLOAD_BYTES} relay_batch_policies=${RELAY_BATCH_POLICIES} relay_wait_timeout_us=${RELAY_WAIT_TIMEOUT_US} adaptive_high_sessions=${ADAPTIVE_HIGH_SESSIONS} adaptive_elevated_dwell_us=${ADAPTIVE_ELEVATED_DWELL_US} adaptive_severe_dwell_us=${ADAPTIVE_SEVERE_DWELL_US} adaptive_elevated_cap=${ADAPTIVE_ELEVATED_CAP} adaptive_severe_cap=${ADAPTIVE_SEVERE_CAP}"
 echo "batches=${BATCHES}"
 
 POLICY_GATE_ENABLED=0
@@ -178,6 +195,21 @@ for policy in ${RELAY_BATCH_POLICIES}; do
         --payload-bytes "${PAYLOAD_BYTES}" \
         --relay-batch-policy "${policy}" \
         --relay-batch-frames "${batch}")
+      if [[ -n "${ADAPTIVE_HIGH_SESSIONS}" ]]; then
+        cmd+=(--relay-adaptive-high-sessions "${ADAPTIVE_HIGH_SESSIONS}")
+      fi
+      if [[ -n "${ADAPTIVE_ELEVATED_DWELL_US}" ]]; then
+        cmd+=(--relay-adaptive-elevated-dwell-us "${ADAPTIVE_ELEVATED_DWELL_US}")
+      fi
+      if [[ -n "${ADAPTIVE_SEVERE_DWELL_US}" ]]; then
+        cmd+=(--relay-adaptive-severe-dwell-us "${ADAPTIVE_SEVERE_DWELL_US}")
+      fi
+      if [[ -n "${ADAPTIVE_ELEVATED_CAP}" ]]; then
+        cmd+=(--relay-adaptive-elevated-cap "${ADAPTIVE_ELEVATED_CAP}")
+      fi
+      if [[ -n "${ADAPTIVE_SEVERE_CAP}" ]]; then
+        cmd+=(--relay-adaptive-severe-cap "${ADAPTIVE_SEVERE_CAP}")
+      fi
 
       if [[ "${DRY_RUN}" == "1" ]]; then
         printf 'dry_run:'

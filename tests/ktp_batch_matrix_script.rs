@@ -25,6 +25,16 @@ fn ktp_batch_matrix_script_sweeps_relay_batch_frames_with_rdp_like_defaults() {
     assert!(script.contains("KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER"));
     assert!(script.contains("KTP_BATCH_MATRIX_MAX_ADAPTIVE_RTT_P95_MICROS"));
     assert!(script.contains("KTP_BATCH_MATRIX_MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS"));
+    assert!(script.contains("KTP_BATCH_MATRIX_ADAPTIVE_HIGH_SESSIONS"));
+    assert!(script.contains("KTP_BATCH_MATRIX_ADAPTIVE_ELEVATED_DWELL_US"));
+    assert!(script.contains("KTP_BATCH_MATRIX_ADAPTIVE_SEVERE_DWELL_US"));
+    assert!(script.contains("KTP_BATCH_MATRIX_ADAPTIVE_ELEVATED_CAP"));
+    assert!(script.contains("KTP_BATCH_MATRIX_ADAPTIVE_SEVERE_CAP"));
+    assert!(script.contains("--relay-adaptive-high-sessions"));
+    assert!(script.contains("--relay-adaptive-elevated-dwell-us"));
+    assert!(script.contains("--relay-adaptive-severe-dwell-us"));
+    assert!(script.contains("--relay-adaptive-elevated-cap"));
+    assert!(script.contains("--relay-adaptive-severe-cap"));
     assert!(script.contains("ktp-policy-summary"));
     assert!(script.contains("--fail-on-fixed-better"));
     assert!(script.contains("--max-adaptive-rtt-p95-micros"));
@@ -144,6 +154,48 @@ fn ktp_batch_matrix_script_dry_run_expands_each_policy_on_linux() {
 }
 
 #[test]
+fn ktp_batch_matrix_script_dry_run_passes_adaptive_tuning_on_linux() {
+    if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+
+    let output = Command::new("bash")
+        .env("KTP_BATCH_MATRIX_DRY_RUN", "1")
+        .env("KTP_BATCH_MATRIX_BATCH_POLICIES", "adaptive")
+        .env("KTP_BATCH_MATRIX_CLIENTS", "4")
+        .env("KTP_BATCH_MATRIX_BATCHES", "64")
+        .env("KTP_BATCH_MATRIX_RUNS", "2")
+        .env("KTP_BATCH_MATRIX_FRAMES", "8")
+        .env("KTP_BATCH_MATRIX_PAYLOAD_BYTES", "1024")
+        .env("KTP_BATCH_MATRIX_ADAPTIVE_HIGH_SESSIONS", "4")
+        .env("KTP_BATCH_MATRIX_ADAPTIVE_ELEVATED_DWELL_US", "40000")
+        .env("KTP_BATCH_MATRIX_ADAPTIVE_SEVERE_DWELL_US", "120000")
+        .env("KTP_BATCH_MATRIX_ADAPTIVE_ELEVATED_CAP", "24")
+        .env("KTP_BATCH_MATRIX_ADAPTIVE_SEVERE_CAP", "6")
+        .args(["scripts/ktp-relay-batch-matrix.sh"])
+        .output()
+        .expect("batch matrix dry-run should run");
+
+    assert!(
+        output.status.success(),
+        "batch matrix dry-run failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("adaptive_high_sessions=4"));
+    assert!(stdout.contains("adaptive_elevated_dwell_us=40000"));
+    assert!(stdout.contains("adaptive_severe_dwell_us=120000"));
+    assert!(stdout.contains("adaptive_elevated_cap=24"));
+    assert!(stdout.contains("adaptive_severe_cap=6"));
+    assert!(stdout.contains("--relay-adaptive-high-sessions 4"));
+    assert!(stdout.contains("--relay-adaptive-elevated-dwell-us 40000"));
+    assert!(stdout.contains("--relay-adaptive-severe-dwell-us 120000"));
+    assert!(stdout.contains("--relay-adaptive-elevated-cap 24"));
+    assert!(stdout.contains("--relay-adaptive-severe-cap 6"));
+}
+
+#[test]
 fn ktp_batch_matrix_script_dry_run_does_not_create_csv_on_linux() {
     if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
         return;
@@ -219,10 +271,10 @@ fn ktp_batch_matrix_script_writes_csv_for_each_policy_on_linux() {
     );
     let csv = std::fs::read_to_string(&csv_path).expect("CSV should be written");
     assert!(csv.contains(
-        "rdp-like,1,4,8,1024,1,64,fixed,64,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,64,64"
+        "rdp-like,1,4,8,1024,1,64,fixed,64,8,50000,250000,16,8,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,64,64"
     ));
     assert!(csv.contains(
-        "rdp-like,1,4,8,1024,1,64,adaptive,64,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,64,64"
+        "rdp-like,1,4,8,1024,1,64,adaptive,64,8,50000,250000,16,8,64.000,64.000,64.000,64.500,64.500,64.500,10,20,30,40,20,20,0,40,7,2,3,4,64,64"
     ));
 }
 
@@ -438,15 +490,15 @@ fn ktp_batch_matrix_script_writes_csv_from_bench_output_on_linux() {
     assert!(csv.contains(
         "profile,runs,clients,frames,payload_bytes,client_payload_reused,relay_batch_frames"
     ));
-    assert!(csv.contains("relay_batch_policy,relay_batch_frames_effective"));
+    assert!(csv.contains("relay_batch_policy,relay_batch_frames_effective,relay_adaptive_high_sessions,relay_adaptive_elevated_dwell_us,relay_adaptive_severe_dwell_us,relay_adaptive_elevated_cap,relay_adaptive_severe_cap"));
     assert!(csv.contains(
         "rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max"
     ));
     assert!(csv.contains(
-        "rdp-like,1,1,8,1024,1,1,fixed,1,1.000,1.000,1.000,1.500,1.500,1.500,10,20,30,40,20,20,0,40,7,2,3,4,1,1"
+        "rdp-like,1,1,8,1024,1,1,fixed,1,8,50000,250000,16,8,1.000,1.000,1.000,1.500,1.500,1.500,10,20,30,40,20,20,0,40,7,2,3,4,1,1"
     ));
     assert!(csv.contains(
-        "rdp-like,1,1,8,1024,1,4,fixed,4,4.000,4.000,4.000,4.500,4.500,4.500,10,20,30,40,20,20,0,40,7,2,3,4,4,4"
+        "rdp-like,1,1,8,1024,1,4,fixed,4,8,50000,250000,16,8,4.000,4.000,4.000,4.500,4.500,4.500,10,20,30,40,20,20,0,40,7,2,3,4,4,4"
     ));
 }
 
@@ -500,6 +552,11 @@ fi
 batch=""
 clients="1"
 policy="fixed"
+adaptive_high_sessions="8"
+adaptive_elevated_dwell_us="50000"
+adaptive_severe_dwell_us="250000"
+adaptive_elevated_cap="16"
+adaptive_severe_cap="8"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clients)
@@ -512,6 +569,26 @@ while [[ $# -gt 0 ]]; do
       ;;
     --relay-batch-policy)
       policy="$2"
+      shift 2
+      ;;
+    --relay-adaptive-high-sessions)
+      adaptive_high_sessions="$2"
+      shift 2
+      ;;
+    --relay-adaptive-elevated-dwell-us)
+      adaptive_elevated_dwell_us="$2"
+      shift 2
+      ;;
+    --relay-adaptive-severe-dwell-us)
+      adaptive_severe_dwell_us="$2"
+      shift 2
+      ;;
+    --relay-adaptive-elevated-cap)
+      adaptive_elevated_cap="$2"
+      shift 2
+      ;;
+    --relay-adaptive-severe-cap)
+      adaptive_severe_cap="$2"
       shift 2
       ;;
     *)
@@ -529,6 +606,6 @@ if [[ "$policy" == "adaptive" && "$clients" -ge 16 && "$effective" -gt 16 ]]; th
 elif [[ "$policy" == "adaptive" && "$clients" -ge 8 && "$effective" -gt 32 ]]; then
   effective="32"
 fi
-echo "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile=rdp_like runs=1 clients=${clients} frames=8 payload_bytes=1024 client_payload_reused=1 bytes=1472 elapsed_ms=${batch}.000 throughput_mib_s=${batch}.500 rtt_micros_samples=8 rtt_micros_p50=10 rtt_micros_p95=20 rtt_micros_p99=30 rtt_micros_max=40 rtt_client_p95_micros_min=20 rtt_client_p95_micros_max=20 rtt_client_p95_spread_micros=0 rtt_client_max_micros_max=40 relay_batch_policy=${policy} relay_batch_frames=${batch} relay_batch_frames_effective=${effective} relay_turns=7 relay_empty_turns=0 relay_yield_turns=6 relay_wait_turns=2 ingress_frames=9 egress_frames=8 ingress_data_frames=8 egress_data_frames=8 ingress_batches=3 egress_batches=4 ingress_max_batch_frames=${effective} egress_max_batch_frames=${effective}"
+echo "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile=rdp_like runs=1 clients=${clients} frames=8 payload_bytes=1024 client_payload_reused=1 bytes=1472 elapsed_ms=${batch}.000 throughput_mib_s=${batch}.500 rtt_micros_samples=8 rtt_micros_p50=10 rtt_micros_p95=20 rtt_micros_p99=30 rtt_micros_max=40 rtt_client_p95_micros_min=20 rtt_client_p95_micros_max=20 rtt_client_p95_spread_micros=0 rtt_client_max_micros_max=40 relay_batch_policy=${policy} relay_batch_frames=${batch} relay_batch_frames_effective=${effective} relay_adaptive_high_sessions=${adaptive_high_sessions} relay_adaptive_elevated_dwell_us=${adaptive_elevated_dwell_us} relay_adaptive_severe_dwell_us=${adaptive_severe_dwell_us} relay_adaptive_elevated_cap=${adaptive_elevated_cap} relay_adaptive_severe_cap=${adaptive_severe_cap} relay_turns=7 relay_empty_turns=0 relay_yield_turns=6 relay_wait_turns=2 ingress_frames=9 egress_frames=8 ingress_data_frames=8 egress_data_frames=8 ingress_batches=3 egress_batches=4 ingress_max_batch_frames=${effective} egress_max_batch_frames=${effective}"
 "#
 }
