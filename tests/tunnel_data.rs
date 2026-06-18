@@ -857,6 +857,67 @@ fn ktp_tcp_tunnel_data_socket_batch_reads_multiple_frames() {
 }
 
 #[test]
+fn ktp_tcp_tunnel_data_socket_batch_writes_multiple_frames() {
+    let key = test_tunnel_data_crypto_key();
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ktp tcp listener");
+    std_listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    let addr = std_listener.local_addr().expect("listener addr");
+    let (tx, rx) = mpsc::channel();
+    let server_key = key.clone();
+    let server = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("build ktp tcp server runtime");
+        runtime.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).expect("tokio listener");
+            let (stream, _) = listener.accept().await.expect("accept ktp tcp client");
+            let mut server = KtpEncryptedTcpStream::from_stream(
+                stream,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            let frames = server.next_frames(64).await.expect("read batched frames");
+            tx.send(frames).expect("send captured batch");
+        });
+    });
+
+    let mut transport = KtpEncryptedTcpTunnelDataTransport::new(key);
+    let mut socket = transport
+        .connect_tunnel_data(&format!("ktp+tcp://{addr}"), &[])
+        .expect("connect ktp tcp tunnel data");
+    socket
+        .send_ktp_frame_batch(&[
+            session_data_frame(381, b"client-a"),
+            session_data_frame(382, b"client-b"),
+            session_data_frame(383, b"client-c"),
+        ])
+        .expect("batch write should succeed");
+
+    let frames = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("server should capture batched frames");
+    assert_eq!(
+        frames
+            .iter()
+            .map(|frame| (frame.session_id, frame.payload.as_slice()))
+            .collect::<Vec<_>>(),
+        vec![
+            (381, b"client-a".as_slice()),
+            (382, b"client-b".as_slice()),
+            (383, b"client-c".as_slice()),
+        ]
+    );
+    server.join().expect("server thread should finish");
+}
+
+#[test]
 fn ktp_tcp_auth_preface_hides_token_and_derives_session_key() {
     let token = "client-token-secret";
     let nonce = test_ktp_tcp_auth_nonce();

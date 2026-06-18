@@ -24,6 +24,8 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("BACKEND_LISTEN"));
     assert!(script.contains("BACKEND_ENDPOINT"));
     assert!(script.contains("KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES"));
+    assert!(script.contains("KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES"));
     assert!(script.contains("tunnel-echo.evidence.md"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
     assert!(script.contains("matrix-summary.tsv"));
@@ -75,6 +77,10 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
             "300",
         )
         .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES",
+            "2",
+        )
+        .env(
             "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR",
             "/tmp/ktp-tunnel-logs",
         )
@@ -110,6 +116,7 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
     assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-fixed-c4"));
     assert!(stdout.contains("BACKEND_LISTEN=auto"));
     assert!(stdout.contains("BACKEND_ENDPOINT=auto"));
+    assert!(stdout.contains("KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES=2"));
     assert!(stdout.contains("CLIENT_TIMEOUT_SECONDS=300"));
 }
 

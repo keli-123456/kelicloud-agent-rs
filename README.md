@@ -312,7 +312,10 @@ address to `kelicloud-agent-rs`, verifies the same tunnel echo path, waits for
 `tunnel data diagnostics`, and writes
 `smoke-logs/ktp-live-canary.evidence.md`. The KTP evidence helper now requires
 positive socket batch-read and batch-write counters so the dedicated TCP data
-path is observable in live smoke logs.
+path is observable in live smoke logs. Use
+`KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES` or
+`KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES` for stricter multi-frame read/write
+batch evidence.
 
 ## Release Builds
 

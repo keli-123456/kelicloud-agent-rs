@@ -210,7 +210,8 @@ For stricter performance-path evidence, set
 `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2` before running the helper. That keeps
 ordinary live canaries tolerant of low traffic, while a dedicated performance
 canary can fail unless at least one socket batch read contains multiple KTP
-frames.
+frames. Set `KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES=2` when the same
+strictness is needed for runtime-to-carrier batch writes.
 
 GitHub Actions also has a `KTP Microbench Matrix` workflow. Pushes that touch
 KTP codec/carrier code or their matrix scripts run a light release-mode sample
@@ -1043,6 +1044,8 @@ policy/client-count row is bounded by
 with a `timeout` row instead of hanging without evidence. Use it after runtime
 scheduling changes to compare real backend tunnel forwarding across increasing
 concurrent session counts and fixed/adaptive batching.
+Set `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES` to raise the
+live canary's write-batch threshold independently of the read-batch threshold.
 
 Optional real-forwarding latency gates can be set on the tunnel matrix:
 
@@ -1378,7 +1381,9 @@ Notes:
   batch-read path was used by real tunnel traffic.
 - Newer canary evidence also requires positive `socket_write_batches`,
   `socket_write_frames`, and `socket_write_max_batch_frames`, so the same live
-  smoke proves runtime frames used the batched carrier send path.
+  smoke proves runtime frames used the batched carrier send path. The
+  `KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES` threshold can be raised for
+  dedicated performance canaries that must prove at least one multi-frame write.
 - The `Local Backend Smoke` GitHub Actions matrix now keeps the WebSocket row
   on the single-round compatibility smoke while the `ktp_tcp` row runs
   `KELICLOUD_TUNNEL_ECHO_ROUNDS=8` and

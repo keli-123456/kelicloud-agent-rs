@@ -7,6 +7,7 @@ LOG_FILE=""
 EVIDENCE_FILE="ktp-live-canary.evidence.md"
 MIN_LINES=1
 MIN_MAX_BATCH_FRAMES="${KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES:-1}"
+MIN_MAX_WRITE_BATCH_FRAMES="${KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES:-1}"
 
 usage() {
     cat <<'USAGE'
@@ -26,6 +27,9 @@ Options:
 Environment:
   KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES
                             require socket_read_max_batch_frames to reach this
+                            value, default: 1
+  KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES
+                            require socket_write_max_batch_frames to reach this
                             value, default: 1
 
 The script validates that live KTP tunnel data diagnostics include runtime wait,
@@ -85,6 +89,7 @@ done
 
 require_positive_integer "--min-lines" "$MIN_LINES"
 require_positive_integer "KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES" "$MIN_MAX_BATCH_FRAMES"
+require_positive_integer "KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES" "$MIN_MAX_WRITE_BATCH_FRAMES"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -162,6 +167,11 @@ if (( max_batch_frames < MIN_MAX_BATCH_FRAMES )); then
     die "expected socket_read_max_batch_frames >= ${MIN_MAX_BATCH_FRAMES}, found ${max_batch_frames}"
 fi
 
+max_write_batch_frames="$(max_metric_value "socket_write_max_batch_frames")"
+if (( max_write_batch_frames < MIN_MAX_WRITE_BATCH_FRAMES )); then
+    die "expected socket_write_max_batch_frames >= ${MIN_MAX_WRITE_BATCH_FRAMES}, found ${max_write_batch_frames}"
+fi
+
 mkdir -p "$(dirname "$EVIDENCE_FILE")"
 {
     printf '# KTP Live Canary Evidence\n\n'
@@ -184,6 +194,8 @@ mkdir -p "$(dirname "$EVIDENCE_FILE")"
     printf '\n## Batch Thresholds\n\n'
     printf -- '- `socket_read_max_batch_frames`: `%s`\n' "$max_batch_frames"
     printf -- '- `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES`: `%s`\n' "$MIN_MAX_BATCH_FRAMES"
+    printf -- '- `socket_write_max_batch_frames`: `%s`\n' "$max_write_batch_frames"
+    printf -- '- `KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES`: `%s`\n' "$MIN_MAX_WRITE_BATCH_FRAMES"
     printf '\n## Latest Diagnostics\n\n'
     printf '```text\n'
     tail -n 5 "$DIAGNOSTICS_LOG"
