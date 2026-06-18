@@ -1112,6 +1112,43 @@ RDP-like strict diagnostics:
 tunnel data diagnostics: runtime_wait_attempts=2636 runtime_wait_hits=12 runtime_wait_elapsed_micros_total=495079 runtime_wait_elapsed_micros_max=2430 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=250 runtime_wait_elapsed_p99_micros=500 outbound_runtime_frames=40 outbound_queue_dwell_frames=40 outbound_queue_dwell_micros_total=144360 outbound_queue_dwell_micros_max=11214 outbound_queue_dwell_p50_micros=100 outbound_queue_dwell_p95_micros=25000 outbound_queue_dwell_p99_micros=25000 socket_idle_reads=2645 socket_idle_empty_reads=2619 socket_read_batches=26 socket_read_frames=40 socket_read_max_batch_frames=2
 ```
 
+Concurrent RDP-like local-backend KTP smoke:
+
+- Agent commit: `1c090ec`
+- Backend commit: `334a82c`
+- Smoke driver:
+  - `KELICLOUD_TUNNEL_ECHO_ROUNDS=8`
+  - `KELICLOUD_TUNNEL_ECHO_CLIENTS=4`
+  - `KELICLOUD_TUNNEL_ECHO_PROFILE=rdp-like`
+  - `KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=8192`
+  - `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2`
+- Run directory: `/tmp/kelicloud-agent-rs-ktp-concurrent-1c090ec-212931`
+- Tunnel echo evidence:
+  `/tmp/kelicloud-agent-rs-ktp-concurrent-1c090ec-212931/logs/tunnel-echo.evidence.md`
+- KTP evidence:
+  `/tmp/kelicloud-agent-rs-ktp-concurrent-1c090ec-212931/logs/ktp-live-canary.evidence.md`
+
+Concurrent tunnel echo RTT evidence:
+
+| Profile | Clients | Rounds / Client | Total Payload | RTT p50 | RTT p95 | RTT p99 | RTT Max | Client p95 Spread |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| rdp-like | 4 | 8 | 39680 B | 5958 us | 26909 us | 30755 us | 30755 us | 16954 us |
+
+Per-client RTT p95:
+
+| Client | RTT p95 |
+| ---: | ---: |
+| 1 | 26909 us |
+| 2 | 30755 us |
+| 3 | 13801 us |
+| 4 | 14129 us |
+
+Concurrent strict diagnostics:
+
+```text
+tunnel data diagnostics: runtime_wait_attempts=2682 runtime_wait_hits=43 runtime_wait_elapsed_micros_total=512726 runtime_wait_elapsed_micros_max=4917 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=500 runtime_wait_elapsed_p99_micros=500 outbound_runtime_frames=236 outbound_queue_dwell_frames=236 outbound_queue_dwell_micros_total=609038 outbound_queue_dwell_micros_max=11263 outbound_queue_dwell_p50_micros=250 outbound_queue_dwell_p95_micros=25000 outbound_queue_dwell_p99_micros=25000 socket_idle_reads=2741 socket_idle_empty_reads=2609 socket_read_batches=132 socket_read_frames=224 socket_read_max_batch_frames=11
+```
+
 Latest active batch-read diagnostics:
 
 ```text
