@@ -2,6 +2,8 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -261,10 +263,15 @@ fn local_backend_smoke_script_generates_tunnel_echo_evidence() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let listen_port = listener.local_addr().unwrap().port();
+    let stop_echo = Arc::new(AtomicBool::new(false));
+    let echo_stop = Arc::clone(&stop_echo);
     let echo = thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         let mut accepted = 0;
-        while accepted < 6 && std::time::Instant::now() < deadline {
+        while accepted < 6
+            && !echo_stop.load(Ordering::SeqCst)
+            && std::time::Instant::now() < deadline
+        {
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     let mut buffer = vec![0; 65536];
@@ -312,6 +319,7 @@ verify_tunnel_relay_echo
         .arg(listen_port.to_string())
         .output()
         .unwrap();
+    stop_echo.store(true, Ordering::SeqCst);
     let accepted_connections = echo.join().unwrap();
 
     assert!(
