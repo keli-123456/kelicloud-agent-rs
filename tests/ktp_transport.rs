@@ -356,6 +356,82 @@ fn encrypted_tcp_stream_sends_batched_frames_over_loopback() {
 }
 
 #[test]
+fn encrypted_tcp_stream_reads_batches_into_reusable_buffer() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let server_key = key.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept encrypted tcp");
+            let mut server = KtpEncryptedTcpStream::from_stream(
+                stream,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            server
+                .send_frames(&[
+                    session_data(821, b"first"),
+                    session_data(822, b"second"),
+                    session_data(823, b"third"),
+                    session_data(824, b"fourth"),
+                ])
+                .await
+                .expect("send response batch");
+        });
+
+        let stream = TcpStream::connect(addr).await.expect("connect client");
+        let mut client = KtpEncryptedTcpStream::from_stream(
+            stream,
+            key,
+            KtpCryptoDirection::ClientToRelay,
+            KtpCryptoDirection::RelayToClient,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        );
+        let mut frames = Vec::with_capacity(4);
+        frames.push(session_data(999, b"stale"));
+        let capacity = frames.capacity();
+
+        let read = client
+            .next_frames_into(2, &mut frames)
+            .await
+            .expect("read first reusable batch");
+        assert_eq!(read, 2);
+        assert_eq!(
+            frames,
+            vec![session_data(821, b"first"), session_data(822, b"second")]
+        );
+        assert_eq!(frames.capacity(), capacity);
+
+        let read = client
+            .next_frames_into(2, &mut frames)
+            .await
+            .expect("read second reusable batch");
+        assert_eq!(read, 2);
+        assert_eq!(
+            frames,
+            vec![session_data(823, b"third"), session_data(824, b"fourth")]
+        );
+        assert_eq!(frames.capacity(), capacity);
+
+        server.await.expect("server task");
+    });
+}
+
+#[test]
 fn encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
