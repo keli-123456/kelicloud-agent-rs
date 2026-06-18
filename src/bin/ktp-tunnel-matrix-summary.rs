@@ -14,6 +14,7 @@ struct MatrixRow {
     client_p95_spread_micros: Option<u64>,
     socket_read_max_batch_frames: Option<u64>,
     socket_write_max_batch_frames: Option<u64>,
+    socket_write_batch_limit_max: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +103,7 @@ fn summarize_tsv(
     let mut max_spread = MaxMetric::default();
     let mut max_socket_batch = MaxMetric::default();
     let mut max_socket_write_batch = MaxMetric::default();
+    let mut max_socket_write_batch_limit = MaxMetric::default();
     let mut gate_failures = Vec::new();
 
     for row in &rows {
@@ -116,9 +118,10 @@ fn summarize_tsv(
         let spread = metric_text(row.client_p95_spread_micros);
         let socket_batch = metric_text(row.socket_read_max_batch_frames);
         let socket_write_batch = metric_text(row.socket_write_max_batch_frames);
+        let socket_write_batch_limit = metric_text(row.socket_write_batch_limit_max);
         output.push('\n');
         output.push_str(&format!(
-            "policy={} clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={}",
+            "policy={} clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={}",
             row.relay_batch_policy,
             row.clients,
             row.status,
@@ -126,7 +129,8 @@ fn summarize_tsv(
             rtt,
             spread,
             socket_batch,
-            socket_write_batch
+            socket_write_batch,
+            socket_write_batch_limit
         ));
 
         if row.status == "pass" {
@@ -145,6 +149,11 @@ fn summarize_tsv(
                 &row.relay_batch_policy,
                 &row.clients,
                 row.socket_write_max_batch_frames,
+            );
+            max_socket_write_batch_limit.record(
+                &row.relay_batch_policy,
+                &row.clients,
+                row.socket_write_batch_limit_max,
             );
         }
     }
@@ -176,6 +185,19 @@ fn summarize_tsv(
         metric_text(max_socket_write_batch.value),
         max_socket_write_batch.policy.as_deref().unwrap_or("-"),
         max_socket_write_batch.clients.as_deref().unwrap_or("-")
+    ));
+    output.push('\n');
+    output.push_str(&format!(
+        "max_socket_write_batch_limit_max={} policy={} clients={}",
+        metric_text(max_socket_write_batch_limit.value),
+        max_socket_write_batch_limit
+            .policy
+            .as_deref()
+            .unwrap_or("-"),
+        max_socket_write_batch_limit
+            .clients
+            .as_deref()
+            .unwrap_or("-")
     ));
 
     for comparison in policy_comparisons(&rows) {
@@ -240,6 +262,14 @@ fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> Summary
             &fields,
             indexes.socket_write_max_batch_frames,
             "socket_write_max_batch_frames",
+            pass_row,
+            line_number,
+            &clients,
+        )?,
+        socket_write_batch_limit_max: parse_optional_metric(
+            &fields,
+            indexes.socket_write_batch_limit_max,
+            "socket_write_batch_limit_max",
             pass_row,
             line_number,
             &clients,
@@ -475,6 +505,7 @@ struct MatrixIndexes {
     rtt_client_p95_spread_micros: usize,
     socket_read_max_batch_frames: usize,
     socket_write_max_batch_frames: Option<usize>,
+    socket_write_batch_limit_max: Option<usize>,
 }
 
 impl MatrixIndexes {
@@ -499,6 +530,7 @@ impl MatrixIndexes {
                 "socket_read_max_batch_frames",
             )?,
             socket_write_max_batch_frames: positions.get("socket_write_max_batch_frames").copied(),
+            socket_write_batch_limit_max: positions.get("socket_write_batch_limit_max").copied(),
         })
     }
 }

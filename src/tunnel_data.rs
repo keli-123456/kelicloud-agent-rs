@@ -170,6 +170,7 @@ struct TunnelDataDiagnosticsInner {
     socket_write_batches: AtomicU64,
     socket_write_frames: AtomicU64,
     socket_write_max_batch_frames: AtomicU64,
+    socket_write_batch_limit_max: AtomicU64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -202,6 +203,7 @@ pub struct TunnelDataDiagnosticsSnapshot {
     pub socket_write_batches: u64,
     pub socket_write_frames: u64,
     pub socket_write_max_batch_frames: u64,
+    pub socket_write_batch_limit_max: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -209,9 +211,14 @@ struct TunnelDataWriteBatchStats {
     batches: usize,
     frames: usize,
     max_batch_frames: usize,
+    max_batch_limit: usize,
 }
 
 impl TunnelDataWriteBatchStats {
+    fn record_batch_limit(&mut self, max_frames: usize) {
+        self.max_batch_limit = self.max_batch_limit.max(max_frames);
+    }
+
     fn record_batch(&mut self, frame_count: usize) {
         if frame_count == 0 {
             return;
@@ -225,6 +232,7 @@ impl TunnelDataWriteBatchStats {
         self.batches += other.batches;
         self.frames += other.frames;
         self.max_batch_frames = self.max_batch_frames.max(other.max_batch_frames);
+        self.max_batch_limit = self.max_batch_limit.max(other.max_batch_limit);
     }
 }
 
@@ -334,6 +342,10 @@ impl SharedTunnelDataDiagnostics {
                 .inner
                 .socket_write_max_batch_frames
                 .load(Ordering::Relaxed),
+            socket_write_batch_limit_max: self
+                .inner
+                .socket_write_batch_limit_max
+                .load(Ordering::Relaxed),
         }
     }
 
@@ -438,6 +450,10 @@ impl SharedTunnelDataDiagnostics {
     }
 
     fn record_socket_write_batches(&self, stats: TunnelDataWriteBatchStats) {
+        update_atomic_max(
+            &self.inner.socket_write_batch_limit_max,
+            stats.max_batch_limit as u64,
+        );
         if stats.frames == 0 || stats.batches == 0 {
             return;
         }
@@ -472,7 +488,7 @@ impl TunnelDataDiagnosticsSnapshot {
 
 pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) -> String {
     format!(
-        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} recent_outbound_queue_dwell_frames={} recent_outbound_queue_dwell_micros_total={} recent_outbound_queue_dwell_micros_max={} recent_outbound_queue_dwell_p50_micros={} recent_outbound_queue_dwell_p95_micros={} recent_outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={} socket_read_batches={} socket_read_frames={} socket_read_max_batch_frames={} socket_write_batches={} socket_write_frames={} socket_write_max_batch_frames={}",
+        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} recent_outbound_queue_dwell_frames={} recent_outbound_queue_dwell_micros_total={} recent_outbound_queue_dwell_micros_max={} recent_outbound_queue_dwell_p50_micros={} recent_outbound_queue_dwell_p95_micros={} recent_outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={} socket_read_batches={} socket_read_frames={} socket_read_max_batch_frames={} socket_write_batches={} socket_write_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={}",
         snapshot.runtime_wait_attempts,
         snapshot.runtime_wait_hits,
         snapshot.runtime_wait_elapsed_micros_total,
@@ -500,7 +516,8 @@ pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) ->
         snapshot.socket_read_max_batch_frames,
         snapshot.socket_write_batches,
         snapshot.socket_write_frames,
-        snapshot.socket_write_max_batch_frames
+        snapshot.socket_write_max_batch_frames,
+        snapshot.socket_write_batch_limit_max
     )
 }
 
@@ -1349,6 +1366,7 @@ where
 {
     let mut stats = TunnelDataWriteBatchStats::default();
     let max_frames = tunnel_session_runtime_frame_batch_limit(runtime);
+    stats.record_batch_limit(max_frames);
     loop {
         let frames = runtime.next_client_frames(max_frames)?;
         if frames.is_empty() {
@@ -1369,11 +1387,12 @@ where
     R: TunnelSessionRuntime,
 {
     let max_frames = tunnel_session_runtime_frame_batch_limit(runtime);
+    let mut stats = TunnelDataWriteBatchStats::default();
+    stats.record_batch_limit(max_frames);
     let frames = runtime.next_client_frames_after_wait(max_frames, timeout)?;
     if frames.is_empty() {
-        return Ok(TunnelDataWriteBatchStats::default());
+        return Ok(stats);
     }
-    let mut stats = TunnelDataWriteBatchStats::default();
     let frame_count = send_tunnel_session_runtime_frame_batch(socket, frames)?;
     stats.record_batch(frame_count);
     stats.merge(drain_tunnel_session_runtime_frames(socket, runtime)?);

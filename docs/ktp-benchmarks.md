@@ -170,11 +170,13 @@ During a real KTP canary window, run the helper after sending tunnel traffic.
 It reads `journalctl` by default, or `--log-file <path>` for captured agent
 logs, and verifies that `tunnel data diagnostics` lines include runtime wait,
 lifetime outbound queue dwell, recent outbound queue dwell, and socket
-batch-read/write counters.
-It also requires positive `socket_read_*` and `socket_write_*` batch counters,
-so a passing live canary proves the production KTP TCP socket batch-read and
-batch-write paths were active during the observation window. Treat the generated
-Markdown file as the live-log companion to `ktp-e2e-bench --latency` output.
+batch-read/write counters plus the effective write batch limit.
+It also requires positive `socket_read_*`, `socket_write_*`, and
+`socket_write_batch_limit_max` values, so a passing live canary proves the
+production KTP TCP socket batch-read and batch-write paths were active during
+the observation window and records the runtime batch cap that was in force.
+Treat the generated Markdown file as the live-log companion to
+`ktp-e2e-bench --latency` output.
 
 KTP codec cursor microbench:
 
@@ -906,9 +908,10 @@ Tunnel-data receive batch foundation:
   logs can prove whether the socket batch-read path is active and how full its
   reads are under real traffic.
 - Production tunnel-data diagnostics also expose `socket_write_batches`,
-  `socket_write_frames`, and `socket_write_max_batch_frames`. This lets live
-  canaries prove that runtime frames reached the carrier through the batched
-  send path, not only that the relay-to-agent read path was batched.
+  `socket_write_frames`, `socket_write_max_batch_frames`, and
+  `socket_write_batch_limit_max`. This lets live canaries prove that runtime
+  frames reached the carrier through the batched send path, and also records
+  the effective runtime batch cap that fixed/adaptive scheduling selected.
 - The conservative `fixed|adaptive` relay batch policy is now shared by
   benchmark tooling and the production tunnel runtime. The runtime default stays
   `fixed`; the Linux installer writes `adaptive` automatically when
@@ -1038,7 +1041,8 @@ policy and client count, always with `KELICLOUD_SMOKE_KTP_TCP=true`. It exports
 `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY` into each smoke run and writes
 `matrix-summary.tsv` with each row's policy, status, elapsed milliseconds,
 `tunnel-echo.evidence.md`, `ktp-live-canary.evidence.md`, RTT percentiles,
-client p95 spread, and socket batch-read/write counters. Each
+client p95 spread, socket batch-read/write counters, and the maximum effective
+write batch limit. Each
 policy/client-count row is bounded by
 `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS` so full matrices fail
 with a `timeout` row instead of hanging without evidence. Use it after runtime
@@ -1071,10 +1075,11 @@ cargo run --locked --bin ktp-tunnel-matrix-summary -- \
 ```
 
 The report emits row counts, per-client latency and socket batch-read/write
-highlights, plus the maximum RTT p95, maximum per-client p95 spread, and maximum
-socket batch sizes across passing rows, including the policy/client combination
-that produced each maximum. Older TSV artifacts without `socket_write_*` columns
-remain readable and show write batch metrics as `-`. When a TSV has passing
+highlights, plus the maximum RTT p95, maximum per-client p95 spread, maximum
+socket batch sizes, and maximum effective write batch limit across passing rows,
+including the policy/client combination that produced each maximum. Older TSV
+artifacts without `socket_write_*` columns or `socket_write_batch_limit_max`
+remain readable and show those write metrics as `-`. When a TSV has passing
 `fixed` and `adaptive` rows for the same client count, the report also emits a
 `policy_compare` line with elapsed, RTT p95, and per-client p95-spread deltas
 plus a verdict such as
@@ -1382,9 +1387,10 @@ Notes:
   `socket_read_frames`, so the evidence proves the dedicated KTP TCP
   batch-read path was used by real tunnel traffic.
 - Newer canary evidence also requires positive `socket_write_batches`,
-  `socket_write_frames`, and `socket_write_max_batch_frames`, so the same live
-  smoke proves runtime frames used the batched carrier send path. The
-  `KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES` threshold can be raised for
+  `socket_write_frames`, `socket_write_max_batch_frames`, and
+  `socket_write_batch_limit_max`, so the same live smoke proves runtime frames
+  used the batched carrier send path and records the selected write batch cap.
+  The `KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES` threshold can be raised for
   dedicated performance canaries that must prove at least one multi-frame write.
 - The `Local Backend Smoke` GitHub Actions matrix now keeps the WebSocket row
   on the single-round compatibility smoke while the `ktp_tcp` row runs

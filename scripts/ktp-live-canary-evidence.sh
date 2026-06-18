@@ -127,6 +127,7 @@ REQUIRED_FIELDS=(
     "socket_write_batches"
     "socket_write_frames"
     "socket_write_max_batch_frames"
+    "socket_write_batch_limit_max"
 )
 
 POSITIVE_FIELDS=(
@@ -136,6 +137,7 @@ POSITIVE_FIELDS=(
     "socket_write_batches"
     "socket_write_frames"
     "socket_write_max_batch_frames"
+    "socket_write_batch_limit_max"
 )
 
 max_metric_value() {

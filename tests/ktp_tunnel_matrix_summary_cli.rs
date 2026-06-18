@@ -5,9 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn ktp_tunnel_matrix_summary_reports_pass_rows_and_extremes() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-pass",
-        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames
-fixed	1	8	rdp-like	8192	pass	123	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	9920	100	200	300	400	0	3	40	2	2	40	5
-adaptive	4	8	rdp-like	8192	pass	456	logs/adaptive/clients-4	logs/adaptive/clients-4/tunnel-echo.evidence.md	logs/adaptive/clients-4/ktp-live-canary.evidence.md	39680	500	600	700	800	90	12	224	11	10	236	12
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max
+fixed	1	8	rdp-like	8192	pass	123	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	9920	100	200	300	400	0	3	40	2	2	40	5	64
+adaptive	4	8	rdp-like	8192	pass	456	logs/adaptive/clients-4	logs/adaptive/clients-4/tunnel-echo.evidence.md	logs/adaptive/clients-4/ktp-live-canary.evidence.md	39680	500	600	700	800	90	12	224	11	10	236	12	16
 "#,
     );
 
@@ -24,12 +24,13 @@ adaptive	4	8	rdp-like	8192	pass	456	logs/adaptive/clients-4	logs/adaptive/client
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ktp_tunnel_matrix_summary rows=2 pass=2 fail=0 timeout=0 status=pass"));
-    assert!(stdout.contains("policy=fixed clients=1 status=pass elapsed_millis=123 rtt_micros_p95=200 rtt_client_p95_spread_micros=0 socket_read_max_batch_frames=2 socket_write_max_batch_frames=5"));
-    assert!(stdout.contains("policy=adaptive clients=4 status=pass elapsed_millis=456 rtt_micros_p95=600 rtt_client_p95_spread_micros=90 socket_read_max_batch_frames=11 socket_write_max_batch_frames=12"));
+    assert!(stdout.contains("policy=fixed clients=1 status=pass elapsed_millis=123 rtt_micros_p95=200 rtt_client_p95_spread_micros=0 socket_read_max_batch_frames=2 socket_write_max_batch_frames=5 socket_write_batch_limit_max=64"));
+    assert!(stdout.contains("policy=adaptive clients=4 status=pass elapsed_millis=456 rtt_micros_p95=600 rtt_client_p95_spread_micros=90 socket_read_max_batch_frames=11 socket_write_max_batch_frames=12 socket_write_batch_limit_max=16"));
     assert!(stdout.contains("max_rtt_micros_p95=600 policy=adaptive clients=4"));
     assert!(stdout.contains("max_rtt_client_p95_spread_micros=90 policy=adaptive clients=4"));
     assert!(stdout.contains("max_socket_read_max_batch_frames=11 policy=adaptive clients=4"));
     assert!(stdout.contains("max_socket_write_max_batch_frames=12 policy=adaptive clients=4"));
+    assert!(stdout.contains("max_socket_write_batch_limit_max=64 policy=fixed clients=1"));
 }
 
 #[test]
