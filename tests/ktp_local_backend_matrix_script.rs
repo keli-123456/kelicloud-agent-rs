@@ -25,6 +25,7 @@ fn ktp_local_backend_matrix_script_declares_summary_contract() {
     assert!(script.contains("matrix-summary.tsv"));
     assert!(script.contains("agent.summary.md"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
+    assert!(script.contains("extract_ktp_crypto"));
     assert!(script.contains("KELICLOUD_LOCAL_BACKEND_MATRIX_SMOKE_SCRIPT"));
 }
 
@@ -154,14 +155,16 @@ fn ktp_local_backend_matrix_script_writes_summary_with_fake_smoke_on_linux() {
         String::from_utf8_lossy(&output.stderr)
     );
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
-    assert!(summary.contains("carrier\tktp_tcp\tstatus\tlog_dir\tsummary_file\tktp_evidence_file"));
+    assert!(summary.contains(
+        "carrier\tktp_tcp\tktp_crypto\tstatus\tlog_dir\tsummary_file\tktp_evidence_file"
+    ));
     assert!(summary.contains(&format!(
-        "websocket\tfalse\tpass\t{}\t{}/agent.summary.md\t-",
+        "websocket\tfalse\t-\tpass\t{}\t{}/agent.summary.md\t-",
         log_dir.join("websocket").display(),
         log_dir.join("websocket").display()
     )));
     assert!(summary.contains(&format!(
-        "ktp_tcp\ttrue\tpass\t{}\t{}/agent.summary.md\t{}/ktp-live-canary.evidence.md",
+        "ktp_tcp\ttrue\tktp_aead\tpass\t{}\t{}/agent.summary.md\t{}/ktp-live-canary.evidence.md",
         log_dir.join("ktp_tcp").display(),
         log_dir.join("ktp_tcp").display(),
         log_dir.join("ktp_tcp").display()
@@ -188,7 +191,7 @@ set -euo pipefail
 mkdir -p "${SMOKE_LOG_DIR}"
 printf '# fake summary\ncarrier=%s\n' "${KELICLOUD_SMOKE_KTP_TCP}" >"${SMOKE_LOG_DIR}/agent.summary.md"
 if [[ "${KELICLOUD_SMOKE_KTP_TCP}" == "true" ]]; then
-    printf '# fake ktp evidence\n' >"${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md"
+    printf '# fake ktp evidence\ncarrier=ktp_tcp crypto=ktp_aead\n' >"${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md"
 fi
 "#
 }

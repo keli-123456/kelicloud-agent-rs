@@ -56,7 +56,12 @@ init_summary() {
         return
     fi
     mkdir -p "$(dirname "${MATRIX_SUMMARY_PATH}")"
-    printf '%s\n' "carrier	ktp_tcp	status	log_dir	summary_file	ktp_evidence_file" >"${MATRIX_SUMMARY_PATH}"
+    printf '%s\n' "carrier	ktp_tcp	ktp_crypto	status	log_dir	summary_file	ktp_evidence_file" >"${MATRIX_SUMMARY_PATH}"
+}
+
+extract_ktp_crypto() {
+    local evidence_file="$1"
+    grep -Eo 'crypto=[^[:space:]`]+' "${evidence_file}" | tail -n 1 | cut -d= -f2 || true
 }
 
 write_summary_row() {
@@ -66,17 +71,23 @@ write_summary_row() {
     local log_dir="$4"
     local summary_file="${log_dir}/agent.summary.md"
     local ktp_evidence_file="-"
+    local ktp_crypto="-"
 
     if [[ ! -f "${summary_file}" ]]; then
         summary_file="-"
     fi
     if [[ "${ktp_enabled}" == "true" && -f "${log_dir}/ktp-live-canary.evidence.md" ]]; then
         ktp_evidence_file="${log_dir}/ktp-live-canary.evidence.md"
+        ktp_crypto="$(extract_ktp_crypto "${ktp_evidence_file}")"
+        if [[ -z "${ktp_crypto}" ]]; then
+            ktp_crypto="-"
+        fi
     fi
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${carrier}" \
         "${ktp_enabled}" \
+        "${ktp_crypto}" \
         "${status}" \
         "${log_dir}" \
         "${summary_file}" \

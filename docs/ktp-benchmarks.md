@@ -1033,9 +1033,11 @@ gets an isolated log directory, so the KTP evidence file and `agent.summary.md`
 can be compared without mixing artifacts.
 
 The wrapper also writes `matrix-summary.tsv` under the matrix log directory by
-default. The TSV records `carrier`, whether KTP TCP was enabled, pass/fail
-status, the run log directory, `agent.summary.md`, and the KTP live-canary
-evidence path when that carrier produces one.
+default. The TSV records `carrier`, whether KTP TCP was enabled, the
+`ktp_crypto` extracted from KTP live-canary evidence, pass/fail status, the run
+log directory, `agent.summary.md`, and the KTP live-canary evidence path when
+that carrier produces one. The WebSocket row uses `-` for `ktp_crypto`; the KTP
+TCP row should show `ktp_aead` when the dedicated encrypted data path is proven.
 
 Tunnel concurrency matrix smoke:
 
