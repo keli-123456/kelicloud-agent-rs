@@ -110,9 +110,16 @@ matrix_db_name() {
     local clients="$2"
     local prefix="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX}"
     local policy_component
+    local suffix
+    local max_prefix_len
     policy_component="$(policy_path_component "${policy}")"
     prefix="${prefix//[^a-zA-Z0-9_]/_}"
-    printf '%s_%s_clients_%s' "${prefix}" "${policy_component}" "${clients}"
+    suffix="_${policy_component}_clients_${clients}"
+    max_prefix_len=$((64 - ${#suffix}))
+    if ((${#prefix} > max_prefix_len)); then
+        prefix="${prefix:0:max_prefix_len}"
+    fi
+    printf '%s%s' "${prefix}" "${suffix}"
 }
 
 matrix_identity_name() {

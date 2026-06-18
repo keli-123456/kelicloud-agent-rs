@@ -198,6 +198,51 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_policies_and_clients()
 }
 
 #[test]
+fn ktp_local_backend_tunnel_matrix_script_truncates_long_database_names_for_mysql() {
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping long database name dry-run check");
+        return;
+    };
+
+    let output = Command::new(bash)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN", "1")
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX",
+            "komari_tunnel_matrix_high_19cb4ce_20260618104155_extra_long_release_host_prefix",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES",
+            "adaptive",
+        )
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS", "4")
+        .arg(script_path())
+        .output()
+        .expect("long database name dry-run should run");
+
+    assert!(
+        output.status.success(),
+        "long database name dry-run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let db_name = stdout
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("KOMARI_DB_NAME="))
+        .expect("dry-run should include KOMARI_DB_NAME");
+
+    assert!(
+        db_name.len() <= 64,
+        "database name should fit MySQL's 64 byte identifier limit: {db_name} ({})",
+        db_name.len()
+    );
+    assert!(
+        db_name.ends_with("_adaptive_clients_4"),
+        "database name should preserve matrix identity suffix: {db_name}"
+    );
+}
+
+#[test]
 fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linux() {
     if !cfg!(target_os = "linux") {
         eprintln!("linux-only fake smoke summary test skipped");
