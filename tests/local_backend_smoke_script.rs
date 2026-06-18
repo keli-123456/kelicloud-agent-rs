@@ -33,9 +33,11 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
     assert!(script.contains("create_tunnel_rule"));
     assert!(script.contains("verify_tunnel_relay_echo"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_ROUNDS"));
+    assert!(script.contains("KELICLOUD_TUNNEL_ECHO_CLIENTS"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_PROFILE"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES"));
     assert!(script.contains("require_positive_integer \"KELICLOUD_TUNNEL_ECHO_ROUNDS\""));
+    assert!(script.contains("require_positive_integer \"KELICLOUD_TUNNEL_ECHO_CLIENTS\""));
     assert!(script.contains("for round in range(1, rounds + 1):"));
     assert!(script.contains("smoke: tunnel_relay_echo_succeeded"));
     assert!(script.contains("rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS}"));
@@ -69,9 +71,12 @@ fn local_backend_smoke_script_records_tunnel_echo_latency_evidence() {
     assert!(script.contains("TUNNEL_ECHO_EVIDENCE_FILE"));
     assert!(script.contains("tunnel-echo.evidence.md"));
     assert!(script.contains("payload_for_round"));
+    assert!(script.contains("client_count"));
+    assert!(script.contains("client_worker"));
     assert!(script.contains("rtt_micros_p50"));
     assert!(script.contains("rtt_micros_p95"));
     assert!(script.contains("rtt_micros_p99"));
+    assert!(script.contains("rtt_client_p95_spread_micros"));
     assert!(script.contains("total_payload_bytes"));
     assert!(script.contains("profile={profile}"));
     assert!(script.contains("smoke: tunnel_echo_evidence="));
@@ -259,7 +264,7 @@ fn local_backend_smoke_script_generates_tunnel_echo_evidence() {
     let echo = thread::spawn(move || {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut accepted = 0;
-        while accepted < 3 && std::time::Instant::now() < deadline {
+        while accepted < 6 && std::time::Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     let mut buffer = vec![0; 65536];
@@ -290,6 +295,7 @@ mkdir -p "${SMOKE_LOG_DIR}"
 AGENT_LOG="$3"
 : >"${AGENT_LOG}"
 KELICLOUD_TUNNEL_ECHO_ROUNDS=3
+KELICLOUD_TUNNEL_ECHO_CLIENTS=2
 KELICLOUD_TUNNEL_ECHO_PROFILE=rdp-like
 KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=1024
 KELICLOUD_TUNNEL_ECHO_EVIDENCE="$4"
@@ -314,18 +320,21 @@ verify_tunnel_relay_echo
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(accepted_connections, 3);
+    assert_eq!(accepted_connections, 6);
 
     let evidence = std::fs::read_to_string(evidence_path).unwrap();
     assert!(evidence.contains("- profile: rdp-like"));
     assert!(evidence.contains("- rounds: 3"));
+    assert!(evidence.contains("- clients: 2"));
     assert!(evidence.contains("- total_payload_bytes:"));
     assert!(evidence.contains("- rtt_micros_p95:"));
-    assert!(evidence.contains("| round | payload_bytes | rtt_micros |"));
+    assert!(evidence.contains("- rtt_client_p95_spread_micros:"));
+    assert!(evidence.contains("| client | round | payload_bytes | rtt_micros |"));
 
     let agent_log = std::fs::read_to_string(agent_log_path).unwrap();
     assert!(agent_log.contains("smoke: tunnel_relay_echo_succeeded"));
     assert!(agent_log.contains("profile=rdp-like"));
+    assert!(agent_log.contains("clients=2"));
     assert!(agent_log.contains("smoke: tunnel_echo_evidence="));
 }
 

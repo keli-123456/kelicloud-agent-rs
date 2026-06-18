@@ -35,18 +35,21 @@ jobs:
           - data_plane: websocket
             ktp_tcp: "false"
             tunnel_echo_rounds: "1"
+            tunnel_echo_clients: "1"
             tunnel_echo_profile: fixed
             tunnel_echo_payload_bytes: "0"
             ktp_min_max_batch_frames: "1"
           - data_plane: ktp_tcp
             ktp_tcp: "true"
             tunnel_echo_rounds: "8"
+            tunnel_echo_clients: "4"
             tunnel_echo_profile: rdp-like
             tunnel_echo_payload_bytes: "8192"
             ktp_min_max_batch_frames: "2"
     env:
       KELICLOUD_SMOKE_KTP_TCP: ${{ matrix.ktp_tcp }}
       KELICLOUD_TUNNEL_ECHO_ROUNDS: ${{ matrix.tunnel_echo_rounds }}
+      KELICLOUD_TUNNEL_ECHO_CLIENTS: ${{ matrix.tunnel_echo_clients }}
       KELICLOUD_TUNNEL_ECHO_PROFILE: ${{ matrix.tunnel_echo_profile }}
       KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES: ${{ matrix.tunnel_echo_payload_bytes }}
       KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES: ${{ matrix.ktp_min_max_batch_frames }}

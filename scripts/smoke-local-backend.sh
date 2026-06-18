@@ -15,6 +15,7 @@ KTP_TCP_LISTEN="${KTP_TCP_LISTEN:-}"
 KTP_DIAGNOSTICS_TIMEOUT_SECONDS="${KTP_DIAGNOSTICS_TIMEOUT_SECONDS:-45}"
 KTP_LIVE_CANARY_MIN_LINES="${KTP_LIVE_CANARY_MIN_LINES:-1}"
 KELICLOUD_TUNNEL_ECHO_ROUNDS="${KELICLOUD_TUNNEL_ECHO_ROUNDS:-1}"
+KELICLOUD_TUNNEL_ECHO_CLIENTS="${KELICLOUD_TUNNEL_ECHO_CLIENTS:-1}"
 KELICLOUD_TUNNEL_ECHO_PROFILE="${KELICLOUD_TUNNEL_ECHO_PROFILE:-fixed}"
 KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES="${KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES:-0}"
 KELICLOUD_TUNNEL_ECHO_EVIDENCE="${KELICLOUD_TUNNEL_ECHO_EVIDENCE:-}"
@@ -708,6 +709,7 @@ verify_tunnel_relay_echo() {
         "${TUNNEL_LISTEN_PORT}" \
         "${mark}" \
         "${KELICLOUD_TUNNEL_ECHO_ROUNDS}" \
+        "${KELICLOUD_TUNNEL_ECHO_CLIENTS}" \
         "${KELICLOUD_TUNNEL_ECHO_PROFILE}" \
         "${KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES}" \
         "${TUNNEL_ECHO_EVIDENCE_FILE}" <<'PY'
@@ -715,17 +717,19 @@ import math
 import os
 import socket
 import sys
+import threading
 import time
 
 port = int(sys.argv[1])
 base_payload = sys.argv[2]
 rounds = int(sys.argv[3])
-profile = sys.argv[4]
-configured_payload_bytes = int(sys.argv[5])
-evidence_file = sys.argv[6]
-deadline = time.time() + 45
-last_error = None
+client_count = int(sys.argv[4])
+profile = sys.argv[5]
+configured_payload_bytes = int(sys.argv[6])
+evidence_file = sys.argv[7]
 samples = []
+errors = []
+samples_lock = threading.Lock()
 
 def fill_payload(prefix, target_bytes):
     base = prefix.encode("utf-8")
@@ -734,8 +738,11 @@ def fill_payload(prefix, target_bytes):
     filler = (b"-0123456789abcdef" * ((target_bytes // 17) + 2))
     return (base + filler)[:target_bytes]
 
-def payload_for_round(round_no):
-    payload_text = base_payload if rounds == 1 else f"{base_payload}-{round_no}"
+def payload_for_round(client_id, round_no):
+    if client_count == 1:
+        payload_text = base_payload if rounds == 1 else f"{base_payload}-{round_no}"
+    else:
+        payload_text = f"{base_payload}-client-{client_id}-round-{round_no}"
     if profile == "fixed":
         return fill_payload(payload_text, configured_payload_bytes)
 
@@ -748,38 +755,66 @@ def percentile(sorted_values, percent):
     index = max(0, math.ceil((percent / 100.0) * len(sorted_values)) - 1)
     return sorted_values[min(index, len(sorted_values) - 1)]
 
-for round in range(1, rounds + 1):
-    payload = payload_for_round(round)
-    expected = b"echo:" + payload
-    while time.time() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
-                sock.settimeout(5)
-                started = time.perf_counter()
-                sock.sendall(payload)
-                data = sock.recv(65536)
-                if data == expected:
-                    samples.append({
-                        "round": round,
-                        "payload_bytes": len(payload),
-                        "rtt_micros": int((time.perf_counter() - started) * 1_000_000),
-                    })
-                    break
-                last_error = f"round {round}: unexpected echo response: {data!r}"
-        except Exception as exc:
-            last_error = f"round {round}: {exc}"
-        time.sleep(1)
-    else:
-        print(f"tunnel relay echo failed: {last_error}", file=sys.stderr)
-        raise SystemExit(1)
+def client_worker(client_id):
+    for round in range(1, rounds + 1):
+        payload = payload_for_round(client_id, round)
+        expected = b"echo:" + payload
+        deadline = time.time() + 45
+        last_error = None
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+                    sock.settimeout(5)
+                    started = time.perf_counter()
+                    sock.sendall(payload)
+                    data = sock.recv(65536)
+                    if data == expected:
+                        with samples_lock:
+                            samples.append({
+                                "client": client_id,
+                                "round": round,
+                                "payload_bytes": len(payload),
+                                "rtt_micros": int((time.perf_counter() - started) * 1_000_000),
+                            })
+                        break
+                    last_error = f"client {client_id} round {round}: unexpected echo response: {data!r}"
+            except Exception as exc:
+                last_error = f"client {client_id} round {round}: {exc}"
+            time.sleep(1)
+        else:
+            with samples_lock:
+                errors.append(last_error or f"client {client_id} round {round}: timed out")
+
+threads = [
+    threading.Thread(target=client_worker, args=(client_id,), daemon=True)
+    for client_id in range(1, client_count + 1)
+]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()
+
+expected_samples = client_count * rounds
+if errors or len(samples) != expected_samples:
+    detail = errors[0] if errors else f"expected {expected_samples} samples, got {len(samples)}"
+    print(f"tunnel relay echo failed: {detail}", file=sys.stderr)
+    raise SystemExit(1)
 
 rtts = sorted(sample["rtt_micros"] for sample in samples)
 total_payload_bytes = sum(sample["payload_bytes"] for sample in samples)
+client_p95s = []
+for client_id in range(1, client_count + 1):
+    client_rtts = sorted(
+        sample["rtt_micros"] for sample in samples if sample["client"] == client_id
+    )
+    client_p95s.append(percentile(client_rtts, 95))
+rtt_client_p95_spread_micros = max(client_p95s) - min(client_p95s) if len(client_p95s) > 1 else 0
 summary = {
     "rtt_micros_p50": percentile(rtts, 50),
     "rtt_micros_p95": percentile(rtts, 95),
     "rtt_micros_p99": percentile(rtts, 99),
     "rtt_micros_max": rtts[-1],
+    "rtt_client_p95_spread_micros": rtt_client_p95_spread_micros,
 }
 
 evidence_dir = os.path.dirname(evidence_file)
@@ -789,31 +824,38 @@ with open(evidence_file, "w", encoding="utf-8") as fh:
     fh.write("# Tunnel Echo Evidence\n\n")
     fh.write(f"- profile: {profile}\n")
     fh.write(f"- rounds: {rounds}\n")
+    fh.write(f"- clients: {client_count}\n")
     fh.write(f"- total_payload_bytes: {total_payload_bytes}\n")
     for key, value in summary.items():
         fh.write(f"- {key}: {value}\n")
+    fh.write("\n## Client RTT P95\n\n")
+    fh.write("| client | rtt_micros_p95 |\n")
+    fh.write("| ---: | ---: |\n")
+    for index, value in enumerate(client_p95s, start=1):
+        fh.write(f"| {index} | {value} |\n")
     fh.write("\n## Samples\n\n")
-    fh.write("| round | payload_bytes | rtt_micros |\n")
-    fh.write("| ---: | ---: | ---: |\n")
-    for sample in samples:
-        fh.write(f"| {sample['round']} | {sample['payload_bytes']} | {sample['rtt_micros']} |\n")
+    fh.write("| client | round | payload_bytes | rtt_micros |\n")
+    fh.write("| ---: | ---: | ---: | ---: |\n")
+    for sample in sorted(samples, key=lambda item: (item["client"], item["round"])):
+        fh.write(f"| {sample['client']} | {sample['round']} | {sample['payload_bytes']} | {sample['rtt_micros']} |\n")
 
 print(
-    f"tunnel relay echo succeeded rounds={rounds} profile={profile} "
+    f"tunnel relay echo succeeded rounds={rounds} clients={client_count} profile={profile} "
     f"total_payload_bytes={total_payload_bytes} "
     f"rtt_micros_p50={summary['rtt_micros_p50']} "
     f"rtt_micros_p95={summary['rtt_micros_p95']} "
     f"rtt_micros_p99={summary['rtt_micros_p99']} "
-    f"rtt_micros_max={summary['rtt_micros_max']}"
+    f"rtt_micros_max={summary['rtt_micros_max']} "
+    f"rtt_client_p95_spread_micros={summary['rtt_client_p95_spread_micros']}"
 )
 raise SystemExit(0)
 PY
     then
         die "tunnel relay echo verification failed$(log_tail_for_error)"
     fi
-    printf '%s\n' "smoke: tunnel_relay_echo_succeeded rule_id=${TUNNEL_RULE_ID} listen_port=${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS} profile=${KELICLOUD_TUNNEL_ECHO_PROFILE}" >>"${AGENT_LOG}"
+    printf '%s\n' "smoke: tunnel_relay_echo_succeeded rule_id=${TUNNEL_RULE_ID} listen_port=${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS} clients=${KELICLOUD_TUNNEL_ECHO_CLIENTS} profile=${KELICLOUD_TUNNEL_ECHO_PROFILE}" >>"${AGENT_LOG}"
     printf '%s\n' "smoke: tunnel_echo_evidence=${TUNNEL_ECHO_EVIDENCE_FILE}" >>"${AGENT_LOG}"
-    log "Tunnel relay echo succeeded through 127.0.0.1:${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS} profile=${KELICLOUD_TUNNEL_ECHO_PROFILE}"
+    log "Tunnel relay echo succeeded through 127.0.0.1:${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS} clients=${KELICLOUD_TUNNEL_ECHO_CLIENTS} profile=${KELICLOUD_TUNNEL_ECHO_PROFILE}"
     log "Tunnel echo evidence written to ${TUNNEL_ECHO_EVIDENCE_FILE}"
 }
 
@@ -859,6 +901,7 @@ main() {
         require_command bash
     fi
     require_positive_integer "KELICLOUD_TUNNEL_ECHO_ROUNDS" "${KELICLOUD_TUNNEL_ECHO_ROUNDS}"
+    require_positive_integer "KELICLOUD_TUNNEL_ECHO_CLIENTS" "${KELICLOUD_TUNNEL_ECHO_CLIENTS}"
     require_non_negative_integer "KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES" "${KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES}"
     require_tunnel_echo_profile
 
