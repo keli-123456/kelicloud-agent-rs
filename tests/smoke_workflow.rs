@@ -108,11 +108,14 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("payload_bytes:"));
     assert!(workflow.contains("min_max_batch_frames:"));
     assert!(workflow.contains("client_timeout_seconds:"));
+    assert!(workflow.contains("max_rtt_p95_micros:"));
+    assert!(workflow.contains("max_client_p95_spread_micros:"));
     assert!(workflow.contains("default: \"1 2 4 8\""));
     assert!(workflow.contains("default: \"8\""));
     assert!(workflow.contains("default: \"8192\""));
     assert!(workflow.contains("default: \"900\""));
     assert!(workflow.contains("default: \"2\""));
+    assert!(workflow.contains("default: \"\""));
     assert!(workflow.contains("mysql:8.4"));
     assert!(workflow.contains("KOMARI_DB_HOST: 127.0.0.1"));
     assert!(workflow.contains("actions/setup-go@v5"));
@@ -135,6 +138,12 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     ));
     assert!(workflow.contains(
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.client_timeout_seconds || '900' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_rtt_p95_micros || '' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_client_p95_spread_micros || '' }}"
     ));
     assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs"));
     assert!(workflow

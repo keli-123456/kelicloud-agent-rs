@@ -35,6 +35,14 @@ on:
         description: Per-client-count smoke timeout. Use 0 to disable.
         required: true
         default: "900"
+      max_rtt_p95_micros:
+        description: Optional maximum RTT p95 in microseconds for each passing row.
+        required: false
+        default: ""
+      max_client_p95_spread_micros:
+        description: Optional maximum per-client p95 spread in microseconds for each passing row.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -57,6 +65,8 @@ env:
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.payload_bytes || '4096' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.min_max_batch_frames || '2' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.client_timeout_seconds || '900' }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_rtt_p95_micros || '' }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_client_p95_spread_micros || '' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work
 

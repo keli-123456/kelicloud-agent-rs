@@ -30,6 +30,9 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("timeout"));
     assert!(script.contains("rtt_client_p95_spread_micros"));
     assert!(script.contains("socket_read_max_batch_frames"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS"));
+    assert!(script.contains("performance_gate_failures"));
 }
 
 #[test]
@@ -272,6 +275,107 @@ sleep 5
             "-",
             "-",
             "-",
+        ],
+    );
+}
+
+#[test]
+fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summary_on_linux() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("linux-only latency gate summary test skipped");
+        return;
+    }
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping latency gate summary check");
+        return;
+    };
+
+    let temp_dir = unique_temp_dir("ktp-local-backend-tunnel-matrix-latency-gate");
+    let log_dir = temp_dir.join("logs");
+    let summary_path = temp_dir.join("matrix-summary.tsv");
+    let fake_smoke = temp_dir.join("fake-smoke.sh");
+    std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+    std::fs::write(&fake_smoke, fake_smoke_script()).expect("fake smoke should be written");
+
+    let output = Command::new(bash)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS", "1 4")
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR", &log_dir)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY", &summary_path)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT", &fake_smoke)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS", "500")
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS",
+            "80",
+        )
+        .arg(script_path())
+        .output()
+        .expect("tunnel matrix latency gate script should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "latency gate should exit 3:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("rtt_micros_p95 600 exceeds max 500 for clients=4"));
+    assert!(stderr.contains("rtt_client_p95_spread_micros 90 exceeds max 80 for clients=4"));
+    let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
+    assert_summary_row(
+        &summary,
+        "1",
+        &[
+            "8",
+            "rdp-like",
+            "8192",
+            "pass",
+            &log_dir.join("clients-1").display().to_string(),
+            &format!(
+                "{}/tunnel-echo.evidence.md",
+                log_dir.join("clients-1").display()
+            ),
+            &format!(
+                "{}/ktp-live-canary.evidence.md",
+                log_dir.join("clients-1").display()
+            ),
+            "9920",
+            "100",
+            "200",
+            "300",
+            "400",
+            "0",
+            "3",
+            "40",
+            "2",
+        ],
+    );
+    assert_summary_row(
+        &summary,
+        "4",
+        &[
+            "8",
+            "rdp-like",
+            "8192",
+            "pass",
+            &log_dir.join("clients-4").display().to_string(),
+            &format!(
+                "{}/tunnel-echo.evidence.md",
+                log_dir.join("clients-4").display()
+            ),
+            &format!(
+                "{}/ktp-live-canary.evidence.md",
+                log_dir.join("clients-4").display()
+            ),
+            "39680",
+            "500",
+            "600",
+            "700",
+            "800",
+            "90",
+            "12",
+            "224",
+            "11",
         ],
     );
 }

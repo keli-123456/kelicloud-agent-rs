@@ -1016,6 +1016,20 @@ matrices fail with a `timeout` row instead of hanging without evidence. Use it
 after runtime scheduling changes to compare real backend tunnel forwarding
 across increasing concurrent session counts.
 
+Optional real-forwarding latency gates can be set on the tunnel matrix:
+
+```bash
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS=20000 \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS=5000 \
+  bash scripts/ktp-local-backend-tunnel-matrix.sh
+```
+
+These gates only evaluate rows whose smoke status is `pass`. The script still
+writes `matrix-summary.tsv`, then exits with code `3` if any passing row exceeds
+the configured RTT p95 or per-client p95 spread threshold. The manual
+`KTP Tunnel Matrix` workflow exposes the same thresholds as optional inputs so
+release-host runs can collect artifacts and fail loudly on latency regressions.
+
 Result:
 
 - Backend KTP TCP relay listened on `127.0.0.1:40699`.

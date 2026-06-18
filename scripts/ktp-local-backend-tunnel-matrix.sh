@@ -14,6 +14,8 @@ KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMA
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT:-}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX:-${KOMARI_DB_NAME:-komari_tunnel_matrix}}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX:-agent-rs-tunnel-matrix}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS:-}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -22,6 +24,7 @@ SMOKE_SCRIPT="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT:-${REPO_ROOT}/${SMO
 MATRIX_LOG_ROOT=""
 MATRIX_WORK_ROOT=""
 MATRIX_SUMMARY_PATH=""
+MATRIX_GATE_FAILURES=0
 
 trim_trailing_slash() {
     local value="$1"
@@ -47,6 +50,33 @@ require_non_negative_integer() {
         echo "${name} must be a non-negative integer" >&2
         return 2
     }
+}
+
+record_gate_failure() {
+    echo "KTP tunnel matrix performance gate failed: $*" >&2
+    MATRIX_GATE_FAILURES=$((MATRIX_GATE_FAILURES + 1))
+}
+
+check_max_metric() {
+    local clients="$1"
+    local metric="$2"
+    local value="$3"
+    local max="$4"
+
+    if [[ -z "${max}" ]]; then
+        return
+    fi
+    if [[ -z "${value}" || "${value}" == "-" ]]; then
+        record_gate_failure "missing ${metric} for clients=${clients}"
+        return
+    fi
+    if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
+        record_gate_failure "non-numeric ${metric}=${value} for clients=${clients}"
+        return
+    fi
+    if ((value > max)); then
+        record_gate_failure "${metric} ${value} exceeds max ${max} for clients=${clients}"
+    fi
 }
 
 timestamp_millis() {
@@ -133,6 +163,8 @@ write_summary_row() {
     local ktp_evidence_file="${log_dir}/ktp-live-canary.evidence.md"
     local tunnel_evidence_summary="-"
     local ktp_evidence_summary="-"
+    local total_payload_bytes rtt_micros_p50 rtt_micros_p95 rtt_micros_p99 rtt_micros_max
+    local rtt_client_p95_spread_micros socket_read_batches socket_read_frames socket_read_max_batch_frames
 
     if [[ -f "${tunnel_evidence_file}" ]]; then
         tunnel_evidence_summary="${tunnel_evidence_file}"
@@ -140,6 +172,16 @@ write_summary_row() {
     if [[ -f "${ktp_evidence_file}" ]]; then
         ktp_evidence_summary="${ktp_evidence_file}"
     fi
+
+    total_payload_bytes="$(plain_markdown_value "${tunnel_evidence_file}" "total_payload_bytes")"
+    rtt_micros_p50="$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p50")"
+    rtt_micros_p95="$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p95")"
+    rtt_micros_p99="$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p99")"
+    rtt_micros_max="$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_max")"
+    rtt_client_p95_spread_micros="$(plain_markdown_value "${tunnel_evidence_file}" "rtt_client_p95_spread_micros")"
+    socket_read_batches="$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_batches")"
+    socket_read_frames="$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_frames")"
+    socket_read_max_batch_frames="$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_max_batch_frames")"
 
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${clients}" \
@@ -151,15 +193,20 @@ write_summary_row() {
         "${log_dir}" \
         "${tunnel_evidence_summary}" \
         "${ktp_evidence_summary}" \
-        "$(plain_markdown_value "${tunnel_evidence_file}" "total_payload_bytes")" \
-        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p50")" \
-        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p95")" \
-        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p99")" \
-        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_max")" \
-        "$(plain_markdown_value "${tunnel_evidence_file}" "rtt_client_p95_spread_micros")" \
-        "$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_batches")" \
-        "$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_frames")" \
-        "$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_max_batch_frames")" >>"${MATRIX_SUMMARY_PATH}"
+        "${total_payload_bytes}" \
+        "${rtt_micros_p50}" \
+        "${rtt_micros_p95}" \
+        "${rtt_micros_p99}" \
+        "${rtt_micros_max}" \
+        "${rtt_client_p95_spread_micros}" \
+        "${socket_read_batches}" \
+        "${socket_read_frames}" \
+        "${socket_read_max_batch_frames}" >>"${MATRIX_SUMMARY_PATH}"
+
+    if [[ "${status}" == "pass" ]]; then
+        check_max_metric "${clients}" "rtt_micros_p95" "${rtt_micros_p95}" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}"
+        check_max_metric "${clients}" "rtt_client_p95_spread_micros" "${rtt_client_p95_spread_micros}" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}"
+    fi
 }
 
 run_clients() {
@@ -259,6 +306,12 @@ main() {
     require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}"
     require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES}"
     require_non_negative_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS}"
+    if [[ -n "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}" ]]; then
+        require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}"
+    fi
+    if [[ -n "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}" ]]; then
+        require_non_negative_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}"
+    fi
     init_matrix_paths
 
     echo "== ktp local backend tunnel matrix =="
@@ -276,6 +329,10 @@ main() {
     for clients in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}; do
         run_clients "${clients}"
     done
+    if ((MATRIX_GATE_FAILURES > 0)); then
+        echo "performance_gate_failures=${MATRIX_GATE_FAILURES}" >&2
+        exit 3
+    fi
 }
 
 main "$@"
