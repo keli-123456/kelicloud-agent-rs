@@ -193,6 +193,18 @@ cursor-based decoder path without running a full backend smoke.
 `KTP_SMOKE_CODEC_PAYLOAD_BYTES`, or `KTP_SMOKE_CODEC_CHUNK_FRAMES` for longer
 local soaks.
 
+For repeatable release evidence, write stream and crypto codec rows to CSV:
+
+```bash
+KTP_CODEC_MATRIX_CSV=/tmp/ktp-codec-matrix.csv \
+  bash scripts/ktp-codec-matrix.sh
+```
+
+The codec matrix is Linux-only and runs `ktp-codec-bench` in release mode. Use
+`KTP_CODEC_MATRIX_MODES`, `KTP_CODEC_MATRIX_FRAMES`,
+`KTP_CODEC_MATRIX_PAYLOAD_BYTES`, `KTP_CODEC_MATRIX_CHUNK_FRAMES`, and
+`KTP_CODEC_MATRIX_RUNS` to control the sweep without editing the script.
+
 For stricter performance-path evidence, set
 `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2` before running the helper. That keeps
 ordinary live canaries tolerant of low traffic, while a dedicated performance
