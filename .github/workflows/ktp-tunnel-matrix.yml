@@ -73,6 +73,14 @@ on:
         description: Optional maximum per-client p95 spread in microseconds for each passing row.
         required: false
         default: ""
+      summary_require_pass:
+        description: Fail the summary step when any matrix row is not pass.
+        required: true
+        default: "true"
+      summary_fail_on_fixed_better:
+        description: Fail the summary step when fixed beats adaptive for the same client count.
+        required: true
+        default: "false"
 
 permissions:
   contents: read
@@ -104,6 +112,8 @@ env:
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.client_timeout_seconds || '900' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_rtt_p95_micros || '' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_client_p95_spread_micros || '' }}
+  KTP_TUNNEL_MATRIX_SUMMARY_REQUIRE_PASS: ${{ github.event_name == 'workflow_dispatch' && inputs.summary_require_pass || 'true' }}
+  KTP_TUNNEL_MATRIX_SUMMARY_FAIL_ON_FIXED_BETTER: ${{ github.event_name == 'workflow_dispatch' && inputs.summary_fail_on_fixed_better || 'false' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work
 
@@ -158,10 +168,18 @@ jobs:
       - name: Summarize tunnel matrix report
         if: always()
         run: |
+          set -o pipefail
           summary="tunnel-matrix-logs/matrix-summary.tsv"
           report="tunnel-matrix-logs/matrix-summary.report.txt"
           if [[ -f "${summary}" ]]; then
-            cargo run --locked --bin ktp-tunnel-matrix-summary -- "${summary}" | tee "${report}"
+            summary_args=()
+            if [[ "${KTP_TUNNEL_MATRIX_SUMMARY_REQUIRE_PASS}" == "true" ]]; then
+              summary_args+=(--require-pass)
+            fi
+            if [[ "${KTP_TUNNEL_MATRIX_SUMMARY_FAIL_ON_FIXED_BETTER}" == "true" ]]; then
+              summary_args+=(--fail-on-fixed-better)
+            fi
+            cargo run --locked --bin ktp-tunnel-matrix-summary -- "${summary_args[@]}" "${summary}" | tee "${report}"
           else
             mkdir -p "$(dirname "${report}")"
             echo "matrix-summary.tsv was not generated." | tee "${report}"

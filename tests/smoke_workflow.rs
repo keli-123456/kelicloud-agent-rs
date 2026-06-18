@@ -122,6 +122,8 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("client_timeout_seconds:"));
     assert!(workflow.contains("max_rtt_p95_micros:"));
     assert!(workflow.contains("max_client_p95_spread_micros:"));
+    assert!(workflow.contains("summary_require_pass:"));
+    assert!(workflow.contains("summary_fail_on_fixed_better:"));
     assert!(workflow.contains("default: \"1 2 4 8\""));
     assert!(workflow.contains("default: \"fixed adaptive\""));
     assert!(workflow.contains("default: \"8\""));
@@ -131,6 +133,8 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("default: \"250000\""));
     assert!(workflow.contains("default: \"16\""));
     assert!(workflow.contains("default: \"2\""));
+    assert!(workflow.contains("default: \"true\""));
+    assert!(workflow.contains("default: \"false\""));
     assert!(workflow.contains("default: \"\""));
     assert!(workflow.contains("mysql:8.4"));
     assert!(workflow.contains("KOMARI_DB_HOST: 127.0.0.1"));
@@ -182,11 +186,22 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains(
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_client_p95_spread_micros || '' }}"
     ));
+    assert!(workflow.contains(
+        "KTP_TUNNEL_MATRIX_SUMMARY_REQUIRE_PASS: ${{ github.event_name == 'workflow_dispatch' && inputs.summary_require_pass || 'true' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_TUNNEL_MATRIX_SUMMARY_FAIL_ON_FIXED_BETTER: ${{ github.event_name == 'workflow_dispatch' && inputs.summary_fail_on_fixed_better || 'false' }}"
+    ));
     assert!(workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs"));
     assert!(workflow
         .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work"));
     assert!(workflow.contains("bash scripts/ktp-local-backend-tunnel-matrix.sh"));
     assert!(workflow.contains("ktp-tunnel-matrix-summary"));
+    assert!(workflow.contains("set -o pipefail"));
+    assert!(workflow.contains("summary_args=()"));
+    assert!(workflow.contains("summary_args+=(--require-pass)"));
+    assert!(workflow.contains("summary_args+=(--fail-on-fixed-better)"));
+    assert!(workflow.contains("cargo run --locked --bin ktp-tunnel-matrix-summary -- \"${summary_args[@]}\" \"${summary}\" | tee \"${report}\""));
     assert!(workflow.contains("matrix-summary.report.txt"));
     assert!(workflow.contains("KTP tunnel matrix summary"));
     assert!(workflow.contains("matrix-summary.tsv"));
