@@ -156,6 +156,47 @@ fn ktp_tunnel_matrix_workflow_path() -> PathBuf {
 }
 
 #[test]
+fn ktp_microbench_matrix_workflow_publishes_codec_and_carrier_csv() {
+    let workflow = std::fs::read_to_string(ktp_microbench_matrix_workflow_path()).unwrap();
+
+    assert!(workflow.contains("name: KTP Microbench Matrix"));
+    assert!(workflow.contains("push:"));
+    assert!(workflow.contains("branches:"));
+    assert!(workflow.contains("- main"));
+    assert!(workflow.contains("paths:"));
+    assert!(workflow.contains("- .github/workflows/ktp-microbench-matrix.yml"));
+    assert!(workflow.contains("- src/ktp.rs"));
+    assert!(workflow.contains("- src/ktp_transport.rs"));
+    assert!(workflow.contains("- src/bin/ktp-codec-bench.rs"));
+    assert!(workflow.contains("- src/bin/ktp-tunnel-bench.rs"));
+    assert!(workflow.contains("- scripts/ktp-codec-matrix.sh"));
+    assert!(workflow.contains("- scripts/ktp-carrier-matrix.sh"));
+    assert!(workflow.contains("workflow_dispatch:"));
+    assert!(workflow.contains("codec_frames:"));
+    assert!(workflow.contains("carrier_frames:"));
+    assert!(workflow.contains("payload_bytes:"));
+    assert!(workflow.contains("runs:"));
+    assert!(workflow.contains("KTP_CODEC_MATRIX_CSV: microbench-logs/ktp-codec-matrix.csv"));
+    assert!(workflow.contains("KTP_CARRIER_MATRIX_CSV: microbench-logs/ktp-carrier-matrix.csv"));
+    assert!(workflow.contains("bash scripts/ktp-codec-matrix.sh"));
+    assert!(workflow.contains("bash scripts/ktp-carrier-matrix.sh"));
+    assert!(workflow.contains("KTP microbench matrix summary"));
+    assert!(workflow.contains("ktp-codec-matrix.csv"));
+    assert!(workflow.contains("ktp-carrier-matrix.csv"));
+    assert!(workflow.contains("GITHUB_STEP_SUMMARY"));
+    assert!(workflow.contains("actions/upload-artifact@v4"));
+    assert!(workflow.contains("kelicloud-agent-rs-ktp-microbench-matrix"));
+    assert!(workflow.contains("microbench-logs/**/*"));
+}
+
+fn ktp_microbench_matrix_workflow_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".github")
+        .join("workflows")
+        .join("ktp-microbench-matrix.yml")
+}
+
+#[test]
 fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     let workflow = std::fs::read_to_string(real_host_canary_workflow_path()).unwrap();
 

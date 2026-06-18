@@ -211,6 +211,12 @@ ordinary live canaries tolerant of low traffic, while a dedicated performance
 canary can fail unless at least one socket batch read contains multiple KTP
 frames.
 
+GitHub Actions also has a `KTP Microbench Matrix` workflow. Pushes that touch
+KTP codec/carrier code or their matrix scripts run a light release-mode sample
+and upload `ktp-codec-matrix.csv` plus `ktp-carrier-matrix.csv` as an artifact.
+Use the workflow's manual inputs to raise `runs`, frame counts, or payload sizes
+when collecting fuller release evidence.
+
 Local backend KTP smoke:
 
 ```bash

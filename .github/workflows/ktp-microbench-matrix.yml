@@ -1,0 +1,111 @@
+name: KTP Microbench Matrix
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/ktp-microbench-matrix.yml
+      - src/ktp.rs
+      - src/ktp_transport.rs
+      - src/bin/ktp-codec-bench.rs
+      - src/bin/ktp-tunnel-bench.rs
+      - scripts/ktp-codec-matrix.sh
+      - scripts/ktp-carrier-matrix.sh
+      - tests/ktp_codec_bench_cli.rs
+      - tests/ktp_codec_matrix_script.rs
+      - tests/ktp_bench_cli.rs
+      - tests/ktp_carrier_matrix_script.rs
+  workflow_dispatch:
+    inputs:
+      codec_frames:
+        description: Space-separated codec frame counts to run.
+        required: true
+        default: "512 4096"
+      carrier_frames:
+        description: Space-separated carrier frame counts to run.
+        required: true
+        default: "512 4096"
+      payload_bytes:
+        description: Space-separated payload byte sizes for both matrices.
+        required: true
+        default: "1024 4096 16384"
+      runs:
+        description: Repeated runs per matrix row.
+        required: true
+        default: "3"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ktp-microbench-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  KTP_CODEC_MATRIX_RUNS: ${{ github.event_name == 'workflow_dispatch' && inputs.runs || '1' }}
+  KTP_CODEC_MATRIX_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.codec_frames || '256' }}
+  KTP_CODEC_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.payload_bytes || '1024' }}
+  KTP_CODEC_MATRIX_CHUNK_FRAMES: "64"
+  KTP_CODEC_MATRIX_CSV: microbench-logs/ktp-codec-matrix.csv
+  KTP_CARRIER_MATRIX_RUNS: ${{ github.event_name == 'workflow_dispatch' && inputs.runs || '1' }}
+  KTP_CARRIER_MATRIX_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.carrier_frames || '256' }}
+  KTP_CARRIER_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.payload_bytes || '1024' }}
+  KTP_CARRIER_MATRIX_CSV: microbench-logs/ktp-carrier-matrix.csv
+
+jobs:
+  linux:
+    name: Linux KTP Microbench Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Build microbench binaries
+        run: cargo build --locked --release --bin ktp-codec-bench --bin ktp-tunnel-bench
+
+      - name: Prepare log directory
+        run: mkdir -p microbench-logs
+
+      - name: Run KTP codec matrix
+        run: bash scripts/ktp-codec-matrix.sh
+
+      - name: Run KTP carrier matrix
+        run: bash scripts/ktp-carrier-matrix.sh
+
+      - name: Publish KTP microbench matrix summary
+        if: always()
+        run: |
+          {
+            echo "## KTP microbench matrix summary"
+            echo
+            for csv in ktp-codec-matrix.csv ktp-carrier-matrix.csv; do
+              path="microbench-logs/${csv}"
+              echo "### ${csv}"
+              echo
+              if [[ -f "${path}" ]]; then
+                echo '```csv'
+                cat "${path}"
+                echo '```'
+              else
+                echo "${csv} was not generated."
+              fi
+              echo
+            done
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload KTP microbench matrix logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kelicloud-agent-rs-ktp-microbench-matrix
+          path: microbench-logs/**/*
+          if-no-files-found: ignore
