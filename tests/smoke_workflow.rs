@@ -211,6 +211,11 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("summary_args=()"));
     assert!(workflow.contains("summary_args+=(--require-pass)"));
     assert!(workflow.contains("summary_args+=(--fail-on-fixed-better)"));
+    assert!(workflow
+        .contains("summary_args+=(--max-rtt-p95-micros \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}\")"));
+    assert!(workflow.contains(
+        "summary_args+=(--max-client-p95-spread-micros \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}\")"
+    ));
     assert!(workflow.contains("cargo run --locked --bin ktp-tunnel-matrix-summary -- \"${summary_args[@]}\" \"${summary}\" | tee \"${report}\""));
     assert!(workflow.contains("matrix-summary.report.txt"));
     assert!(workflow.contains("KTP tunnel matrix summary"));

@@ -125,6 +125,42 @@ adaptive	4	8	rdp-like	8192	pass	500	logs/adaptive/clients-4	logs/adaptive/client
 }
 
 #[test]
+fn ktp_tunnel_matrix_summary_threshold_gates_reject_latency_and_spread_regressions() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-threshold-gates",
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	1	8	rdp-like	8192	pass	123	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	9920	100	700	800	900	0	3	40	2
+adaptive	4	8	rdp-like	8192	pass	456	logs/adaptive/clients-4	logs/adaptive/clients-4/tunnel-echo.evidence.md	logs/adaptive/clients-4/ktp-live-canary.evidence.md	39680	500	600	700	800	90	12	224	11
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--max-rtt-p95-micros")
+        .arg("650")
+        .arg("--max-client-p95-spread-micros")
+        .arg("80")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "threshold gates should exit 3: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("ktp_tunnel_matrix_summary rows=2 pass=2 fail=0 timeout=0 status=pass"));
+    assert!(stderr
+        .contains("tunnel matrix row policy=fixed clients=1 rtt_micros_p95=700 exceeds max 650"));
+    assert!(stderr.contains(
+        "tunnel matrix row policy=adaptive clients=4 rtt_client_p95_spread_micros=90 exceeds max 80"
+    ));
+}
+
+#[test]
 fn ktp_tunnel_matrix_summary_rejects_missing_required_columns() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-missing-column",

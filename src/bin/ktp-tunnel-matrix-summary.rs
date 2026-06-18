@@ -30,6 +30,12 @@ struct MatrixReport {
     gate_failures: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct GateConfig {
+    max_rtt_p95_micros: Option<u64>,
+    max_client_p95_spread_micros: Option<u64>,
+}
+
 fn main() {
     match run(std::env::args().skip(1)) {
         Ok(report) => {
@@ -52,11 +58,25 @@ fn main() {
 fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
     let mut require_pass = false;
     let mut fail_on_fixed_better = false;
+    let mut gate_config = GateConfig::default();
     let mut path = None::<String>;
-    for arg in args {
+    let mut args = args;
+
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--require-pass" => require_pass = true,
             "--fail-on-fixed-better" => fail_on_fixed_better = true,
+            "--max-rtt-p95-micros" => {
+                gate_config.max_rtt_p95_micros =
+                    Some(next_u64_arg(&mut args, "--max-rtt-p95-micros", false)?);
+            }
+            "--max-client-p95-spread-micros" => {
+                gate_config.max_client_p95_spread_micros = Some(next_u64_arg(
+                    &mut args,
+                    "--max-client-p95-spread-micros",
+                    true,
+                )?);
+            }
             _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("unexpected extra argument".into()),
@@ -65,13 +85,34 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
 
     let path = path.ok_or("matrix-summary.tsv path is required")?;
     let content = fs::read_to_string(&path)?;
-    summarize_tsv(&content, require_pass, fail_on_fixed_better)
+    summarize_tsv(&content, require_pass, fail_on_fixed_better, gate_config)
+}
+
+fn next_u64_arg(
+    args: &mut impl Iterator<Item = String>,
+    flag: &str,
+    allow_zero: bool,
+) -> SummaryResult<u64> {
+    let value = args
+        .next()
+        .ok_or_else(|| format!("{flag} requires a value"))?;
+    if value.trim().is_empty() {
+        return Err(format!("{flag} requires a non-empty value").into());
+    }
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|error| format!("{flag} invalid integer '{value}': {error}"))?;
+    if !allow_zero && parsed == 0 {
+        return Err(format!("{flag} must be greater than 0").into());
+    }
+    Ok(parsed)
 }
 
 fn summarize_tsv(
     content: &str,
     require_pass: bool,
     fail_on_fixed_better: bool,
+    gate_config: GateConfig,
 ) -> SummaryResult<MatrixReport> {
     let mut lines = content.lines().filter(|line| !line.trim().is_empty());
     let header = lines.next().ok_or("matrix summary is empty")?;
@@ -158,6 +199,20 @@ fn summarize_tsv(
         ));
 
         if row.status == "pass" {
+            record_max_gate_failure(
+                &mut gate_failures,
+                row,
+                "rtt_micros_p95",
+                row.rtt_micros_p95,
+                gate_config.max_rtt_p95_micros,
+            );
+            record_max_gate_failure(
+                &mut gate_failures,
+                row,
+                "rtt_client_p95_spread_micros",
+                row.client_p95_spread_micros,
+                gate_config.max_client_p95_spread_micros,
+            );
             max_rtt.record(&row.relay_batch_policy, &row.clients, row.rtt_micros_p95);
             max_spread.record(
                 &row.relay_batch_policy,
@@ -257,6 +312,29 @@ fn summarize_tsv(
         output,
         gate_failures,
     })
+}
+
+fn record_max_gate_failure(
+    gate_failures: &mut Vec<String>,
+    row: &MatrixRow,
+    metric_name: &str,
+    value: Option<u64>,
+    max: Option<u64>,
+) {
+    let Some(max) = max else {
+        return;
+    };
+    match value {
+        Some(value) if value > max => gate_failures.push(format!(
+            "tunnel matrix row policy={} clients={} {metric_name}={value} exceeds max {max}",
+            row.relay_batch_policy, row.clients
+        )),
+        None => gate_failures.push(format!(
+            "tunnel matrix row policy={} clients={} {metric_name} missing for max {max}",
+            row.relay_batch_policy, row.clients
+        )),
+        _ => {}
+    }
 }
 
 fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> SummaryResult<MatrixRow> {
@@ -662,6 +740,6 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 
 fn print_usage() {
     eprintln!(
-        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] <matrix-summary.tsv>"
+        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] <matrix-summary.tsv>"
     );
 }

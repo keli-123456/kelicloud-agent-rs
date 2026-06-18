@@ -189,6 +189,12 @@ jobs:
             if [[ "${KTP_TUNNEL_MATRIX_SUMMARY_FAIL_ON_FIXED_BETTER}" == "true" ]]; then
               summary_args+=(--fail-on-fixed-better)
             fi
+            if [[ -n "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}" ]]; then
+              summary_args+=(--max-rtt-p95-micros "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}")
+            fi
+            if [[ -n "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}" ]]; then
+              summary_args+=(--max-client-p95-spread-micros "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}")
+            fi
             cargo run --locked --bin ktp-tunnel-matrix-summary -- "${summary_args[@]}" "${summary}" | tee "${report}"
           else
             mkdir -p "$(dirname "${report}")"
