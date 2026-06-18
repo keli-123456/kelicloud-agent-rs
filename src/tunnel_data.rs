@@ -158,6 +158,9 @@ struct TunnelDataDiagnosticsInner {
     outbound_queue_dwell_p99_micros: AtomicU64,
     socket_idle_reads: AtomicU64,
     socket_idle_empty_reads: AtomicU64,
+    socket_read_batches: AtomicU64,
+    socket_read_frames: AtomicU64,
+    socket_read_max_batch_frames: AtomicU64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -178,6 +181,9 @@ pub struct TunnelDataDiagnosticsSnapshot {
     pub outbound_queue_dwell_p99_micros: u64,
     pub socket_idle_reads: u64,
     pub socket_idle_empty_reads: u64,
+    pub socket_read_batches: u64,
+    pub socket_read_frames: u64,
+    pub socket_read_max_batch_frames: u64,
 }
 
 impl SharedTunnelDataDiagnostics {
@@ -250,6 +256,12 @@ impl SharedTunnelDataDiagnostics {
                 .load(Ordering::Relaxed),
             socket_idle_reads: self.inner.socket_idle_reads.load(Ordering::Relaxed),
             socket_idle_empty_reads: self.inner.socket_idle_empty_reads.load(Ordering::Relaxed),
+            socket_read_batches: self.inner.socket_read_batches.load(Ordering::Relaxed),
+            socket_read_frames: self.inner.socket_read_frames.load(Ordering::Relaxed),
+            socket_read_max_batch_frames: self
+                .inner
+                .socket_read_max_batch_frames
+                .load(Ordering::Relaxed),
         }
     }
 
@@ -312,6 +324,19 @@ impl SharedTunnelDataDiagnostics {
             .socket_idle_empty_reads
             .fetch_add(1, Ordering::Relaxed);
     }
+
+    fn record_socket_read_batch(&self, frame_count: usize) {
+        if frame_count == 0 {
+            return;
+        }
+        self.inner
+            .socket_read_batches
+            .fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .socket_read_frames
+            .fetch_add(frame_count as u64, Ordering::Relaxed);
+        update_atomic_max(&self.inner.socket_read_max_batch_frames, frame_count as u64);
+    }
 }
 
 impl TunnelDataDiagnosticsSnapshot {
@@ -322,12 +347,14 @@ impl TunnelDataDiagnosticsSnapshot {
             || self.outbound_queue_dwell_frames > 0
             || self.socket_idle_reads > 0
             || self.socket_idle_empty_reads > 0
+            || self.socket_read_batches > 0
+            || self.socket_read_frames > 0
     }
 }
 
 pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) -> String {
     format!(
-        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={}",
+        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={} socket_read_batches={} socket_read_frames={} socket_read_max_batch_frames={}",
         snapshot.runtime_wait_attempts,
         snapshot.runtime_wait_hits,
         snapshot.runtime_wait_elapsed_micros_total,
@@ -343,7 +370,10 @@ pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) ->
         snapshot.outbound_queue_dwell_p95_micros,
         snapshot.outbound_queue_dwell_p99_micros,
         snapshot.socket_idle_reads,
-        snapshot.socket_idle_empty_reads
+        snapshot.socket_idle_empty_reads,
+        snapshot.socket_read_batches,
+        snapshot.socket_read_frames,
+        snapshot.socket_read_max_batch_frames
     )
 }
 
@@ -1045,7 +1075,10 @@ where
             None => socket.read_optional_ktp_frame_batch(TUNNEL_DATA_FRAME_BATCH_LIMIT),
         };
         match read_result {
-            Ok(Some(frames)) => handle_tunnel_data_session_frames(&mut socket, frames, runtime)?,
+            Ok(Some(frames)) => {
+                diagnostics.record_socket_read_batch(frames.len());
+                handle_tunnel_data_session_frames(&mut socket, frames, runtime)?
+            }
             Ok(None) => {
                 diagnostics.record_socket_idle_empty_read();
                 continue;

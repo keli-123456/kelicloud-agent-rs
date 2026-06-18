@@ -14,6 +14,9 @@ fn ktp_live_canary_script_collects_tunnel_data_diagnostics() {
     assert!(script.contains("outbound_queue_dwell_p50_micros"));
     assert!(script.contains("outbound_queue_dwell_p95_micros"));
     assert!(script.contains("outbound_queue_dwell_p99_micros"));
+    assert!(script.contains("socket_read_batches"));
+    assert!(script.contains("socket_read_frames"));
+    assert!(script.contains("socket_read_max_batch_frames"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
 }
 
@@ -42,7 +45,7 @@ fn ktp_live_canary_script_accepts_sample_log_file() {
     let evidence_file = temp_dir.join("ktp-live-canary.evidence.md");
     std::fs::write(
         &log_file,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1\n",
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7\n",
     )
     .expect("sample log should be written");
 

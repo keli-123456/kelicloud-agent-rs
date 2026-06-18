@@ -22,8 +22,9 @@ Options:
   --min-lines N             minimum tunnel data diagnostics lines, default: 1
   -h, --help                show this help
 
-The script validates that live KTP tunnel data diagnostics include runtime wait
-and outbound queue dwell percentile fields, then writes a small evidence file.
+The script validates that live KTP tunnel data diagnostics include runtime wait,
+outbound queue dwell, and socket batch-read fields, then writes a small evidence
+file.
 USAGE
 }
 
@@ -105,6 +106,9 @@ REQUIRED_FIELDS=(
     "outbound_queue_dwell_p50_micros"
     "outbound_queue_dwell_p95_micros"
     "outbound_queue_dwell_p99_micros"
+    "socket_read_batches"
+    "socket_read_frames"
+    "socket_read_max_batch_frames"
 )
 
 for field in "${REQUIRED_FIELDS[@]}"; do

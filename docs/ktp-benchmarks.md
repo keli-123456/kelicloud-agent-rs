@@ -169,8 +169,9 @@ scripts/ktp-live-canary-evidence.sh \
 During a real KTP canary window, run the helper after sending tunnel traffic.
 It reads `journalctl` by default, or `--log-file <path>` for captured agent
 logs, and verifies that `tunnel data diagnostics` lines include runtime wait
-and outbound queue dwell percentile fields. Treat the generated Markdown file
-as the live-log companion to `ktp-e2e-bench --latency` output.
+and outbound queue dwell percentile fields, plus socket batch-read counters.
+Treat the generated Markdown file as the live-log companion to
+`ktp-e2e-bench --latency` output.
 
 Local backend KTP smoke:
 
@@ -826,6 +827,10 @@ Tunnel-data receive batch foundation:
 - KTP encrypted TCP streams enable `TCP_NODELAY` by default. That keeps
   interactive RDP-like payloads from waiting behind Nagle coalescing while the
   existing batched write path still coalesces intentional KTP frame batches.
+- Production tunnel-data diagnostics expose `socket_read_batches`,
+  `socket_read_frames`, and `socket_read_max_batch_frames`, so live KTP canary
+  logs can prove whether the socket batch-read path is active and how full its
+  reads are under real traffic.
 - The conservative `fixed|adaptive` relay batch policy is now shared by
   benchmark tooling and the production tunnel runtime. Production defaults stay
   `fixed`; `adaptive` is an explicit runtime-limit choice so it can be tested or

@@ -653,6 +653,41 @@ fn tunnel_data_session_reads_server_frames_in_batch_when_socket_supports_it() {
     assert_eq!(handled_ids, vec![181, 182]);
 }
 
+#[test]
+fn tunnel_data_session_records_socket_batch_read_diagnostics() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let handled = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = BatchReadOnlyTunnelDataTransport {
+        events: Rc::clone(&events),
+        batch_frames: vec![
+            session_data_frame(281, b"server-a"),
+            session_data_frame(282, b"server-b"),
+            session_data_frame(283, b"server-c"),
+        ],
+    };
+    let mut runtime = RecordingServerFrameRuntime {
+        handled: Rc::clone(&handled),
+    };
+    let diagnostics = SharedTunnelDataDiagnostics::new();
+
+    run_tunnel_data_session_with_ready_source_runtime_and_diagnostics(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-batch-read"),
+        &mut transport,
+        &mut runtime,
+        &diagnostics,
+    )
+    .expect("data session should record socket batch-read diagnostics");
+
+    let snapshot = diagnostics.snapshot();
+    assert_eq!(snapshot.socket_read_batches, 1);
+    assert_eq!(snapshot.socket_read_frames, 3);
+    assert_eq!(snapshot.socket_read_max_batch_frames, 3);
+}
+
 fn take_frames(frames: &mut VecDeque<KtpFrame>, max_frames: usize) -> Vec<KtpFrame> {
     let mut batch = Vec::new();
     for _ in 0..max_frames {
@@ -1625,6 +1660,9 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
         outbound_queue_dwell_p99_micros: 100,
         socket_idle_reads: 4,
         socket_idle_empty_reads: 1,
+        socket_read_batches: 2,
+        socket_read_frames: 9,
+        socket_read_max_batch_frames: 7,
     };
 
     let line = tunnel_data_diagnostics_line(&snapshot);
@@ -1632,7 +1670,7 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
     assert!(snapshot.has_activity());
     assert_eq!(
         line,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1"
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7"
     );
     assert!(!line.contains("token"));
 }
