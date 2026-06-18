@@ -338,6 +338,96 @@ Notes:
 - The RDP-like sample uses the runtime ingress-to-egress benchmark path. Real
   backend tunnel smoke remains the stronger end-to-end compatibility signal.
 
+## 2026-06-18 Release Host Tunnel Matrix Gate Sample
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Agent commit: `f369e84`
+- Backend ref: `main`
+- Remote evidence checkout:
+  `/root/kelicloud-agent-rs-tunnel-matrix-f369e84-20260618101841`
+- Remote backend checkout:
+  `/root/kelicloud-backend-tunnel-matrix-f369e84-20260618101841`
+- Build mode:
+  `cargo build --locked --release --bin ktp-tunnel-matrix-summary --bin kelicloud-agent-rs`
+
+Host:
+
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- CPU: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+- CPU cores: 4
+- Memory: 3.8 GiB
+- Rust: `cargo 1.95.0`
+- Go: `go1.24.11`
+- Database: MariaDB `10.11.14`
+
+Command shape:
+
+```bash
+export PATH="/usr/local/go1.24.11/bin:/root/.cargo/bin:$PATH"
+export KELICLOUD_PREPARE_FRONTEND=false
+export KELICLOUD_BACKEND_PATH=/root/kelicloud-backend-tunnel-matrix-f369e84-20260618101841
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="fixed adaptive"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=4
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=4096
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES=2
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES=2
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR=evidence/tunnel-matrix-logs
+
+bash scripts/ktp-local-backend-tunnel-matrix.sh
+
+./target/release/ktp-tunnel-matrix-summary \
+  --require-pass \
+  --expect-policies "fixed adaptive" \
+  --expect-clients "1 2" \
+  evidence/tunnel-matrix-logs/matrix-summary.tsv
+```
+
+Matrix summary:
+
+```text
+ktp_tunnel_matrix_summary rows=4 pass=4 fail=0 timeout=0 status=pass
+expected_matrix policies=fixed,adaptive clients=1,2 status=pass missing=0
+max_rtt_micros_p95=14623 policy=fixed clients=1
+max_rtt_client_p95_spread_micros=6371 policy=fixed clients=2
+max_socket_read_max_batch_frames=6 policy=adaptive clients=2
+max_socket_write_max_batch_frames=4 policy=fixed clients=2
+```
+
+Tunnel matrix rows:
+
+| Policy | Clients | Status | Elapsed | RTT p95 | Client p95 Spread | Read Max Batch | Write Max Batch |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| fixed | 1 | pass | 119126 ms | 14623 us | 0 us | 2 | 2 |
+| fixed | 2 | pass | 58187 ms | 14042 us | 6371 us | 5 | 4 |
+| adaptive | 1 | pass | 54322 ms | 14512 us | 0 us | 2 | 2 |
+| adaptive | 2 | pass | 53936 ms | 14360 us | 302 us | 6 | 4 |
+
+Policy comparison:
+
+| Clients | Verdict | Recommendation | Notes |
+| ---: | --- | --- | --- |
+| 1 | adaptive_better | adaptive | Adaptive was faster on elapsed time and slightly lower on RTT p95. |
+| 2 | mixed | manual_review | Adaptive improved spread but had a slightly higher RTT p95. |
+
+Notes:
+
+- This matrix runs the real local backend smoke for every row, including admin
+  login, auto-discovery token rotation, exec, ping, terminal, CN connectivity,
+  KTP TCP tunnel setup, tunnel echo, and live KTP diagnostics collection.
+- `KELICLOUD_PREPARE_FRONTEND=false` now creates a minimal backend frontend
+  placeholder when needed, so release-host data-plane evidence can run on
+  machines with Go and Rust but no Node installation.
+- The `throughput_mib_s` values in this report are not used as performance
+  claims because this smoke spends most elapsed time starting backend/agent
+  control-plane components and sends only 544 or 1088 bytes of tunnel payload.
+  Use RTT and socket batch evidence for this real-backend gate; use carrier and
+  e2e benches for raw data-plane throughput.
+
 ## 2026-06-18 Release Host Latency Sample
 
 Code:
