@@ -67,8 +67,10 @@ Supported flags:
   tunnel forwarding rules. The installer exposes this as `--enable-tunnel-data`.
 - `--tunnel-ktp-relay-batch-policy <fixed|adaptive>` or
   `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY` selects the KTP TCP runtime relay batch
-  policy. The default is `fixed`; `adaptive` is an explicit tuning option for
-  high-concurrency KTP canaries.
+  policy. The runtime default is `fixed`, while the Linux installer writes
+  `adaptive` automatically when `--enable-tunnel-data` is used. Adaptive keeps
+  low-concurrency drains large, caps high-concurrency drains, and tightens the
+  cap further when outbound queue dwell p95 rises.
 
 ## Linux Install
 
@@ -86,8 +88,7 @@ You can also install with an explicit client token:
 sudo ./install.sh install \
   --endpoint https://panel.example.com \
   --token TOKEN \
-  --enable-tunnel-data \
-  --tunnel-ktp-relay-batch-policy adaptive
+  --enable-tunnel-data
 ```
 
 The same options can use the shorter panel aliases:

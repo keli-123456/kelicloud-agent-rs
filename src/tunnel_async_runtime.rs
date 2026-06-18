@@ -51,9 +51,28 @@ impl TunnelRelayBatchPolicy {
         configured_batch_frames: usize,
         active_sessions: usize,
     ) -> usize {
+        self.effective_batch_frames_with_dwell(
+            configured_batch_frames,
+            active_sessions,
+            TunnelQueueDwellStatsSnapshot::default(),
+        )
+    }
+
+    pub fn effective_batch_frames_with_dwell(
+        self,
+        configured_batch_frames: usize,
+        active_sessions: usize,
+        outbound_queue_dwell: TunnelQueueDwellStatsSnapshot,
+    ) -> usize {
         let configured_batch_frames = configured_batch_frames.max(1);
         match self {
             Self::Fixed => configured_batch_frames,
+            Self::Adaptive if outbound_queue_dwell.p95_micros >= 250_000 => {
+                configured_batch_frames.min(8)
+            }
+            Self::Adaptive if outbound_queue_dwell.p95_micros >= 50_000 => {
+                configured_batch_frames.min(16)
+            }
             Self::Adaptive if active_sessions >= 8 => configured_batch_frames.min(16),
             Self::Adaptive => configured_batch_frames,
         }
@@ -775,10 +794,14 @@ impl AsyncTunnelCore {
     }
 
     pub fn effective_outbound_batch_frames(&self, configured_batch_frames: usize) -> usize {
-        self.limits.relay_batch_policy.effective_batch_frames(
-            configured_batch_frames,
-            self.stats_snapshot().active_sessions,
-        )
+        let stats = self.stats_snapshot();
+        self.limits
+            .relay_batch_policy
+            .effective_batch_frames_with_dwell(
+                configured_batch_frames,
+                stats.active_sessions,
+                stats.outbound_queue_dwell,
+            )
     }
 
     pub async fn close_session(

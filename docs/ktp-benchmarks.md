@@ -904,12 +904,18 @@ Tunnel-data receive batch foundation:
   logs can prove whether the socket batch-read path is active and how full its
   reads are under real traffic.
 - The conservative `fixed|adaptive` relay batch policy is now shared by
-  benchmark tooling and the production tunnel runtime. Production defaults stay
-  `fixed`; `adaptive` is an explicit runtime-limit choice so it can be tested or
-  rolled back without changing the KTP frame format, backend schema, or default
-  WebSocket behavior. Operators can opt into it with
-  `--tunnel-ktp-relay-batch-policy adaptive` or
-  `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=adaptive`.
+  benchmark tooling and the production tunnel runtime. The runtime default stays
+  `fixed`; the Linux installer writes `adaptive` automatically when
+  `--enable-tunnel-data` is used, and explicit
+  `--tunnel-ktp-relay-batch-policy fixed|adaptive` or
+  `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=fixed|adaptive` remains the rollback
+  lever. This changes neither the KTP frame format, backend schema, nor default
+  WebSocket behavior.
+- Adaptive now uses both active session count and observed outbound queue dwell:
+  it keeps the configured batch at low concurrency, caps to 16 frames when
+  active sessions reach 8 or queue dwell p95 reaches 50 ms, and caps to 8 frames
+  when queue dwell p95 reaches 250 ms. This gives the data plane a local
+  backpressure response before queues reach the overflow dwell bucket.
 
 Linux debug smoke sample:
 

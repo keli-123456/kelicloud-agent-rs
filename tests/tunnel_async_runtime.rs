@@ -1,7 +1,7 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
 use kelicloud_agent_rs::tunnel_async_runtime::{
     AsyncTunnelCore, AsyncTunnelFrameQueue, TunnelFrameReadyNotifier, TunnelIngressListenerSpec,
-    TunnelRelayBatchPolicy, TunnelRuntimeLimits, TunnelRuntimeStats,
+    TunnelQueueDwellStatsSnapshot, TunnelRelayBatchPolicy, TunnelRuntimeLimits, TunnelRuntimeStats,
 };
 use kelicloud_agent_rs::tunnel_session::{
     decode_session_open_payload, encode_session_open_payload, TunnelSessionOpenPayload,
@@ -52,6 +52,39 @@ fn relay_batch_policy_keeps_default_fixed_and_caps_adaptive_only_at_high_concurr
     assert_eq!(
         TunnelRelayBatchPolicy::Adaptive.effective_batch_frames(8, 16),
         8
+    );
+}
+
+#[test]
+fn relay_batch_policy_adaptive_responds_to_queue_dwell_pressure() {
+    let elevated_dwell = TunnelQueueDwellStatsSnapshot {
+        frames: 100,
+        micros_total: 6_000_000,
+        micros_max: 90_000,
+        p50_micros: 25_000,
+        p95_micros: 60_000,
+        p99_micros: 90_000,
+    };
+    let severe_dwell = TunnelQueueDwellStatsSnapshot {
+        frames: 100,
+        micros_total: 30_000_000,
+        micros_max: 600_000,
+        p50_micros: 80_000,
+        p95_micros: 300_000,
+        p99_micros: 600_000,
+    };
+
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames_with_dwell(64, 4, elevated_dwell),
+        16
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames_with_dwell(64, 8, severe_dwell),
+        8
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Fixed.effective_batch_frames_with_dwell(64, 8, severe_dwell),
+        64
     );
 }
 
@@ -189,6 +222,54 @@ fn runtime_stats_snapshot_tracks_session_and_byte_counters() {
     assert_eq!(snapshot.bytes_in, 12);
     assert_eq!(snapshot.bytes_out, 34);
     assert_eq!(snapshot.rule_session_counts.get(&7).copied(), Some(0));
+}
+
+#[test]
+fn async_runtime_adaptive_batch_frames_use_observed_queue_dwell() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let listen_port = free_tcp_port();
+        let mut limits = TunnelRuntimeLimits::default();
+        limits.relay_batch_policy = TunnelRelayBatchPolicy::Adaptive;
+        let core = AsyncTunnelCore::new(limits);
+        core.start_ingress_listener(TunnelIngressListenerSpec {
+            rule_id: 91,
+            listen_address: "127.0.0.1".to_string(),
+            listen_port,
+            source_allowlist: String::new(),
+        })
+        .await
+        .expect("start ingress listener");
+
+        assert_eq!(core.effective_outbound_batch_frames(64), 64);
+
+        let _client = TokioTcpStream::connect(("127.0.0.1", listen_port))
+            .await
+            .expect("connect ingress client");
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let frames = core.next_frames(64).await;
+        let dwell = core.stats_snapshot().outbound_queue_dwell;
+
+        assert!(
+            !frames.is_empty(),
+            "ingress connect should queue open frame"
+        );
+        assert!(
+            dwell.p95_micros >= 50_000,
+            "test should observe queue dwell pressure: {dwell:?}"
+        );
+        assert_eq!(core.effective_outbound_batch_frames(64), 16);
+
+        core.stop_ingress_listener(91)
+            .await
+            .expect("stop ingress listener");
+    });
 }
 
 #[test]
