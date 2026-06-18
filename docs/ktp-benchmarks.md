@@ -227,9 +227,11 @@ The workflow also runs `ktp-carrier-matrix-summary --require-ktp-aead
 --require-batch-reuse --require-positive-throughput` and uploads
 `ktp-carrier-matrix.report.txt`, so the dedicated encrypted TCP carrier matrix
 must contain parseable AEAD rows, reusable batch-write and batch-read evidence,
-and positive median throughput for every required direction. Use the workflow's
-manual inputs to raise `runs`, frame counts, or payload sizes when collecting
-fuller release evidence.
+and positive median throughput for every matrix row in each required direction.
+The summary reports the minimum median throughput across all rows per direction,
+so a later high-throughput shape cannot hide a broken earlier shape. Use the
+workflow's manual inputs to raise `runs`, frame counts, or payload sizes when
+collecting fuller release evidence.
 
 Local backend KTP smoke:
 
@@ -241,6 +243,100 @@ This runs the regular local real-backend smoke with the backend KTP TCP relay
 enabled and the agent started with `--tunnel-ktp-tcp-address`. After the tunnel
 echo check succeeds, the script waits for live `tunnel data diagnostics` in the
 captured agent log and writes `smoke-logs/ktp-live-canary.evidence.md`.
+
+## 2026-06-18 Release Host Carrier Matrix Gate Sample
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Evidence commit: `b20693a`
+- Remote evidence checkout:
+  `/root/kelicloud-agent-rs-evidence-b20693a-20260618091847`
+- Carrier binary: `ktp-tunnel-bench`
+- Carrier summary binary: `ktp-carrier-matrix-summary`
+- End-to-end binary: `ktp-e2e-bench`
+- Build mode:
+  `cargo build --locked --release --bin ktp-tunnel-bench --bin ktp-carrier-matrix-summary --bin ktp-e2e-bench`
+
+Host:
+
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- CPU: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+- CPU cores: 4
+- Memory: 3.8 GiB
+- Rust: `rustc 1.95.0`
+
+Carrier matrix command shape:
+
+```bash
+KTP_CARRIER_MATRIX_DIRECTIONS="client-to-relay client-to-relay-batch-write relay-to-client-batch-read" \
+KTP_CARRIER_MATRIX_RUNS=3 \
+KTP_CARRIER_MATRIX_FRAMES="512 4096" \
+KTP_CARRIER_MATRIX_PAYLOAD_BYTES="1024 4096 16384" \
+KTP_CARRIER_MATRIX_CSV="evidence/ktp-carrier-matrix.csv" \
+  bash scripts/ktp-carrier-matrix.sh
+
+./target/release/ktp-carrier-matrix-summary \
+  --require-ktp-aead \
+  --require-batch-reuse \
+  --require-positive-throughput \
+  evidence/ktp-carrier-matrix.csv
+```
+
+Corrected carrier summary:
+
+```text
+ktp_carrier_matrix_summary rows=18 gate=pass
+client_to_relay_throughput_mib_s_median=48.919
+batch_write_throughput_mib_s_median=144.061
+batch_read_throughput_mib_s_median=148.809
+client_to_relay_min_throughput_mib_s_median=48.919
+batch_write_min_throughput_mib_s_median=144.061
+batch_read_min_throughput_mib_s_median=148.809
+```
+
+Selected carrier matrix rows:
+
+| Direction | Frames | Payload | Batch Evidence | Median Throughput |
+| --- | ---: | ---: | --- | ---: |
+| client_to_relay | 512 | 1024 B | - | 48.919 MiB/s |
+| client_to_relay | 4096 | 16384 B | - | 344.037 MiB/s |
+| client_to_relay_batch_write | 512 | 1024 B | write_batch_reused=1 | 144.061 MiB/s |
+| client_to_relay_batch_write | 4096 | 16384 B | write_batch_reused=1 | 312.848 MiB/s |
+| relay_to_client_batch_read | 512 | 1024 B | read_batch_reused=1 | 168.041 MiB/s |
+| relay_to_client_batch_read | 4096 | 16384 B | read_batch_reused=1 | 370.004 MiB/s |
+
+RDP-like e2e command:
+
+```bash
+./target/release/ktp-e2e-bench \
+  --profile rdp-like \
+  --diagnostics \
+  --latency \
+  --relay-wait-timeout-us 100 \
+  --runs 3 \
+  --clients 4 \
+  --frames 64 \
+  --payload-bytes 8192
+```
+
+RDP-like e2e sample:
+
+| Runs | Clients | Frames / Client | Max Payload | Bytes / Run | Elapsed Median | Throughput Median | RTT p50 | RTT p95 | RTT p99 | RTT Max | Client p95 Spread |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 4 | 64 | 8192 B | 247296 | 20.628 ms | 11.433 MiB/s | 241 us | 682 us | 1143 us | 1709 us | 81 us |
+
+Notes:
+
+- The corrected carrier summary gate checks all 18 matrix rows. Earlier summary
+  output grouped by direction and could be fooled by a later passing row with
+  the same direction.
+- These figures are release-host engineering baselines for the first KTP
+  performance floor, not production capacity promises.
+- The RDP-like sample uses the runtime ingress-to-egress benchmark path. Real
+  backend tunnel smoke remains the stronger end-to-end compatibility signal.
 
 ## 2026-06-18 Release Host Latency Sample
 

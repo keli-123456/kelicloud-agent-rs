@@ -70,6 +70,8 @@ struct CarrierRow {
     carrier: String,
     crypto: String,
     direction: String,
+    frames: u64,
+    payload_bytes: u64,
     write_batch_frames: u64,
     write_batch_reused: u64,
     read_batch_frames: u64,
@@ -115,78 +117,78 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<SummaryReport> {
 
 fn summarize_csv(content: &str, options: SummaryOptions) -> SummaryResult<SummaryReport> {
     let rows = parse_rows(content)?;
-    let mut by_direction = HashMap::<String, CarrierRow>::new();
-    for row in rows {
-        by_direction.insert(row.direction.clone(), row);
-    }
-
     let mut failures = Vec::<String>::new();
-    let client_to_relay = required_row(&by_direction, DIRECTION_CLIENT_TO_RELAY, &mut failures);
-    let batch_write = required_row(&by_direction, DIRECTION_BATCH_WRITE, &mut failures);
-    let batch_read = required_row(&by_direction, DIRECTION_BATCH_READ, &mut failures);
+    let client_to_relay = required_rows(&rows, DIRECTION_CLIENT_TO_RELAY, &mut failures);
+    let batch_write = required_rows(&rows, DIRECTION_BATCH_WRITE, &mut failures);
+    let batch_read = required_rows(&rows, DIRECTION_BATCH_READ, &mut failures);
 
-    if let Some(rows) = all_required_rows(client_to_relay, batch_write, batch_read) {
-        if options.require_ktp_aead {
-            for row in rows {
-                if row.carrier != "ktp_tcp" || row.crypto != "ktp_aead" {
-                    failures.push(format!(
-                        "{} expected carrier=ktp_tcp crypto=ktp_aead, got carrier={} crypto={}",
-                        row.direction, row.carrier, row.crypto
-                    ));
-                }
-            }
-        }
-
-        if options.require_positive_throughput {
-            for row in rows {
-                if row.throughput_mib_s_median <= 0.0 {
-                    failures.push(format!(
-                        "{} throughput_mib_s_median must be positive",
-                        row.direction
-                    ));
-                }
-            }
-        }
-    }
-
-    if let Some(row) = batch_write {
-        if options.require_batch_reuse {
-            if row.write_batch_frames == 0 {
-                failures.push(
-                    "client_to_relay_batch_write write_batch_frames must be positive".to_string(),
-                );
-            }
-            if row.write_batch_reused != 1 {
-                failures
-                    .push("client_to_relay_batch_write write_batch_reused is not 1".to_string());
-            }
-        }
-        if let Some(min) = options.min_batch_write_throughput_mib_s {
-            if row.throughput_mib_s_median < min {
+    if options.require_ktp_aead {
+        for row in &rows {
+            if row.carrier != "ktp_tcp" || row.crypto != "ktp_aead" {
                 failures.push(format!(
-                    "client_to_relay_batch_write throughput_mib_s_median {:.3} below min {:.3}",
-                    row.throughput_mib_s_median, min
+                    "{} expected carrier=ktp_tcp crypto=ktp_aead, got carrier={} crypto={}",
+                    row_context(row),
+                    row.carrier,
+                    row.crypto
                 ));
             }
         }
     }
 
-    if let Some(row) = batch_read {
+    if options.require_positive_throughput {
+        for row in &rows {
+            if row.throughput_mib_s_median <= 0.0 {
+                failures.push(format!(
+                    "{} throughput_mib_s_median must be positive",
+                    row_context(row)
+                ));
+            }
+        }
+    }
+
+    for row in &batch_write {
+        if options.require_batch_reuse {
+            if row.write_batch_frames == 0 {
+                failures.push(format!(
+                    "{} write_batch_frames must be positive",
+                    row_context(row)
+                ));
+            }
+            if row.write_batch_reused != 1 {
+                failures.push(format!("{} write_batch_reused is not 1", row_context(row)));
+            }
+        }
+        if let Some(min) = options.min_batch_write_throughput_mib_s {
+            if row.throughput_mib_s_median < min {
+                failures.push(format!(
+                    "{} throughput_mib_s_median {:.3} below min {:.3}",
+                    row_context(row),
+                    row.throughput_mib_s_median,
+                    min
+                ));
+            }
+        }
+    }
+
+    for row in &batch_read {
         if options.require_batch_reuse {
             if row.read_batch_frames == 0 {
-                failures.push(
-                    "relay_to_client_batch_read read_batch_frames must be positive".to_string(),
-                );
+                failures.push(format!(
+                    "{} read_batch_frames must be positive",
+                    row_context(row)
+                ));
             }
             if row.read_batch_reused != 1 {
-                failures.push("relay_to_client_batch_read read_batch_reused is not 1".to_string());
+                failures.push(format!("{} read_batch_reused is not 1", row_context(row)));
             }
         }
         if let Some(min) = options.min_batch_read_throughput_mib_s {
             if row.throughput_mib_s_median < min {
                 failures.push(format!(
-                    "relay_to_client_batch_read throughput_mib_s_median {:.3} below min {:.3}",
-                    row.throughput_mib_s_median, min
+                    "{} throughput_mib_s_median {:.3} below min {:.3}",
+                    row_context(row),
+                    row.throughput_mib_s_median,
+                    min
                 ));
             }
         }
@@ -196,16 +198,19 @@ fn summarize_csv(content: &str, options: SummaryOptions) -> SummaryResult<Summar
         return Err(SummaryError::gate(failures));
     }
 
-    let client_to_relay = client_to_relay.expect("required row gate already passed");
-    let batch_write = batch_write.expect("required row gate already passed");
-    let batch_read = batch_read.expect("required row gate already passed");
+    let client_to_relay_min = min_throughput_median(&client_to_relay);
+    let batch_write_min = min_throughput_median(&batch_write);
+    let batch_read_min = min_throughput_median(&batch_read);
     Ok(SummaryReport {
         output: format!(
-            "ktp_carrier_matrix_summary rows={} gate=pass\nclient_to_relay_throughput_mib_s_median={:.3}\nbatch_write_throughput_mib_s_median={:.3}\nbatch_read_throughput_mib_s_median={:.3}",
-            by_direction.len(),
-            client_to_relay.throughput_mib_s_median,
-            batch_write.throughput_mib_s_median,
-            batch_read.throughput_mib_s_median
+            "ktp_carrier_matrix_summary rows={} gate=pass\nclient_to_relay_throughput_mib_s_median={:.3}\nbatch_write_throughput_mib_s_median={:.3}\nbatch_read_throughput_mib_s_median={:.3}\nclient_to_relay_min_throughput_mib_s_median={:.3}\nbatch_write_min_throughput_mib_s_median={:.3}\nbatch_read_min_throughput_mib_s_median={:.3}",
+            rows.len(),
+            client_to_relay_min,
+            batch_write_min,
+            batch_read_min,
+            client_to_relay_min,
+            batch_write_min,
+            batch_read_min
         ),
     })
 }
@@ -228,6 +233,8 @@ fn parse_rows(content: &str) -> SummaryResult<Vec<CarrierRow>> {
             carrier: field(&columns, &fields, "carrier", line_index)?.to_string(),
             crypto: field(&columns, &fields, "crypto", line_index)?.to_string(),
             direction: field(&columns, &fields, "direction", line_index)?.to_string(),
+            frames: parse_u64_field(&columns, &fields, "frames", line_index)?,
+            payload_bytes: parse_u64_field(&columns, &fields, "payload_bytes", line_index)?,
             write_batch_frames: parse_u64_field(
                 &columns,
                 &fields,
@@ -257,26 +264,32 @@ fn parse_rows(content: &str) -> SummaryResult<Vec<CarrierRow>> {
     Ok(rows)
 }
 
-fn required_row<'a>(
-    by_direction: &'a HashMap<String, CarrierRow>,
+fn required_rows<'a>(
+    rows: &'a [CarrierRow],
     direction: &str,
     failures: &mut Vec<String>,
-) -> Option<&'a CarrierRow> {
-    match by_direction.get(direction) {
-        Some(row) => Some(row),
-        None => {
-            failures.push(format!("missing carrier matrix row direction={direction}"));
-            None
-        }
+) -> Vec<&'a CarrierRow> {
+    let matches = rows
+        .iter()
+        .filter(|row| row.direction == direction)
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        failures.push(format!("missing carrier matrix row direction={direction}"));
     }
+    matches
 }
 
-fn all_required_rows<'a>(
-    client_to_relay: Option<&'a CarrierRow>,
-    batch_write: Option<&'a CarrierRow>,
-    batch_read: Option<&'a CarrierRow>,
-) -> Option<[&'a CarrierRow; 3]> {
-    Some([client_to_relay?, batch_write?, batch_read?])
+fn min_throughput_median(rows: &[&CarrierRow]) -> f64 {
+    rows.iter()
+        .map(|row| row.throughput_mib_s_median)
+        .fold(f64::INFINITY, f64::min)
+}
+
+fn row_context(row: &CarrierRow) -> String {
+    format!(
+        "{} frames={} payload_bytes={}",
+        row.direction, row.frames, row.payload_bytes
+    )
 }
 
 fn field<'a>(
