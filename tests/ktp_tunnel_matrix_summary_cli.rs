@@ -227,6 +227,38 @@ adaptive	4	8	rdp-like	8192	pass	1000	logs/adaptive/clients-4	logs/adaptive/clien
 }
 
 #[test]
+fn ktp_tunnel_matrix_summary_threshold_gate_rejects_low_echo_throughput() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-echo-throughput-gate",
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	echo_elapsed_micros	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	1	8	rdp-like	8192	pass	60000	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	1048576	2000000	100	200	300	400	0	3	40	2
+adaptive	4	8	rdp-like	8192	pass	60000	logs/adaptive/clients-4	logs/adaptive/clients-4/tunnel-echo.evidence.md	logs/adaptive/clients-4/ktp-live-canary.evidence.md	4194304	1000000	500	600	700	800	90	12	224	11
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--min-echo-throughput-mib-s")
+        .arg("1")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "echo throughput gate should exit 3: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("min_echo_throughput_mib_s=0.500 policy=fixed clients=1"));
+    assert!(stderr.contains(
+        "tunnel matrix row policy=fixed clients=1 echo_throughput_mib_s=0.500 below min 1.000"
+    ));
+}
+
+#[test]
 fn ktp_tunnel_matrix_summary_expect_matrix_rejects_missing_policy_client_rows() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-missing-expected-row",

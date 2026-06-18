@@ -1397,11 +1397,14 @@ cargo run --locked --bin ktp-tunnel-matrix-summary -- \
 
 The report emits row counts, per-client latency and socket batch-read/write
 highlights, per-row `throughput_mib_s` computed from `total_payload_bytes` and
-`elapsed_millis`, plus the maximum RTT p95, maximum per-client p95 spread,
-maximum socket batch sizes, maximum effective write batch limit, minimum
-observed effective write batch limit, and minimum observed throughput across
-passing rows, including the policy/client combination that produced each value.
-Older TSV artifacts without `total_payload_bytes`, `socket_write_*` columns, or
+full-smoke `elapsed_millis`, and per-row `echo_throughput_mib_s` computed from
+`total_payload_bytes` and echo-only `echo_elapsed_micros`. It also reports the
+maximum RTT p95, maximum per-client p95 spread, maximum socket batch sizes,
+maximum effective write batch limit, minimum observed effective write batch
+limit, minimum observed full-smoke throughput, and minimum observed echo-only
+throughput across passing rows, including the policy/client combination that
+produced each value. Older TSV artifacts without `total_payload_bytes`,
+`echo_elapsed_micros`, `socket_write_*` columns, or
 `socket_write_batch_limit_*` columns remain readable and show those metrics as
 `-`. When a TSV has passing
 `fixed` and `adaptive` rows for the same client count, the report also emits a
@@ -1416,14 +1419,18 @@ matrix row has `fail`, `timeout`, or another non-pass status. Add
 `--fail-on-fixed-better` when a release-host comparison should fail if adaptive
 batching is worse on all tracked latency/elapsed dimensions. Add
 `--min-throughput-mib-s N` to fail passing rows whose real-backend tunnel echo
-throughput drops below the configured floor; this is intentionally optional so
-release hosts can set a threshold based on their own baseline.
+full-smoke throughput drops below the configured floor. Add
+`--min-echo-throughput-mib-s N` to gate the data-plane-only echo throughput
+without letting backend and agent startup time dominate the decision. Both
+thresholds are intentionally optional so release hosts can set floors based on
+their own baselines.
 The `KTP Tunnel Matrix` workflow now writes this output to
 `matrix-summary.report.txt` beside the raw TSV artifact. Push-triggered runs
 keep the light `fixed` policy self-check; manual workflow dispatch defaults to
 `fixed adaptive` so scheduling experiments can collect comparable real
 forwarding rows without editing the workflow. Manual dispatch also exposes
-`min_throughput_mib_s` for the optional summary throughput gate.
+`min_throughput_mib_s` and `min_echo_throughput_mib_s` for optional summary
+throughput gates.
 The workflow passes the requested policy list and client-count list to
 `ktp-tunnel-matrix-summary` with `--expect-policies` and `--expect-clients`.
 That makes the report fail when a policy/client combination is missing, even if

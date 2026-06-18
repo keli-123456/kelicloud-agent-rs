@@ -37,6 +37,7 @@ struct GateConfig {
     max_rtt_p95_micros: Option<u64>,
     max_client_p95_spread_micros: Option<u64>,
     min_throughput_mib_s: Option<f64>,
+    min_echo_throughput_mib_s: Option<f64>,
     expected_policies: Vec<String>,
     expected_clients: Vec<String>,
 }
@@ -85,6 +86,10 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
             "--min-throughput-mib-s" => {
                 gate_config.min_throughput_mib_s =
                     Some(next_f64_arg(&mut args, "--min-throughput-mib-s")?);
+            }
+            "--min-echo-throughput-mib-s" => {
+                gate_config.min_echo_throughput_mib_s =
+                    Some(next_f64_arg(&mut args, "--min-echo-throughput-mib-s")?);
             }
             "--expect-policies" => {
                 gate_config.expected_policies = next_list_arg(&mut args, "--expect-policies")?;
@@ -288,8 +293,16 @@ fn summarize_tsv(
             record_min_throughput_gate_failure(
                 &mut gate_failures,
                 row,
+                "throughput_mib_s",
                 throughput_mib_s,
                 gate_config.min_throughput_mib_s,
+            );
+            record_min_throughput_gate_failure(
+                &mut gate_failures,
+                row,
+                "echo_throughput_mib_s",
+                echo_throughput_mib_s,
+                gate_config.min_echo_throughput_mib_s,
             );
             max_rtt.record(&row.relay_batch_policy, &row.clients, row.rtt_micros_p95);
             max_spread.record(
@@ -463,6 +476,7 @@ fn record_expected_matrix_failures(
 fn record_min_throughput_gate_failure(
     gate_failures: &mut Vec<String>,
     row: &MatrixRow,
+    metric_name: &str,
     value: Option<f64>,
     min: Option<f64>,
 ) {
@@ -471,11 +485,11 @@ fn record_min_throughput_gate_failure(
     };
     match value {
         Some(value) if value < min => gate_failures.push(format!(
-            "tunnel matrix row policy={} clients={} throughput_mib_s={value:.3} below min {min:.3}",
+            "tunnel matrix row policy={} clients={} {metric_name}={value:.3} below min {min:.3}",
             row.relay_batch_policy, row.clients
         )),
         None => gate_failures.push(format!(
-            "tunnel matrix row policy={} clients={} throughput_mib_s missing for min {min:.3}",
+            "tunnel matrix row policy={} clients={} {metric_name} missing for min {min:.3}",
             row.relay_batch_policy, row.clients
         )),
         _ => {}
@@ -993,6 +1007,6 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 
 fn print_usage() {
     eprintln!(
-        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] [--expect-policies LIST --expect-clients LIST] <matrix-summary.tsv>"
+        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] [--min-echo-throughput-mib-s N] [--expect-policies LIST --expect-clients LIST] <matrix-summary.tsv>"
     );
 }
