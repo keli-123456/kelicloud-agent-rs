@@ -99,7 +99,17 @@ jobs:
           sudo apt-get install -y mysql-client
 
       - name: Run local backend smoke
-        run: bash scripts/smoke-local-backend.sh
+        run: |
+          mkdir -p "${SMOKE_LOG_DIR}"
+          set +e
+          bash scripts/smoke-local-backend.sh
+          smoke_status=$?
+          if [[ "${smoke_status}" == "0" ]]; then
+            echo "pass" >"${SMOKE_LOG_DIR}/smoke.status"
+          else
+            echo "fail" >"${SMOKE_LOG_DIR}/smoke.status"
+          fi
+          exit "${smoke_status}"
 
       - name: Upload smoke logs
         if: always()
@@ -107,4 +117,103 @@ jobs:
         with:
           name: kelicloud-agent-rs-local-backend-smoke-${{ matrix.data_plane }}
           path: smoke-logs-${{ matrix.data_plane }}/*
+          if-no-files-found: ignore
+
+  carrier-summary:
+    name: Local Backend Carrier Summary
+    runs-on: ubuntu-latest
+    needs: linux
+    if: always()
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Download local backend smoke logs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kelicloud-agent-rs-local-backend-smoke-*
+          path: carrier-matrix-artifacts
+          merge-multiple: false
+
+      - name: Build carrier matrix summary
+        run: |
+          set -euo pipefail
+          summary="carrier-matrix-summary/matrix-summary.tsv"
+          report="carrier-matrix-summary/matrix-summary.report.txt"
+          mkdir -p "carrier-matrix-summary"
+          printf 'carrier\tktp_tcp\tktp_crypto\tstatus\tlog_dir\tsummary_file\tktp_evidence_file\n' >"${summary}"
+
+          for carrier in websocket ktp_tcp; do
+            artifact="carrier-matrix-artifacts/kelicloud-agent-rs-local-backend-smoke-${carrier}"
+            ktp_tcp="false"
+            if [[ "${carrier}" == "ktp_tcp" ]]; then
+              ktp_tcp="true"
+            fi
+
+            status="fail"
+            if [[ -f "${artifact}/smoke.status" ]]; then
+              status="$(tr -d '[:space:]' <"${artifact}/smoke.status")"
+            fi
+
+            summary_file="-"
+            if [[ -f "${artifact}/agent.summary.md" ]]; then
+              summary_file="${artifact}/agent.summary.md"
+            fi
+
+            ktp_evidence_file="-"
+            ktp_crypto="-"
+            if [[ "${ktp_tcp}" == "true" && -f "${artifact}/ktp-live-canary.evidence.md" ]]; then
+              ktp_evidence_file="${artifact}/ktp-live-canary.evidence.md"
+              ktp_crypto="$(grep -Eo 'crypto=[^[:space:]`]+' "${ktp_evidence_file}" | tail -n 1 | cut -d= -f2 || true)"
+              if [[ -z "${ktp_crypto}" ]]; then
+                ktp_crypto="-"
+              fi
+            fi
+
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+              "${carrier}" \
+              "${ktp_tcp}" \
+              "${ktp_crypto}" \
+              "${status}" \
+              "${artifact}" \
+              "${summary_file}" \
+              "${ktp_evidence_file}" >>"${summary}"
+          done
+
+          set +e
+          cargo run --locked --bin ktp-local-backend-matrix-summary -- \
+            --require-pass \
+            --require-ktp-aead \
+            "${summary}" | tee "${report}"
+          summary_status="${PIPESTATUS[0]}"
+          exit "${summary_status}"
+
+      - name: Publish carrier summary
+        if: always()
+        run: |
+          report="carrier-matrix-summary/matrix-summary.report.txt"
+          {
+            echo "## Local backend carrier matrix summary"
+            echo
+            if [[ -f "${report}" ]]; then
+              echo '```text'
+              cat "${report}"
+              echo '```'
+            else
+              echo "matrix-summary.report.txt was not generated."
+            fi
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload carrier summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kelicloud-agent-rs-local-backend-carrier-summary
+          path: carrier-matrix-summary/*
           if-no-files-found: ignore

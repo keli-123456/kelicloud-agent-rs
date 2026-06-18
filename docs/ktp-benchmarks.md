@@ -1415,8 +1415,12 @@ Notes:
   backend. It is not yet a high-throughput production capacity claim.
 - The `Local Backend Smoke` GitHub Actions workflow now runs the same smoke as
   a matrix over `websocket` and `ktp_tcp`, with separate artifacts for each data
-  carrier. That moves KTP smoke evidence from one-off host logs into CI
-  artifacts on pushes to `main`.
+  carrier. A follow-up `carrier-summary` job downloads both artifacts, builds
+  `carrier-matrix-summary/matrix-summary.tsv`, runs
+  `ktp-local-backend-matrix-summary --require-pass --require-ktp-aead`, and
+  uploads `kelicloud-agent-rs-local-backend-carrier-summary` with
+  `matrix-summary.report.txt`. That moves KTP smoke evidence from one-off host
+  logs into CI artifacts on pushes to `main`, with an explicit KTP AEAD gate.
 - The `33443f5` active canary adds a stricter gate: KTP local-backend smoke now
   fails unless live diagnostics include positive `socket_read_batches` and
   `socket_read_frames`, so the evidence proves the dedicated KTP TCP

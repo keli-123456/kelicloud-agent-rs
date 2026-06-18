@@ -78,9 +78,22 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
     assert!(workflow.contains("KOMARI_DB_NAME: komari_${{ matrix.data_plane }}"));
     assert!(workflow.contains("SMOKE_LOG_DIR: smoke-logs-${{ matrix.data_plane }}"));
     assert!(workflow.contains("bash scripts/smoke-local-backend.sh"));
+    assert!(workflow.contains("smoke.status"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(workflow.contains("smoke-logs-${{ matrix.data_plane }}/*"));
     assert!(workflow.contains("kelicloud-agent-rs-local-backend-smoke-${{ matrix.data_plane }}"));
+    assert!(workflow.contains("carrier-summary:"));
+    assert!(workflow.contains("needs: linux"));
+    assert!(workflow.contains("actions/download-artifact@v4"));
+    assert!(workflow.contains("pattern: kelicloud-agent-rs-local-backend-smoke-*"));
+    assert!(workflow.contains("carrier-matrix-artifacts"));
+    assert!(workflow.contains("carrier-matrix-summary/matrix-summary.tsv"));
+    assert!(workflow.contains("carrier-matrix-summary/matrix-summary.report.txt"));
+    assert!(workflow.contains("ktp-local-backend-matrix-summary"));
+    assert!(workflow.contains("--require-pass"));
+    assert!(workflow.contains("--require-ktp-aead"));
+    assert!(workflow.contains("Local backend carrier matrix summary"));
+    assert!(workflow.contains("kelicloud-agent-rs-local-backend-carrier-summary"));
 }
 
 fn local_backend_smoke_workflow_path() -> PathBuf {
