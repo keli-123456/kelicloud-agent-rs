@@ -1102,6 +1102,11 @@ Notes:
   `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2`. This turns the dedicated KTP CI row
   into a continuous multi-round tunnel echo and multi-frame socket batch-read
   gate.
+- The local backend smoke now also writes `tunnel-echo.evidence.md` with
+  per-round tunnel echo payload sizes and RTT percentiles. The GitHub Actions
+  `ktp_tcp` row runs that echo as `KELICLOUD_TUNNEL_ECHO_PROFILE=rdp-like` with
+  `KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=8192`, so CI artifacts include a small
+  real-forwarding latency signal next to the KTP socket diagnostics.
 
 Next evidence to collect:
 

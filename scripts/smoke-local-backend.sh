@@ -15,6 +15,9 @@ KTP_TCP_LISTEN="${KTP_TCP_LISTEN:-}"
 KTP_DIAGNOSTICS_TIMEOUT_SECONDS="${KTP_DIAGNOSTICS_TIMEOUT_SECONDS:-45}"
 KTP_LIVE_CANARY_MIN_LINES="${KTP_LIVE_CANARY_MIN_LINES:-1}"
 KELICLOUD_TUNNEL_ECHO_ROUNDS="${KELICLOUD_TUNNEL_ECHO_ROUNDS:-1}"
+KELICLOUD_TUNNEL_ECHO_PROFILE="${KELICLOUD_TUNNEL_ECHO_PROFILE:-fixed}"
+KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES="${KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES:-0}"
+KELICLOUD_TUNNEL_ECHO_EVIDENCE="${KELICLOUD_TUNNEL_ECHO_EVIDENCE:-}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin-smoke-password}"
 
@@ -36,6 +39,7 @@ BACKEND_LOG=""
 AGENT_LOG=""
 HELPER_LOG=""
 TUNNEL_ECHO_LOG=""
+TUNNEL_ECHO_EVIDENCE_FILE=""
 AUTO_DISCOVERY_KEY=""
 SMOKE_AGENT_HOSTNAME="${SMOKE_AGENT_HOSTNAME:-agent-rs-smoke}"
 SMOKE_AGENT_CLIENT_NAME="Auto-${SMOKE_AGENT_HOSTNAME}"
@@ -135,6 +139,22 @@ require_positive_integer() {
     local name="$1"
     local value="$2"
     [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${name} must be a positive integer"
+}
+
+require_non_negative_integer() {
+    local name="$1"
+    local value="$2"
+    [[ "${value}" =~ ^[0-9]+$ ]] || die "${name} must be a non-negative integer"
+}
+
+require_tunnel_echo_profile() {
+    case "${KELICLOUD_TUNNEL_ECHO_PROFILE}" in
+        "fixed" | "rdp-like")
+            ;;
+        *)
+            die "KELICLOUD_TUNNEL_ECHO_PROFILE must be fixed or rdp-like"
+            ;;
+    esac
 }
 
 ktp_tcp_smoke_enabled() {
@@ -678,7 +698,21 @@ else:
 
 verify_tunnel_relay_echo() {
     local mark="kelicloud-tunnel-smoke-${TUNNEL_RULE_ID}"
-    if ! python3 - "${TUNNEL_LISTEN_PORT}" "${mark}" "${KELICLOUD_TUNNEL_ECHO_ROUNDS}" <<'PY'
+    if [[ -n "${KELICLOUD_TUNNEL_ECHO_EVIDENCE}" ]]; then
+        TUNNEL_ECHO_EVIDENCE_FILE="${KELICLOUD_TUNNEL_ECHO_EVIDENCE}"
+    else
+        TUNNEL_ECHO_EVIDENCE_FILE="${SMOKE_LOG_DIR}/tunnel-echo.evidence.md"
+    fi
+
+    if ! python3 - \
+        "${TUNNEL_LISTEN_PORT}" \
+        "${mark}" \
+        "${KELICLOUD_TUNNEL_ECHO_ROUNDS}" \
+        "${KELICLOUD_TUNNEL_ECHO_PROFILE}" \
+        "${KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES}" \
+        "${TUNNEL_ECHO_EVIDENCE_FILE}" <<'PY'
+import math
+import os
 import socket
 import sys
 import time
@@ -686,20 +720,50 @@ import time
 port = int(sys.argv[1])
 base_payload = sys.argv[2]
 rounds = int(sys.argv[3])
+profile = sys.argv[4]
+configured_payload_bytes = int(sys.argv[5])
+evidence_file = sys.argv[6]
 deadline = time.time() + 45
 last_error = None
+samples = []
+
+def fill_payload(prefix, target_bytes):
+    base = prefix.encode("utf-8")
+    if target_bytes <= 0 or len(base) >= target_bytes:
+        return base
+    filler = (b"-0123456789abcdef" * ((target_bytes // 17) + 2))
+    return (base + filler)[:target_bytes]
+
+def payload_for_round(round_no):
+    payload_text = base_payload if rounds == 1 else f"{base_payload}-{round_no}"
+    if profile == "fixed":
+        return fill_payload(payload_text, configured_payload_bytes)
+
+    max_payload_bytes = configured_payload_bytes if configured_payload_bytes > 0 else 8192
+    rdp_like_sizes = [64, 96, 128, 256, 1024, max_payload_bytes]
+    target_bytes = min(max_payload_bytes, rdp_like_sizes[(round_no - 1) % len(rdp_like_sizes)])
+    return fill_payload(f"{payload_text}-rdp-like", target_bytes)
+
+def percentile(sorted_values, percent):
+    index = max(0, math.ceil((percent / 100.0) * len(sorted_values)) - 1)
+    return sorted_values[min(index, len(sorted_values) - 1)]
 
 for round in range(1, rounds + 1):
-    payload_text = base_payload if rounds == 1 else f"{base_payload}-{round}"
-    payload = payload_text.encode("utf-8")
+    payload = payload_for_round(round)
     expected = b"echo:" + payload
     while time.time() < deadline:
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
                 sock.settimeout(5)
+                started = time.perf_counter()
                 sock.sendall(payload)
                 data = sock.recv(65536)
                 if data == expected:
+                    samples.append({
+                        "round": round,
+                        "payload_bytes": len(payload),
+                        "rtt_micros": int((time.perf_counter() - started) * 1_000_000),
+                    })
                     break
                 last_error = f"round {round}: unexpected echo response: {data!r}"
         except Exception as exc:
@@ -709,14 +773,48 @@ for round in range(1, rounds + 1):
         print(f"tunnel relay echo failed: {last_error}", file=sys.stderr)
         raise SystemExit(1)
 
-print(f"tunnel relay echo succeeded rounds={rounds}")
+rtts = sorted(sample["rtt_micros"] for sample in samples)
+total_payload_bytes = sum(sample["payload_bytes"] for sample in samples)
+summary = {
+    "rtt_micros_p50": percentile(rtts, 50),
+    "rtt_micros_p95": percentile(rtts, 95),
+    "rtt_micros_p99": percentile(rtts, 99),
+    "rtt_micros_max": rtts[-1],
+}
+
+evidence_dir = os.path.dirname(evidence_file)
+if evidence_dir:
+    os.makedirs(evidence_dir, exist_ok=True)
+with open(evidence_file, "w", encoding="utf-8") as fh:
+    fh.write("# Tunnel Echo Evidence\n\n")
+    fh.write(f"- profile: {profile}\n")
+    fh.write(f"- rounds: {rounds}\n")
+    fh.write(f"- total_payload_bytes: {total_payload_bytes}\n")
+    for key, value in summary.items():
+        fh.write(f"- {key}: {value}\n")
+    fh.write("\n## Samples\n\n")
+    fh.write("| round | payload_bytes | rtt_micros |\n")
+    fh.write("| ---: | ---: | ---: |\n")
+    for sample in samples:
+        fh.write(f"| {sample['round']} | {sample['payload_bytes']} | {sample['rtt_micros']} |\n")
+
+print(
+    f"tunnel relay echo succeeded rounds={rounds} profile={profile} "
+    f"total_payload_bytes={total_payload_bytes} "
+    f"rtt_micros_p50={summary['rtt_micros_p50']} "
+    f"rtt_micros_p95={summary['rtt_micros_p95']} "
+    f"rtt_micros_p99={summary['rtt_micros_p99']} "
+    f"rtt_micros_max={summary['rtt_micros_max']}"
+)
 raise SystemExit(0)
 PY
     then
         die "tunnel relay echo verification failed$(log_tail_for_error)"
     fi
-    printf '%s\n' "smoke: tunnel_relay_echo_succeeded rule_id=${TUNNEL_RULE_ID} listen_port=${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS}" >>"${AGENT_LOG}"
-    log "Tunnel relay echo succeeded through 127.0.0.1:${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS}"
+    printf '%s\n' "smoke: tunnel_relay_echo_succeeded rule_id=${TUNNEL_RULE_ID} listen_port=${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS} profile=${KELICLOUD_TUNNEL_ECHO_PROFILE}" >>"${AGENT_LOG}"
+    printf '%s\n' "smoke: tunnel_echo_evidence=${TUNNEL_ECHO_EVIDENCE_FILE}" >>"${AGENT_LOG}"
+    log "Tunnel relay echo succeeded through 127.0.0.1:${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS} profile=${KELICLOUD_TUNNEL_ECHO_PROFILE}"
+    log "Tunnel echo evidence written to ${TUNNEL_ECHO_EVIDENCE_FILE}"
 }
 
 collect_ktp_live_canary_evidence() {
@@ -761,6 +859,8 @@ main() {
         require_command bash
     fi
     require_positive_integer "KELICLOUD_TUNNEL_ECHO_ROUNDS" "${KELICLOUD_TUNNEL_ECHO_ROUNDS}"
+    require_non_negative_integer "KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES" "${KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES}"
+    require_tunnel_echo_profile
 
     local root
     root="$(repo_root)"

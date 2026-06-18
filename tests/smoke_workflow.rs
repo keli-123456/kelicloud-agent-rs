@@ -56,10 +56,22 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
     assert!(workflow.contains("tunnel_echo_rounds: \"8\""));
     assert!(workflow.contains("ktp_min_max_batch_frames: \"1\""));
     assert!(workflow.contains("ktp_min_max_batch_frames: \"2\""));
+    assert!(workflow.contains("tunnel_echo_profile: fixed"));
+    assert!(workflow.contains("tunnel_echo_profile: rdp-like"));
+    assert!(workflow.contains("tunnel_echo_payload_bytes: \"0\""));
+    assert!(workflow.contains("tunnel_echo_payload_bytes: \"8192\""));
     assert!(workflow.contains("KELICLOUD_SMOKE_KTP_TCP: ${{ matrix.ktp_tcp }}"));
     assert!(
         workflow
             .contains("KELICLOUD_TUNNEL_ECHO_ROUNDS: ${{ matrix.tunnel_echo_rounds }}")
+    );
+    assert!(
+        workflow.contains("KELICLOUD_TUNNEL_ECHO_PROFILE: ${{ matrix.tunnel_echo_profile }}")
+    );
+    assert!(
+        workflow.contains(
+            "KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES: ${{ matrix.tunnel_echo_payload_bytes }}"
+        )
     );
     assert!(
         workflow.contains(

@@ -1,5 +1,8 @@
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -30,6 +33,8 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
     assert!(script.contains("create_tunnel_rule"));
     assert!(script.contains("verify_tunnel_relay_echo"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_ROUNDS"));
+    assert!(script.contains("KELICLOUD_TUNNEL_ECHO_PROFILE"));
+    assert!(script.contains("KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES"));
     assert!(script.contains("require_positive_integer \"KELICLOUD_TUNNEL_ECHO_ROUNDS\""));
     assert!(script.contains("for round in range(1, rounds + 1):"));
     assert!(script.contains("smoke: tunnel_relay_echo_succeeded"));
@@ -53,6 +58,23 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
     assert!(script.contains("::error title=Local backend smoke::"));
     assert!(script.contains("sys.argv[1]"));
     assert!(!script.contains("os.environ[\"ADMIN_USERNAME\"]"));
+}
+
+#[test]
+fn local_backend_smoke_script_records_tunnel_echo_latency_evidence() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+
+    assert!(script.contains("require_tunnel_echo_profile"));
+    assert!(script.contains("\"fixed\" | \"rdp-like\""));
+    assert!(script.contains("TUNNEL_ECHO_EVIDENCE_FILE"));
+    assert!(script.contains("tunnel-echo.evidence.md"));
+    assert!(script.contains("payload_for_round"));
+    assert!(script.contains("rtt_micros_p50"));
+    assert!(script.contains("rtt_micros_p95"));
+    assert!(script.contains("rtt_micros_p99"));
+    assert!(script.contains("total_payload_bytes"));
+    assert!(script.contains("profile={profile}"));
+    assert!(script.contains("smoke: tunnel_echo_evidence="));
 }
 
 #[test]
@@ -201,6 +223,112 @@ fn local_backend_smoke_script_reads_latest_auto_discovery_uuid_from_agent_log() 
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "new-uuid");
 }
 
+#[test]
+fn local_backend_smoke_script_generates_tunnel_echo_evidence() {
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping tunnel echo evidence test");
+        return;
+    };
+    if !bash_has_python3(&bash) {
+        eprintln!("python3 not available under bash; skipping tunnel echo evidence test");
+        return;
+    }
+
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+    let sourced_script = script
+        .strip_suffix("main \"$@\"\n")
+        .or_else(|| script.strip_suffix("main \"$@\""))
+        .expect("script should end with main invocation");
+    let temp_dir = std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-tunnel-echo-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let sourced_path = temp_dir.join("smoke-local-backend-functions.sh");
+    let evidence_path = temp_dir.join("tunnel-echo.evidence.md");
+    let agent_log_path = temp_dir.join("agent.log");
+    std::fs::write(&sourced_path, sourced_script).unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let listen_port = listener.local_addr().unwrap().port();
+    let echo = thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut accepted = 0;
+        while accepted < 3 && std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut buffer = vec![0; 65536];
+                    let read = stream.read(&mut buffer).unwrap();
+                    if read > 0 {
+                        stream.write_all(b"echo:").unwrap();
+                        stream.write_all(&buffer[..read]).unwrap();
+                    }
+                    accepted += 1;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("echo listener failed: {error}"),
+            }
+        }
+        accepted
+    });
+
+    let output = Command::new(bash)
+        .arg("-c")
+        .arg(
+            r#"
+set -Eeuo pipefail
+source "$1"
+SMOKE_LOG_DIR="$2"
+mkdir -p "${SMOKE_LOG_DIR}"
+AGENT_LOG="$3"
+: >"${AGENT_LOG}"
+KELICLOUD_TUNNEL_ECHO_ROUNDS=3
+KELICLOUD_TUNNEL_ECHO_PROFILE=rdp-like
+KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=1024
+KELICLOUD_TUNNEL_ECHO_EVIDENCE="$4"
+TUNNEL_RULE_ID=42
+TUNNEL_LISTEN_PORT="$5"
+verify_tunnel_relay_echo
+"#,
+        )
+        .arg("bash")
+        .arg(&sourced_path)
+        .arg(&temp_dir)
+        .arg(&agent_log_path)
+        .arg(&evidence_path)
+        .arg(listen_port.to_string())
+        .output()
+        .unwrap();
+    let accepted_connections = echo.join().unwrap();
+
+    assert!(
+        output.status.success(),
+        "tunnel echo evidence helper failed after {accepted_connections} accepted connections:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(accepted_connections, 3);
+
+    let evidence = std::fs::read_to_string(evidence_path).unwrap();
+    assert!(evidence.contains("- profile: rdp-like"));
+    assert!(evidence.contains("- rounds: 3"));
+    assert!(evidence.contains("- total_payload_bytes:"));
+    assert!(evidence.contains("- rtt_micros_p95:"));
+    assert!(evidence.contains("| round | payload_bytes | rtt_micros |"));
+
+    let agent_log = std::fs::read_to_string(agent_log_path).unwrap();
+    assert!(agent_log.contains("smoke: tunnel_relay_echo_succeeded"));
+    assert!(agent_log.contains("profile=rdp-like"));
+    assert!(agent_log.contains("smoke: tunnel_echo_evidence="));
+}
+
 fn local_backend_smoke_script_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("scripts")
@@ -231,4 +359,13 @@ fn find_bash() -> Option<PathBuf> {
     }
 
     None
+}
+
+fn bash_has_python3(bash: &PathBuf) -> bool {
+    Command::new(bash)
+        .arg("-lc")
+        .arg("python3 --version >/dev/null 2>&1")
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
