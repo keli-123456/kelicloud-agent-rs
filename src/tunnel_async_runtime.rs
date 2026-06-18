@@ -21,6 +21,7 @@ pub struct TunnelRuntimeLimits {
     pub target_dial_timeout: Duration,
     pub idle_timeout: Duration,
     pub relay_batch_policy: TunnelRelayBatchPolicy,
+    pub relay_batch_tuning: TunnelRelayBatchTuning,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -64,17 +65,57 @@ impl TunnelRelayBatchPolicy {
         active_sessions: usize,
         outbound_queue_dwell: TunnelQueueDwellStatsSnapshot,
     ) -> usize {
+        self.effective_batch_frames_with_tuning(
+            configured_batch_frames,
+            active_sessions,
+            outbound_queue_dwell,
+            TunnelRelayBatchTuning::default(),
+        )
+    }
+
+    pub fn effective_batch_frames_with_tuning(
+        self,
+        configured_batch_frames: usize,
+        active_sessions: usize,
+        outbound_queue_dwell: TunnelQueueDwellStatsSnapshot,
+        tuning: TunnelRelayBatchTuning,
+    ) -> usize {
         let configured_batch_frames = configured_batch_frames.max(1);
         match self {
             Self::Fixed => configured_batch_frames,
-            Self::Adaptive if outbound_queue_dwell.p95_micros >= 250_000 => {
-                configured_batch_frames.min(8)
+            Self::Adaptive if outbound_queue_dwell.p95_micros >= tuning.severe_dwell_p95_micros => {
+                configured_batch_frames.min(tuning.severe_batch_cap.max(1))
             }
-            Self::Adaptive if outbound_queue_dwell.p95_micros >= 50_000 => {
-                configured_batch_frames.min(16)
+            Self::Adaptive
+                if outbound_queue_dwell.p95_micros >= tuning.elevated_dwell_p95_micros =>
+            {
+                configured_batch_frames.min(tuning.elevated_batch_cap.max(1))
             }
-            Self::Adaptive if active_sessions >= 8 => configured_batch_frames.min(16),
+            Self::Adaptive if active_sessions >= tuning.high_session_threshold.max(1) => {
+                configured_batch_frames.min(tuning.elevated_batch_cap.max(1))
+            }
             Self::Adaptive => configured_batch_frames,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TunnelRelayBatchTuning {
+    pub high_session_threshold: usize,
+    pub elevated_dwell_p95_micros: u64,
+    pub severe_dwell_p95_micros: u64,
+    pub elevated_batch_cap: usize,
+    pub severe_batch_cap: usize,
+}
+
+impl Default for TunnelRelayBatchTuning {
+    fn default() -> Self {
+        Self {
+            high_session_threshold: 8,
+            elevated_dwell_p95_micros: 50_000,
+            severe_dwell_p95_micros: 250_000,
+            elevated_batch_cap: 16,
+            severe_batch_cap: 8,
         }
     }
 }
@@ -89,6 +130,7 @@ impl Default for TunnelRuntimeLimits {
             target_dial_timeout: Duration::from_secs(5),
             idle_timeout: Duration::from_secs(600),
             relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
+            relay_batch_tuning: TunnelRelayBatchTuning::default(),
         }
     }
 }
@@ -832,10 +874,11 @@ impl AsyncTunnelCore {
         let stats = self.stats_snapshot();
         self.limits
             .relay_batch_policy
-            .effective_batch_frames_with_dwell(
+            .effective_batch_frames_with_tuning(
                 configured_batch_frames,
                 stats.active_sessions,
                 stats.recent_outbound_queue_dwell,
+                self.limits.relay_batch_tuning,
             )
     }
 

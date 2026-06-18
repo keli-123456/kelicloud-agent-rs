@@ -32,6 +32,11 @@ MONTH_ROTATE=""
 TUNNEL_DATA_ENABLED=""
 TUNNEL_KTP_TCP_ADDRESS=""
 TUNNEL_KTP_RELAY_BATCH_POLICY=""
+TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS=""
+TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US=""
+TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US=""
+TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP=""
+TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP=""
 KEEP_CONFIG="false"
 COMMAND=""
 
@@ -82,6 +87,16 @@ Install options:
   --tunnel-ktp-relay-batch-policy POLICY
                                   Set AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY,
                                   default adaptive when tunnel data is enabled
+  --tunnel-ktp-relay-adaptive-high-sessions N
+                                  Set AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS
+  --tunnel-ktp-relay-adaptive-elevated-dwell-us N
+                                  Set AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US
+  --tunnel-ktp-relay-adaptive-severe-dwell-us N
+                                  Set AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US
+  --tunnel-ktp-relay-adaptive-elevated-cap N
+                                  Set AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP
+  --tunnel-ktp-relay-adaptive-severe-cap N
+                                  Set AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP
 EOF
 }
 
@@ -255,6 +270,31 @@ parse_args() {
                 TUNNEL_KTP_RELAY_BATCH_POLICY="$2"
                 shift 2
                 ;;
+            --tunnel-ktp-relay-adaptive-high-sessions|--ktp-relay-adaptive-high-sessions)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-relay-adaptive-elevated-dwell-us|--ktp-relay-adaptive-elevated-dwell-us)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-relay-adaptive-severe-dwell-us|--ktp-relay-adaptive-severe-dwell-us)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-relay-adaptive-elevated-cap|--ktp-relay-adaptive-elevated-cap)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-relay-adaptive-severe-cap|--ktp-relay-adaptive-severe-cap)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP="$2"
+                shift 2
+                ;;
             --keep-config)
                 KEEP_CONFIG="true"
                 shift
@@ -375,6 +415,11 @@ render_env() {
     emit_env "AGENT_TUNNEL_DATA_ENABLED" "$TUNNEL_DATA_ENABLED"
     emit_env "AGENT_TUNNEL_KTP_TCP_ADDRESS" "$TUNNEL_KTP_TCP_ADDRESS"
     emit_env "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY" "$tunnel_ktp_relay_batch_policy"
+    emit_env "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS" "$TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS"
+    emit_env "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US" "$TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US"
+    emit_env "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US" "$TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US"
+    emit_env "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP" "$TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP"
+    emit_env "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP" "$TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP"
 }
 
 render_service() {

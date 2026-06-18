@@ -17,7 +17,7 @@ use kelicloud_agent_rs::token::{
 use kelicloud_agent_rs::transport::{
     HeaderPair, HttpTransport, ReportSocket, TransportError, WebSocketTransport,
 };
-use kelicloud_agent_rs::tunnel_async_runtime::TunnelRelayBatchPolicy;
+use kelicloud_agent_rs::tunnel_async_runtime::{TunnelRelayBatchPolicy, TunnelRelayBatchTuning};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -34,6 +34,7 @@ fn startup_summary_redacts_token() {
         tunnel_data_enabled: false,
         tunnel_ktp_tcp_address: String::new(),
         tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
+        tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning::default(),
         interval_seconds: 1.0,
         max_retries: 3,
         reconnect_interval_seconds: 5,
@@ -836,6 +837,7 @@ fn test_config() -> AgentConfig {
         tunnel_data_enabled: false,
         tunnel_ktp_tcp_address: String::new(),
         tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
+        tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning::default(),
         interval_seconds: 1.0,
         max_retries: 3,
         reconnect_interval_seconds: 5,

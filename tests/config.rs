@@ -1,5 +1,5 @@
 use kelicloud_agent_rs::config::{AgentConfig, ConfigError};
-use kelicloud_agent_rs::tunnel_async_runtime::TunnelRelayBatchPolicy;
+use kelicloud_agent_rs::tunnel_async_runtime::{TunnelRelayBatchPolicy, TunnelRelayBatchTuning};
 use std::fs;
 
 fn env_lookup(key: &str) -> Option<String> {
@@ -29,6 +29,10 @@ fn config_reads_endpoint_and_token_from_environment() {
     assert_eq!(
         config.tunnel_ktp_relay_batch_policy,
         TunnelRelayBatchPolicy::Fixed
+    );
+    assert_eq!(
+        config.tunnel_runtime_limits().relay_batch_tuning,
+        TunnelRelayBatchTuning::default()
     );
     assert!(!config.once);
 }
@@ -204,6 +208,156 @@ fn config_builds_tunnel_runtime_limits_from_ktp_policy() {
         config.tunnel_runtime_limits().relay_batch_policy,
         TunnelRelayBatchPolicy::Adaptive
     );
+}
+
+#[test]
+fn config_reads_ktp_relay_adaptive_tuning_from_cli_env_and_file() {
+    let expected = TunnelRelayBatchTuning {
+        high_session_threshold: 6,
+        elevated_dwell_p95_micros: 40_000,
+        severe_dwell_p95_micros: 120_000,
+        elevated_batch_cap: 24,
+        severe_batch_cap: 6,
+    };
+    let from_cli = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--tunnel-ktp-relay-adaptive-high-sessions",
+            "6",
+            "--tunnel-ktp-relay-adaptive-elevated-dwell-us",
+            "40000",
+            "--tunnel-ktp-relay-adaptive-severe-dwell-us",
+            "120000",
+            "--tunnel-ktp-relay-adaptive-elevated-cap",
+            "24",
+            "--tunnel-ktp-relay-adaptive-severe-cap",
+            "6",
+        ],
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(
+        from_cli.tunnel_runtime_limits().relay_batch_tuning,
+        expected
+    );
+
+    let from_env = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS" => Some("6".to_string()),
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US" => Some("40000".to_string()),
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US" => Some("120000".to_string()),
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP" => Some("24".to_string()),
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP" => Some("6".to_string()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(
+        from_env.tunnel_runtime_limits().relay_batch_tuning,
+        expected
+    );
+
+    let path = std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-ktp-tuning-{}.json",
+        std::process::id()
+    ));
+    fs::write(
+        &path,
+        r#"{
+            "endpoint": "https://file.example.com",
+            "token": "file-token",
+            "tunnel_ktp_relay_adaptive_high_sessions": 6,
+            "tunnel_ktp_relay_adaptive_elevated_dwell_us": 40000,
+            "tunnel_ktp_relay_adaptive_severe_dwell_us": 120000,
+            "tunnel_ktp_relay_adaptive_elevated_cap": 24,
+            "tunnel_ktp_relay_adaptive_severe_cap": 6
+        }"#,
+    )
+    .unwrap();
+    let from_file = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--config",
+            path.to_str().unwrap(),
+        ],
+        |_| None,
+    )
+    .unwrap();
+    fs::remove_file(path).unwrap();
+    assert_eq!(
+        from_file.tunnel_runtime_limits().relay_batch_tuning,
+        expected
+    );
+}
+
+#[test]
+fn config_rejects_invalid_ktp_relay_adaptive_tuning() {
+    let zero_high_sessions = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--tunnel-ktp-relay-adaptive-high-sessions",
+            "0",
+        ],
+        |_| None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        zero_high_sessions,
+        ConfigError::InvalidValue("--tunnel-ktp-relay-adaptive-high-sessions", value)
+            if value == "0"
+    ));
+
+    let inverted_dwell = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--tunnel-ktp-relay-adaptive-elevated-dwell-us",
+            "100000",
+            "--tunnel-ktp-relay-adaptive-severe-dwell-us",
+            "50000",
+        ],
+        |_| None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        inverted_dwell,
+        ConfigError::InvalidValue("--tunnel-ktp-relay-adaptive-severe-dwell-us", _)
+    ));
+
+    let inverted_cap = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--tunnel-ktp-relay-adaptive-elevated-cap",
+            "8",
+            "--tunnel-ktp-relay-adaptive-severe-cap",
+            "16",
+        ],
+        |_| None,
+    )
+    .unwrap_err();
+    assert!(matches!(
+        inverted_cap,
+        ConfigError::InvalidValue("--tunnel-ktp-relay-adaptive-severe-cap", _)
+    ));
 }
 
 #[test]

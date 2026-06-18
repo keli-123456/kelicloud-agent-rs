@@ -1,7 +1,8 @@
 use kelicloud_agent_rs::ktp::{FrameLeg, FrameType, KtpFrame};
 use kelicloud_agent_rs::tunnel_async_runtime::{
     AsyncTunnelCore, AsyncTunnelFrameQueue, TunnelFrameReadyNotifier, TunnelIngressListenerSpec,
-    TunnelQueueDwellStatsSnapshot, TunnelRelayBatchPolicy, TunnelRuntimeLimits, TunnelRuntimeStats,
+    TunnelQueueDwellStatsSnapshot, TunnelRelayBatchPolicy, TunnelRelayBatchTuning,
+    TunnelRuntimeLimits, TunnelRuntimeStats,
 };
 use kelicloud_agent_rs::tunnel_session::{
     decode_session_open_payload, encode_session_open_payload, TunnelSessionOpenPayload,
@@ -25,6 +26,7 @@ fn async_runtime_limits_have_bounded_defaults() {
     assert!(limits.target_dial_timeout.as_secs() <= 5);
     assert!(limits.idle_timeout.as_secs() >= 600);
     assert_eq!(limits.relay_batch_policy, TunnelRelayBatchPolicy::Fixed);
+    assert_eq!(limits.relay_batch_tuning, TunnelRelayBatchTuning::default());
 }
 
 #[test]
@@ -84,6 +86,79 @@ fn relay_batch_policy_adaptive_responds_to_queue_dwell_pressure() {
     );
     assert_eq!(
         TunnelRelayBatchPolicy::Fixed.effective_batch_frames_with_dwell(64, 8, severe_dwell),
+        64
+    );
+}
+
+#[test]
+fn relay_batch_policy_custom_tuning_changes_caps_and_thresholds() {
+    let tuning = TunnelRelayBatchTuning {
+        high_session_threshold: 4,
+        elevated_dwell_p95_micros: 20_000,
+        severe_dwell_p95_micros: 80_000,
+        elevated_batch_cap: 32,
+        severe_batch_cap: 4,
+    };
+    let elevated_dwell = TunnelQueueDwellStatsSnapshot {
+        frames: 100,
+        micros_total: 2_500_000,
+        micros_max: 60_000,
+        p50_micros: 10_000,
+        p95_micros: 25_000,
+        p99_micros: 60_000,
+    };
+    let severe_dwell = TunnelQueueDwellStatsSnapshot {
+        frames: 100,
+        micros_total: 9_000_000,
+        micros_max: 120_000,
+        p50_micros: 40_000,
+        p95_micros: 90_000,
+        p99_micros: 120_000,
+    };
+
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames_with_tuning(
+            64,
+            3,
+            TunnelQueueDwellStatsSnapshot::default(),
+            tuning
+        ),
+        64
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames_with_tuning(
+            64,
+            4,
+            TunnelQueueDwellStatsSnapshot::default(),
+            tuning
+        ),
+        32
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames_with_tuning(
+            64,
+            2,
+            elevated_dwell,
+            tuning
+        ),
+        32
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Adaptive.effective_batch_frames_with_tuning(
+            64,
+            2,
+            severe_dwell,
+            tuning
+        ),
+        4
+    );
+    assert_eq!(
+        TunnelRelayBatchPolicy::Fixed.effective_batch_frames_with_tuning(
+            64,
+            4,
+            severe_dwell,
+            tuning
+        ),
         64
     );
 }

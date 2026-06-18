@@ -7,7 +7,7 @@ use kelicloud_agent_rs::task::{
 };
 use kelicloud_agent_rs::token::SharedAgentToken;
 use kelicloud_agent_rs::transport::TransportError;
-use kelicloud_agent_rs::tunnel_async_runtime::TunnelRelayBatchPolicy;
+use kelicloud_agent_rs::tunnel_async_runtime::{TunnelRelayBatchPolicy, TunnelRelayBatchTuning};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -341,6 +341,7 @@ fn test_config(endpoint: String) -> AgentConfig {
         tunnel_data_enabled: false,
         tunnel_ktp_tcp_address: String::new(),
         tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
+        tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning::default(),
         interval_seconds: 1.0,
         max_retries: 0,
         reconnect_interval_seconds: 5,

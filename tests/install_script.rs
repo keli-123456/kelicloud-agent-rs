@@ -31,6 +31,11 @@ fn install_script_exposes_panel_compatible_linux_flags() {
         "--enable-tunnel-data",
         "--tunnel-ktp-tcp-address ADDRESS",
         "--tunnel-ktp-relay-batch-policy POLICY",
+        "--tunnel-ktp-relay-adaptive-high-sessions N",
+        "--tunnel-ktp-relay-adaptive-elevated-dwell-us N",
+        "--tunnel-ktp-relay-adaptive-severe-dwell-us N",
+        "--tunnel-ktp-relay-adaptive-elevated-cap N",
+        "--tunnel-ktp-relay-adaptive-severe-cap N",
         "AGENT_AUTO_DISCOVERY_KEY",
         "AGENT_MEMORY_INCLUDE_CACHE",
         "AGENT_INCLUDE_NICS",
@@ -40,6 +45,11 @@ fn install_script_exposes_panel_compatible_linux_flags() {
         "AGENT_TUNNEL_DATA_ENABLED",
         "AGENT_TUNNEL_KTP_TCP_ADDRESS",
         "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY",
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS",
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US",
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US",
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP",
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP",
     ] {
         assert!(script.contains(expected), "missing {expected}");
     }
@@ -151,6 +161,42 @@ fn render_env_respects_explicit_tunnel_relay_batch_policy() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("AGENT_TUNNEL_DATA_ENABLED='true'"));
     assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY='fixed'"));
+}
+
+#[cfg(unix)]
+#[test]
+fn render_env_accepts_ktp_relay_adaptive_tuning() {
+    let output = std::process::Command::new("bash")
+        .arg(install_script_path())
+        .arg("render-env")
+        .arg("--endpoint")
+        .arg("https://panel.example.com")
+        .arg("--token")
+        .arg("secret-token")
+        .arg("--tunnel-ktp-relay-adaptive-high-sessions")
+        .arg("6")
+        .arg("--tunnel-ktp-relay-adaptive-elevated-dwell-us")
+        .arg("40000")
+        .arg("--tunnel-ktp-relay-adaptive-severe-dwell-us")
+        .arg("120000")
+        .arg("--tunnel-ktp-relay-adaptive-elevated-cap")
+        .arg("24")
+        .arg("--tunnel-ktp-relay-adaptive-severe-cap")
+        .arg("6")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS='6'"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US='40000'"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US='120000'"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP='24'"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP='6'"));
 }
 
 #[cfg(unix)]

@@ -4,7 +4,9 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 
-use crate::tunnel_async_runtime::{TunnelRelayBatchPolicy, TunnelRuntimeLimits};
+use crate::tunnel_async_runtime::{
+    TunnelRelayBatchPolicy, TunnelRelayBatchTuning, TunnelRuntimeLimits,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentConfig {
@@ -17,6 +19,7 @@ pub struct AgentConfig {
     pub tunnel_data_enabled: bool,
     pub tunnel_ktp_tcp_address: String,
     pub tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy,
+    pub tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning,
     pub interval_seconds: f64,
     pub max_retries: u32,
     pub reconnect_interval_seconds: u64,
@@ -96,6 +99,7 @@ impl AgentConfig {
         let mut tunnel_ktp_tcp_address =
             clean_optional(env_lookup("AGENT_TUNNEL_KTP_TCP_ADDRESS")).unwrap_or_default();
         let mut tunnel_ktp_relay_batch_policy = TunnelRelayBatchPolicy::Fixed;
+        let mut tunnel_ktp_relay_batch_tuning = TunnelRelayBatchTuning::default();
         let mut interval_seconds = parse_env_f64(&env_lookup, "AGENT_INTERVAL", 1.0)?;
         let mut max_retries = parse_env_u32(&env_lookup, "AGENT_MAX_RETRIES", 3)?;
         let mut reconnect_interval_seconds =
@@ -179,6 +183,40 @@ impl AgentConfig {
                     tunnel_ktp_relay_batch_policy = parse_tunnel_relay_batch_policy(
                         "--tunnel-ktp-relay-batch-policy",
                         &next_value(&mut iter, "--tunnel-ktp-relay-batch-policy")?,
+                    )?;
+                }
+                "--tunnel-ktp-relay-adaptive-high-sessions"
+                | "--ktp-relay-adaptive-high-sessions" => {
+                    tunnel_ktp_relay_batch_tuning.high_session_threshold = parse_usize(
+                        "--tunnel-ktp-relay-adaptive-high-sessions",
+                        &next_value(&mut iter, "--tunnel-ktp-relay-adaptive-high-sessions")?,
+                    )?;
+                }
+                "--tunnel-ktp-relay-adaptive-elevated-dwell-us"
+                | "--ktp-relay-adaptive-elevated-dwell-us" => {
+                    tunnel_ktp_relay_batch_tuning.elevated_dwell_p95_micros = parse_u64(
+                        "--tunnel-ktp-relay-adaptive-elevated-dwell-us",
+                        &next_value(&mut iter, "--tunnel-ktp-relay-adaptive-elevated-dwell-us")?,
+                    )?;
+                }
+                "--tunnel-ktp-relay-adaptive-severe-dwell-us"
+                | "--ktp-relay-adaptive-severe-dwell-us" => {
+                    tunnel_ktp_relay_batch_tuning.severe_dwell_p95_micros = parse_u64(
+                        "--tunnel-ktp-relay-adaptive-severe-dwell-us",
+                        &next_value(&mut iter, "--tunnel-ktp-relay-adaptive-severe-dwell-us")?,
+                    )?;
+                }
+                "--tunnel-ktp-relay-adaptive-elevated-cap"
+                | "--ktp-relay-adaptive-elevated-cap" => {
+                    tunnel_ktp_relay_batch_tuning.elevated_batch_cap = parse_usize(
+                        "--tunnel-ktp-relay-adaptive-elevated-cap",
+                        &next_value(&mut iter, "--tunnel-ktp-relay-adaptive-elevated-cap")?,
+                    )?;
+                }
+                "--tunnel-ktp-relay-adaptive-severe-cap" | "--ktp-relay-adaptive-severe-cap" => {
+                    tunnel_ktp_relay_batch_tuning.severe_batch_cap = parse_usize(
+                        "--tunnel-ktp-relay-adaptive-severe-cap",
+                        &next_value(&mut iter, "--tunnel-ktp-relay-adaptive-severe-cap")?,
                     )?;
                 }
                 "--interval" => {
@@ -382,6 +420,66 @@ impl AgentConfig {
                         &arg["--ktp-relay-batch-policy=".len()..],
                     )?;
                 }
+                _ if arg.starts_with("--tunnel-ktp-relay-adaptive-high-sessions=") => {
+                    tunnel_ktp_relay_batch_tuning.high_session_threshold = parse_usize(
+                        "--tunnel-ktp-relay-adaptive-high-sessions",
+                        &arg["--tunnel-ktp-relay-adaptive-high-sessions=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--ktp-relay-adaptive-high-sessions=") => {
+                    tunnel_ktp_relay_batch_tuning.high_session_threshold = parse_usize(
+                        "--ktp-relay-adaptive-high-sessions",
+                        &arg["--ktp-relay-adaptive-high-sessions=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--tunnel-ktp-relay-adaptive-elevated-dwell-us=") => {
+                    tunnel_ktp_relay_batch_tuning.elevated_dwell_p95_micros = parse_u64(
+                        "--tunnel-ktp-relay-adaptive-elevated-dwell-us",
+                        &arg["--tunnel-ktp-relay-adaptive-elevated-dwell-us=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--ktp-relay-adaptive-elevated-dwell-us=") => {
+                    tunnel_ktp_relay_batch_tuning.elevated_dwell_p95_micros = parse_u64(
+                        "--ktp-relay-adaptive-elevated-dwell-us",
+                        &arg["--ktp-relay-adaptive-elevated-dwell-us=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--tunnel-ktp-relay-adaptive-severe-dwell-us=") => {
+                    tunnel_ktp_relay_batch_tuning.severe_dwell_p95_micros = parse_u64(
+                        "--tunnel-ktp-relay-adaptive-severe-dwell-us",
+                        &arg["--tunnel-ktp-relay-adaptive-severe-dwell-us=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--ktp-relay-adaptive-severe-dwell-us=") => {
+                    tunnel_ktp_relay_batch_tuning.severe_dwell_p95_micros = parse_u64(
+                        "--ktp-relay-adaptive-severe-dwell-us",
+                        &arg["--ktp-relay-adaptive-severe-dwell-us=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--tunnel-ktp-relay-adaptive-elevated-cap=") => {
+                    tunnel_ktp_relay_batch_tuning.elevated_batch_cap = parse_usize(
+                        "--tunnel-ktp-relay-adaptive-elevated-cap",
+                        &arg["--tunnel-ktp-relay-adaptive-elevated-cap=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--ktp-relay-adaptive-elevated-cap=") => {
+                    tunnel_ktp_relay_batch_tuning.elevated_batch_cap = parse_usize(
+                        "--ktp-relay-adaptive-elevated-cap",
+                        &arg["--ktp-relay-adaptive-elevated-cap=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--tunnel-ktp-relay-adaptive-severe-cap=") => {
+                    tunnel_ktp_relay_batch_tuning.severe_batch_cap = parse_usize(
+                        "--tunnel-ktp-relay-adaptive-severe-cap",
+                        &arg["--tunnel-ktp-relay-adaptive-severe-cap=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--ktp-relay-adaptive-severe-cap=") => {
+                    tunnel_ktp_relay_batch_tuning.severe_batch_cap = parse_usize(
+                        "--ktp-relay-adaptive-severe-cap",
+                        &arg["--ktp-relay-adaptive-severe-cap=".len()..],
+                    )?;
+                }
                 _ => {}
             }
         }
@@ -408,6 +506,7 @@ impl AgentConfig {
             &mut tunnel_ktp_tcp_address,
         );
         apply_tunnel_relay_batch_policy_env(&env_lookup, &mut tunnel_ktp_relay_batch_policy)?;
+        apply_tunnel_relay_batch_tuning_env(&env_lookup, &mut tunnel_ktp_relay_batch_tuning)?;
         apply_f64_env(&env_lookup, "AGENT_INTERVAL", &mut interval_seconds);
         apply_u32_env(&env_lookup, "AGENT_MAX_RETRIES", &mut max_retries);
         apply_u64_env(
@@ -491,6 +590,26 @@ impl AgentConfig {
                 tunnel_ktp_relay_batch_policy =
                     parse_tunnel_relay_batch_policy("tunnel_ktp_relay_batch_policy", &value)?;
             }
+            if let Some(value) = file_config.tunnel_ktp_relay_adaptive_high_sessions {
+                tunnel_ktp_relay_batch_tuning.high_session_threshold =
+                    validate_positive_usize("tunnel_ktp_relay_adaptive_high_sessions", value)?;
+            }
+            if let Some(value) = file_config.tunnel_ktp_relay_adaptive_elevated_dwell_us {
+                tunnel_ktp_relay_batch_tuning.elevated_dwell_p95_micros =
+                    validate_positive_u64("tunnel_ktp_relay_adaptive_elevated_dwell_us", value)?;
+            }
+            if let Some(value) = file_config.tunnel_ktp_relay_adaptive_severe_dwell_us {
+                tunnel_ktp_relay_batch_tuning.severe_dwell_p95_micros =
+                    validate_positive_u64("tunnel_ktp_relay_adaptive_severe_dwell_us", value)?;
+            }
+            if let Some(value) = file_config.tunnel_ktp_relay_adaptive_elevated_cap {
+                tunnel_ktp_relay_batch_tuning.elevated_batch_cap =
+                    validate_positive_usize("tunnel_ktp_relay_adaptive_elevated_cap", value)?;
+            }
+            if let Some(value) = file_config.tunnel_ktp_relay_adaptive_severe_cap {
+                tunnel_ktp_relay_batch_tuning.severe_batch_cap =
+                    validate_positive_usize("tunnel_ktp_relay_adaptive_severe_cap", value)?;
+            }
             if let Some(value) = file_config.interval {
                 interval_seconds = validate_positive_f64("interval", value)?;
             }
@@ -547,6 +666,8 @@ impl AgentConfig {
             }
         }
 
+        validate_tunnel_relay_batch_tuning(&tunnel_ktp_relay_batch_tuning)?;
+
         let endpoint = endpoint.ok_or(ConfigError::MissingEndpoint)?;
         let token = token.unwrap_or_default();
         let auto_discovery_key = auto_discovery_key.unwrap_or_default();
@@ -564,6 +685,7 @@ impl AgentConfig {
             tunnel_data_enabled,
             tunnel_ktp_tcp_address,
             tunnel_ktp_relay_batch_policy,
+            tunnel_ktp_relay_batch_tuning,
             interval_seconds,
             max_retries,
             reconnect_interval_seconds,
@@ -589,6 +711,7 @@ impl AgentConfig {
     pub fn tunnel_runtime_limits(&self) -> TunnelRuntimeLimits {
         let mut limits = TunnelRuntimeLimits::default();
         limits.relay_batch_policy = self.tunnel_ktp_relay_batch_policy;
+        limits.relay_batch_tuning = self.tunnel_ktp_relay_batch_tuning;
         limits
     }
 }
@@ -604,6 +727,11 @@ struct FileConfig {
     tunnel_data_enabled: Option<bool>,
     tunnel_ktp_tcp_address: Option<String>,
     tunnel_ktp_relay_batch_policy: Option<String>,
+    tunnel_ktp_relay_adaptive_high_sessions: Option<usize>,
+    tunnel_ktp_relay_adaptive_elevated_dwell_us: Option<u64>,
+    tunnel_ktp_relay_adaptive_severe_dwell_us: Option<u64>,
+    tunnel_ktp_relay_adaptive_elevated_cap: Option<usize>,
+    tunnel_ktp_relay_adaptive_severe_cap: Option<usize>,
     interval: Option<f64>,
     max_retries: Option<u32>,
     reconnect_interval: Option<u64>,
@@ -798,6 +926,41 @@ where
     Ok(())
 }
 
+fn apply_tunnel_relay_batch_tuning_env<F>(
+    env_lookup: &F,
+    target: &mut TunnelRelayBatchTuning,
+) -> Result<(), ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    apply_usize_env(
+        env_lookup,
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS",
+        &mut target.high_session_threshold,
+    )?;
+    apply_u64_env_strict(
+        env_lookup,
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US",
+        &mut target.elevated_dwell_p95_micros,
+    )?;
+    apply_u64_env_strict(
+        env_lookup,
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US",
+        &mut target.severe_dwell_p95_micros,
+    )?;
+    apply_usize_env(
+        env_lookup,
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP",
+        &mut target.elevated_batch_cap,
+    )?;
+    apply_usize_env(
+        env_lookup,
+        "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP",
+        &mut target.severe_batch_cap,
+    )?;
+    Ok(())
+}
+
 fn apply_f64_env<F>(env_lookup: &F, key: &'static str, target: &mut f64)
 where
     F: Fn(&str) -> Option<String>,
@@ -842,6 +1005,34 @@ where
     }
 }
 
+fn apply_usize_env<F>(
+    env_lookup: &F,
+    key: &'static str,
+    target: &mut usize,
+) -> Result<(), ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup(key)) {
+        *target = parse_usize(key, &value)?;
+    }
+    Ok(())
+}
+
+fn apply_u64_env_strict<F>(
+    env_lookup: &F,
+    key: &'static str,
+    target: &mut u64,
+) -> Result<(), ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup(key)) {
+        *target = parse_u64(key, &value)?;
+    }
+    Ok(())
+}
+
 fn parse_f64(flag: &'static str, value: &str) -> Result<f64, ConfigError> {
     let parsed = value
         .trim()
@@ -864,6 +1055,21 @@ fn parse_u32(flag: &'static str, value: &str) -> Result<u32, ConfigError> {
         .map_err(|_| ConfigError::InvalidValue(flag, value.to_string()))
 }
 
+fn parse_usize(flag: &'static str, value: &str) -> Result<usize, ConfigError> {
+    let parsed = value
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| ConfigError::InvalidValue(flag, value.to_string()))?;
+    validate_positive_usize(flag, parsed)
+}
+
+fn validate_positive_usize(flag: &'static str, parsed: usize) -> Result<usize, ConfigError> {
+    if parsed == 0 {
+        return Err(ConfigError::InvalidValue(flag, parsed.to_string()));
+    }
+    Ok(parsed)
+}
+
 fn parse_u64(flag: &'static str, value: &str) -> Result<u64, ConfigError> {
     let parsed = value
         .trim()
@@ -884,4 +1090,26 @@ fn validate_positive_u64(flag: &'static str, parsed: u64) -> Result<u64, ConfigE
         return Err(ConfigError::InvalidValue(flag, parsed.to_string()));
     }
     Ok(parsed)
+}
+
+fn validate_tunnel_relay_batch_tuning(tuning: &TunnelRelayBatchTuning) -> Result<(), ConfigError> {
+    if tuning.severe_dwell_p95_micros < tuning.elevated_dwell_p95_micros {
+        return Err(ConfigError::InvalidValue(
+            "--tunnel-ktp-relay-adaptive-severe-dwell-us",
+            format!(
+                "{} < {}",
+                tuning.severe_dwell_p95_micros, tuning.elevated_dwell_p95_micros
+            ),
+        ));
+    }
+    if tuning.severe_batch_cap > tuning.elevated_batch_cap {
+        return Err(ConfigError::InvalidValue(
+            "--tunnel-ktp-relay-adaptive-severe-cap",
+            format!(
+                "{} > {}",
+                tuning.severe_batch_cap, tuning.elevated_batch_cap
+            ),
+        ));
+    }
+    Ok(())
 }
