@@ -1167,6 +1167,34 @@ Concurrent strict diagnostics:
 tunnel data diagnostics: runtime_wait_attempts=2682 runtime_wait_hits=43 runtime_wait_elapsed_micros_total=512726 runtime_wait_elapsed_micros_max=4917 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=500 runtime_wait_elapsed_p99_micros=500 outbound_runtime_frames=236 outbound_queue_dwell_frames=236 outbound_queue_dwell_micros_total=609038 outbound_queue_dwell_micros_max=11263 outbound_queue_dwell_p50_micros=250 outbound_queue_dwell_p95_micros=25000 outbound_queue_dwell_p99_micros=25000 socket_idle_reads=2741 socket_idle_empty_reads=2609 socket_read_batches=132 socket_read_frames=224 socket_read_max_batch_frames=11
 ```
 
+Tunnel concurrency matrix wrapper smoke:
+
+- Agent commit: `9794857`
+- Backend commit: `334a82c`
+- Matrix driver:
+  - `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2"`
+  - `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=4`
+  - `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=4096`
+- Run directory: `/tmp/kelicloud-agent-rs-ktp-tunnel-matrix-9794857-220413`
+- Summary TSV:
+  `/tmp/kelicloud-agent-rs-ktp-tunnel-matrix-9794857-220413/logs/matrix-summary.tsv`
+
+Matrix summary:
+
+| Clients | Rounds | Profile | Payload Cap | Status | Total Payload | RTT p50 | RTT p95 | RTT p99 | Client p95 Spread | Socket Read Batches | Socket Read Frames | Socket Max Batch |
+| ---: | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 4 | rdp-like | 4096 B | pass | 544 B | 14276 us | 15342 us | 15342 us | 0 us | 13 | 20 | 2 |
+| 2 | 4 | rdp-like | 4096 B | pass | 1088 B | 11380 us | 16454 us | 16454 us | 842 us | 37 | 65 | 5 |
+
+Notes:
+
+- The matrix wrapper isolates each client-count run with its own database name,
+  smoke hostname, tunnel group, and backend listen port. This prevents full
+  local-backend smoke state from leaking between matrix rows.
+- The first live matrix validation confirmed the wrapper can run repeated real
+  backend KTP tunnel smokes and emit a combined TSV summary that pairs
+  forwarding RTT evidence with KTP socket batch-read counters.
+
 Latest active batch-read diagnostics:
 
 ```text
