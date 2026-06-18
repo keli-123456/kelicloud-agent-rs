@@ -52,12 +52,14 @@ fn main() {
 fn run(args: impl Iterator<Item = String>) -> SummaryResult<CarrierReport> {
     let mut require_pass = false;
     let mut require_ktp_aead = false;
+    let mut require_ktp_tunnel_rtt = false;
     let mut path = None::<String>;
 
     for arg in args {
         match arg.as_str() {
             "--require-pass" => require_pass = true,
             "--require-ktp-aead" => require_ktp_aead = true,
+            "--require-ktp-tunnel-rtt" => require_ktp_tunnel_rtt = true,
             _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("unexpected extra argument".into()),
@@ -66,13 +68,19 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<CarrierReport> {
 
     let path = path.ok_or("matrix-summary.tsv path is required")?;
     let content = fs::read_to_string(&path)?;
-    summarize_tsv(&content, require_pass, require_ktp_aead)
+    summarize_tsv(
+        &content,
+        require_pass,
+        require_ktp_aead,
+        require_ktp_tunnel_rtt,
+    )
 }
 
 fn summarize_tsv(
     content: &str,
     require_pass: bool,
     require_ktp_aead: bool,
+    require_ktp_tunnel_rtt: bool,
 ) -> SummaryResult<CarrierReport> {
     let mut lines = content.lines().filter(|line| !line.trim().is_empty());
     let header = lines.next().ok_or("matrix summary is empty")?;
@@ -151,6 +159,41 @@ fn summarize_tsv(
             if require_ktp_aead {
                 gate_failures.push(
                     "carrier matrix missing pass row with carrier=ktp_tcp ktp_crypto=ktp_aead"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    let ktp_tunnel_rtt_row = rows.iter().find(|row| {
+        row.carrier == "ktp_tcp"
+            && row.ktp_tcp == "true"
+            && row.status == "pass"
+            && row.tunnel_evidence_file != "-"
+            && row.tunnel_profile != "-"
+            && row.tunnel_clients != "-"
+            && row.tunnel_rounds != "-"
+            && row.tunnel_total_payload_bytes != "-"
+            && row.rtt_micros_p50 != "-"
+            && row.rtt_micros_p95 != "-"
+            && row.rtt_micros_p99 != "-"
+            && row.rtt_micros_max != "-"
+            && row.rtt_client_p95_spread_micros != "-"
+    });
+    match ktp_tunnel_rtt_row {
+        Some(row) => output.push_str(&format!(
+            "\nktp_tcp_tunnel_rtt_evidence=present profile={} clients={} rounds={} rtt_micros_p95={} rtt_client_p95_spread_micros={}",
+            row.tunnel_profile,
+            row.tunnel_clients,
+            row.tunnel_rounds,
+            row.rtt_micros_p95,
+            row.rtt_client_p95_spread_micros
+        )),
+        None => {
+            output.push_str("\nktp_tcp_tunnel_rtt_evidence=missing");
+            if require_ktp_tunnel_rtt {
+                gate_failures.push(
+                    "carrier matrix missing pass row with carrier=ktp_tcp tunnel RTT evidence"
                         .to_string(),
                 );
             }
@@ -267,6 +310,6 @@ fn optional_column(positions: &HashMap<String, usize>, name: &str) -> Option<usi
 
 fn print_usage() {
     eprintln!(
-        "usage: ktp-local-backend-matrix-summary [--require-pass] [--require-ktp-aead] <matrix-summary.tsv>"
+        "usage: ktp-local-backend-matrix-summary [--require-pass] [--require-ktp-aead] [--require-ktp-tunnel-rtt] <matrix-summary.tsv>"
     );
 }

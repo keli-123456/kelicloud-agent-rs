@@ -104,6 +104,7 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
     assert!(workflow.contains("ktp-local-backend-matrix-summary"));
     assert!(workflow.contains("--require-pass"));
     assert!(workflow.contains("--require-ktp-aead"));
+    assert!(workflow.contains("--require-ktp-tunnel-rtt"));
     assert!(workflow.contains("Local backend carrier matrix summary"));
     assert!(workflow.contains("kelicloud-agent-rs-local-backend-carrier-summary"));
 }

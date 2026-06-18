@@ -240,6 +240,7 @@ jobs:
           cargo run --locked --bin ktp-local-backend-matrix-summary -- \
             --require-pass \
             --require-ktp-aead \
+            --require-ktp-tunnel-rtt \
             "${summary}" | tee "${report}"
           summary_status="${PIPESTATUS[0]}"
           exit "${summary_status}"
