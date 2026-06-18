@@ -11,6 +11,16 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("1 2 4 8"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES"));
     assert!(script.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP"));
+    assert!(script.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS"));
+    assert!(script.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US"));
+    assert!(script.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US"));
+    assert!(script.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP"));
+    assert!(script.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP"));
     assert!(script.contains("KELICLOUD_SMOKE_KTP_TCP=true"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_CLIENTS"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_ROUNDS"));
@@ -84,6 +94,23 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
             "2",
         )
         .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS",
+            "4",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US",
+            "40000",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US",
+            "120000",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP",
+            "24",
+        )
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP", "6")
+        .env(
             "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR",
             "/tmp/ktp-tunnel-logs",
         )
@@ -120,6 +147,11 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
     assert!(stdout.contains("BACKEND_LISTEN=auto"));
     assert!(stdout.contains("BACKEND_ENDPOINT=auto"));
     assert!(stdout.contains("KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES=2"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS=4"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US=40000"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US=120000"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP=24"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP=6"));
     assert!(stdout.contains("CLIENT_TIMEOUT_SECONDS=300"));
 }
 
@@ -188,6 +220,23 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS", "1 4")
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS", "8")
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES", "8192")
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS",
+            "4",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US",
+            "40000",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US",
+            "120000",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP",
+            "24",
+        )
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP", "6")
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR", &log_dir)
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR", &work_dir)
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY", &summary_path)
@@ -204,12 +253,13 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
     );
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert!(summary.contains(
-        "relay_batch_policy\tclients\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last"
+        "relay_batch_policy\tclients\trelay_adaptive_high_sessions\trelay_adaptive_elevated_dwell_us\trelay_adaptive_severe_dwell_us\trelay_adaptive_elevated_cap\trelay_adaptive_severe_cap\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last"
     ));
-    assert_summary_row(
+    assert_summary_row_with_adaptive(
         &summary,
         "fixed",
         "1",
+        &["4", "40000", "120000", "24", "6"],
         &[
             "8",
             "rdp-like",
@@ -245,10 +295,11 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
             "64",
         ],
     );
-    assert_summary_row(
+    assert_summary_row_with_adaptive(
         &summary,
         "fixed",
         "4",
+        &["4", "40000", "120000", "24", "6"],
         &[
             "8",
             "rdp-like",
@@ -511,6 +562,22 @@ fn assert_summary_row(
     clients: &str,
     expected_after_elapsed: &[&str],
 ) {
+    assert_summary_row_with_adaptive(
+        summary,
+        relay_batch_policy,
+        clients,
+        &["8", "50000", "250000", "16", "8"],
+        expected_after_elapsed,
+    );
+}
+
+fn assert_summary_row_with_adaptive(
+    summary: &str,
+    relay_batch_policy: &str,
+    clients: &str,
+    expected_adaptive: &[&str],
+    expected_after_elapsed: &[&str],
+) {
     let row = summary
         .lines()
         .find(|line| line.starts_with(&format!("{relay_batch_policy}\t{clients}\t")))
@@ -522,12 +589,13 @@ fn assert_summary_row(
     let columns = row.split('\t').collect::<Vec<_>>();
     assert_eq!(columns[0], relay_batch_policy);
     assert_eq!(columns[1], clients);
+    assert_eq!(&columns[2..7], expected_adaptive);
     assert!(
-        columns[6].parse::<u64>().is_ok(),
+        columns[11].parse::<u64>().is_ok(),
         "elapsed_millis should be an unsigned integer in row: {row}"
     );
-    assert_eq!(&columns[2..6], &expected_after_elapsed[0..4]);
-    assert_eq!(&columns[7..], &expected_after_elapsed[4..]);
+    assert_eq!(&columns[7..11], &expected_after_elapsed[0..4]);
+    assert_eq!(&columns[12..], &expected_after_elapsed[4..]);
 }
 
 fn fake_smoke_script() -> &'static str {

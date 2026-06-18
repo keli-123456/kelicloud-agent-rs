@@ -8,6 +8,11 @@ KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFI
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES:-8192}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES:-2}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES:-1}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS:-8}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US:-50000}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US:-250000}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP:-16}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP:-8}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS:-900}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR:-smoke-logs/local-backend-tunnel-matrix}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR:-}"
@@ -141,7 +146,7 @@ init_summary() {
         return
     fi
     mkdir -p "$(dirname "${MATRIX_SUMMARY_PATH}")"
-    printf '%s\n' "relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max	socket_write_batch_limit_min	socket_write_batch_limit_last" >"${MATRIX_SUMMARY_PATH}"
+    printf '%s\n' "relay_batch_policy	clients	relay_adaptive_high_sessions	relay_adaptive_elevated_dwell_us	relay_adaptive_severe_dwell_us	relay_adaptive_elevated_cap	relay_adaptive_severe_cap	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max	socket_write_batch_limit_min	socket_write_batch_limit_last" >"${MATRIX_SUMMARY_PATH}"
 }
 
 plain_markdown_value() {
@@ -214,9 +219,14 @@ write_summary_row() {
     socket_write_batch_limit_min="$(backtick_markdown_value "${ktp_evidence_file}" "socket_write_batch_limit_min")"
     socket_write_batch_limit_last="$(backtick_markdown_value "${ktp_evidence_file}" "socket_write_batch_limit_last")"
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${policy}" \
         "${clients}" \
+        "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}" \
+        "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US}" \
+        "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US}" \
+        "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP}" \
+        "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}" \
@@ -276,10 +286,15 @@ run_clients() {
 
     echo "== ktp local backend tunnel relay_batch_policy=${policy} clients=${clients} =="
     if [[ "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN}" == "1" ]]; then
-        printf 'dry_run: relay_batch_policy=%s clients=%s KELICLOUD_SMOKE_KTP_TCP=true AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=%s BACKEND_LISTEN=%s BACKEND_ENDPOINT=%s KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES=%s CLIENT_TIMEOUT_SECONDS=%s SMOKE_LOG_DIR=%s' \
+        printf 'dry_run: relay_batch_policy=%s clients=%s KELICLOUD_SMOKE_KTP_TCP=true AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP=%s BACKEND_LISTEN=%s BACKEND_ENDPOINT=%s KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES=%s CLIENT_TIMEOUT_SECONDS=%s SMOKE_LOG_DIR=%s' \
             "${policy}" \
             "${clients}" \
             "${policy}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP}" \
+            "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP}" \
             "${backend_listen}" \
             "${backend_endpoint}" \
             "${db_name}" \
@@ -311,6 +326,11 @@ run_clients() {
     (
         export KELICLOUD_SMOKE_KTP_TCP=true
         export AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY="${policy}"
+        export AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}"
+        export AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US}"
+        export AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US}"
+        export AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP}"
+        export AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP}"
         export BACKEND_LISTEN="${backend_listen}"
         export BACKEND_ENDPOINT="${backend_endpoint}"
         export KOMARI_DB_NAME="${db_name}"
@@ -352,6 +372,11 @@ main() {
     require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}"
     require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES}"
     require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES}"
+    require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}"
+    require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US}"
+    require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US}"
+    require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP}"
+    require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP}"
     require_non_negative_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS}"
     if [[ -n "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}" ]]; then
         require_positive_integer "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}"
@@ -365,6 +390,7 @@ main() {
     echo "relay_batch_policies=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}"
     echo "clients=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}"
     echo "rounds=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS} profile=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE} payload_bytes=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}"
+    echo "adaptive_high_sessions=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS} adaptive_elevated_dwell_us=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US} adaptive_severe_dwell_us=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US} adaptive_elevated_cap=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP} adaptive_severe_cap=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP}"
     echo "client_timeout_seconds=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS}"
     echo "log_dir=${MATRIX_LOG_ROOT}"
     if [[ -n "${MATRIX_WORK_ROOT}" ]]; then

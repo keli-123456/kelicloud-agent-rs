@@ -8,6 +8,11 @@ type SummaryResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 struct MatrixRow {
     relay_batch_policy: String,
     clients: String,
+    relay_adaptive_high_sessions: Option<String>,
+    relay_adaptive_elevated_dwell_us: Option<String>,
+    relay_adaptive_severe_dwell_us: Option<String>,
+    relay_adaptive_elevated_cap: Option<String>,
+    relay_adaptive_severe_cap: Option<String>,
     status: String,
     elapsed_millis: u64,
     rtt_micros_p95: Option<u64>,
@@ -124,9 +129,16 @@ fn summarize_tsv(
         let socket_write_batch_limit = metric_text(row.socket_write_batch_limit_max);
         let socket_write_batch_limit_min = metric_text(row.socket_write_batch_limit_min);
         let socket_write_batch_limit_last = metric_text(row.socket_write_batch_limit_last);
+        let relay_adaptive_high_sessions = text_value(row.relay_adaptive_high_sessions.as_deref());
+        let relay_adaptive_elevated_dwell_us =
+            text_value(row.relay_adaptive_elevated_dwell_us.as_deref());
+        let relay_adaptive_severe_dwell_us =
+            text_value(row.relay_adaptive_severe_dwell_us.as_deref());
+        let relay_adaptive_elevated_cap = text_value(row.relay_adaptive_elevated_cap.as_deref());
+        let relay_adaptive_severe_cap = text_value(row.relay_adaptive_severe_cap.as_deref());
         output.push('\n');
         output.push_str(&format!(
-            "policy={} clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={}",
+            "policy={} clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={} relay_adaptive_high_sessions={} relay_adaptive_elevated_dwell_us={} relay_adaptive_severe_dwell_us={} relay_adaptive_elevated_cap={} relay_adaptive_severe_cap={}",
             row.relay_batch_policy,
             row.clients,
             row.status,
@@ -137,7 +149,12 @@ fn summarize_tsv(
             socket_write_batch,
             socket_write_batch_limit,
             socket_write_batch_limit_min,
-            socket_write_batch_limit_last
+            socket_write_batch_limit_last,
+            relay_adaptive_high_sessions,
+            relay_adaptive_elevated_dwell_us,
+            relay_adaptive_severe_dwell_us,
+            relay_adaptive_elevated_cap,
+            relay_adaptive_severe_cap
         ));
 
         if row.status == "pass" {
@@ -257,6 +274,17 @@ fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> Summary
     Ok(MatrixRow {
         relay_batch_policy,
         clients: clients.clone(),
+        relay_adaptive_high_sessions: optional_text(&fields, indexes.relay_adaptive_high_sessions),
+        relay_adaptive_elevated_dwell_us: optional_text(
+            &fields,
+            indexes.relay_adaptive_elevated_dwell_us,
+        ),
+        relay_adaptive_severe_dwell_us: optional_text(
+            &fields,
+            indexes.relay_adaptive_severe_dwell_us,
+        ),
+        relay_adaptive_elevated_cap: optional_text(&fields, indexes.relay_adaptive_elevated_cap),
+        relay_adaptive_severe_cap: optional_text(&fields, indexes.relay_adaptive_severe_cap),
         status,
         elapsed_millis,
         rtt_micros_p95: parse_metric(
@@ -326,6 +354,13 @@ fn field<'a>(fields: &'a [&str], index: usize, name: &str) -> SummaryResult<&'a 
         .ok_or_else(|| format!("missing field {name}").into())
 }
 
+fn optional_text(fields: &[&str], index: Option<usize>) -> Option<String> {
+    index
+        .and_then(|index| fields.get(index).copied())
+        .filter(|value| !value.is_empty() && *value != "-")
+        .map(str::to_string)
+}
+
 fn parse_required_u64(fields: &[&str], index: usize, name: &str) -> SummaryResult<u64> {
     let value = field(fields, index, name)?;
     Ok(value.parse::<u64>()?)
@@ -370,6 +405,10 @@ fn metric_text(value: Option<u64>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
+}
+
+fn text_value(value: Option<&str>) -> &str {
+    value.unwrap_or("-")
 }
 
 #[derive(Clone, Debug)]
@@ -560,6 +599,11 @@ impl MinMetric {
 struct MatrixIndexes {
     relay_batch_policy: Option<usize>,
     clients: usize,
+    relay_adaptive_high_sessions: Option<usize>,
+    relay_adaptive_elevated_dwell_us: Option<usize>,
+    relay_adaptive_severe_dwell_us: Option<usize>,
+    relay_adaptive_elevated_cap: Option<usize>,
+    relay_adaptive_severe_cap: Option<usize>,
     status: usize,
     elapsed_millis: usize,
     rtt_micros_p95: usize,
@@ -581,6 +625,15 @@ impl MatrixIndexes {
         Ok(Self {
             relay_batch_policy: positions.get("relay_batch_policy").copied(),
             clients: required_column(&positions, "clients")?,
+            relay_adaptive_high_sessions: positions.get("relay_adaptive_high_sessions").copied(),
+            relay_adaptive_elevated_dwell_us: positions
+                .get("relay_adaptive_elevated_dwell_us")
+                .copied(),
+            relay_adaptive_severe_dwell_us: positions
+                .get("relay_adaptive_severe_dwell_us")
+                .copied(),
+            relay_adaptive_elevated_cap: positions.get("relay_adaptive_elevated_cap").copied(),
+            relay_adaptive_severe_cap: positions.get("relay_adaptive_severe_cap").copied(),
             status: required_column(&positions, "status")?,
             elapsed_millis: required_column(&positions, "elapsed_millis")?,
             rtt_micros_p95: required_column(&positions, "rtt_micros_p95")?,
