@@ -1096,6 +1096,12 @@ Notes:
   fails unless live diagnostics include positive `socket_read_batches` and
   `socket_read_frames`, so the evidence proves the dedicated KTP TCP
   batch-read path was used by real tunnel traffic.
+- The `Local Backend Smoke` GitHub Actions matrix now keeps the WebSocket row
+  on the single-round compatibility smoke while the `ktp_tcp` row runs
+  `KELICLOUD_TUNNEL_ECHO_ROUNDS=8` and
+  `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2`. This turns the dedicated KTP CI row
+  into a continuous multi-round tunnel echo and multi-frame socket batch-read
+  gate.
 
 Next evidence to collect:
 

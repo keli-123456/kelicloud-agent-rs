@@ -34,10 +34,16 @@ jobs:
         include:
           - data_plane: websocket
             ktp_tcp: "false"
+            tunnel_echo_rounds: "1"
+            ktp_min_max_batch_frames: "1"
           - data_plane: ktp_tcp
             ktp_tcp: "true"
+            tunnel_echo_rounds: "8"
+            ktp_min_max_batch_frames: "2"
     env:
       KELICLOUD_SMOKE_KTP_TCP: ${{ matrix.ktp_tcp }}
+      KELICLOUD_TUNNEL_ECHO_ROUNDS: ${{ matrix.tunnel_echo_rounds }}
+      KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES: ${{ matrix.ktp_min_max_batch_frames }}
       KOMARI_DB_NAME: komari_${{ matrix.data_plane }}
       SMOKE_LOG_DIR: smoke-logs-${{ matrix.data_plane }}
 
