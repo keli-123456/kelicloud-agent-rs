@@ -1186,6 +1186,30 @@ Matrix summary:
 | 1 | 4 | rdp-like | 4096 B | pass | 544 B | 14276 us | 15342 us | 15342 us | 0 us | 13 | 20 | 2 |
 | 2 | 4 | rdp-like | 4096 B | pass | 1088 B | 11380 us | 16454 us | 16454 us | 842 us | 37 | 65 | 5 |
 
+GitHub Actions tunnel matrix push smoke:
+
+- Agent commit: `f1fc64b`
+- Workflow: `KTP Tunnel Matrix`
+- Run: `27732983161`
+- Event: `push`
+- Runner: `ubuntu-24.04`
+- Artifact: `kelicloud-agent-rs-ktp-tunnel-matrix`
+- Artifact ID: `7712961692`
+- Artifact digest:
+  `sha256:044934da0c83019729fb4f6c5dc8d711330e4d9b79af6b2a5dcb44d1b9350c38`
+- Matrix driver:
+  - `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2"`
+  - `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=4`
+  - `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=4096`
+  - `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES=2`
+
+GitHub Actions matrix summary:
+
+| Clients | Rounds | Profile | Payload Cap | Status | Total Payload | RTT p50 | RTT p95 | RTT p99 | Client p95 Spread | Socket Read Batches | Socket Read Frames | Socket Max Batch |
+| ---: | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 4 | rdp-like | 4096 B | pass | 544 B | 4892 us | 13272 us | 13272 us | 0 us | 13 | 20 | 2 |
+| 2 | 4 | rdp-like | 4096 B | pass | 1088 B | 11590 us | 13305 us | 13305 us | 387 us | 39 | 64 | 5 |
+
 Notes:
 
 - The matrix wrapper isolates each client-count run with its own database name,
@@ -1194,6 +1218,9 @@ Notes:
 - The first live matrix validation confirmed the wrapper can run repeated real
   backend KTP tunnel smokes and emit a combined TSV summary that pairs
   forwarding RTT evidence with KTP socket batch-read counters.
+- The `KTP Tunnel Matrix` workflow keeps `workflow_dispatch` for full manual
+  `1 2 4 8` runs, but its `push` self-check uses the lighter `1 2` matrix and
+  publishes `matrix-summary.tsv` to the Actions job summary plus artifact.
 
 Latest active batch-read diagnostics:
 
@@ -1240,7 +1267,8 @@ Next evidence to collect:
   `ktp-e2e-bench --profile rdp-like` so tunnel tuning compares interactive
   mixed-payload traffic instead of fixed-size frames only.
 - Before/after diagnostics for production data carrier scheduling changes.
-- Inspect the next GitHub Actions KTP local-backend artifact and keep it as the
-  release evidence source instead of relying on one-off remote host paths.
+- Run the manual `KTP Tunnel Matrix` workflow with the full default `1 2 4 8`
+  client matrix after the next scheduling change, then compare that artifact
+  against the push self-check and one-off remote host paths.
 - Live KTP canary traffic with real RDP-like forwarding and paired RTT or
   throughput evidence from the same observation window.
