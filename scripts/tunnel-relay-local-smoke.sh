@@ -6,6 +6,10 @@ KTP_SMOKE_POLICY_CSV="${KTP_SMOKE_POLICY_CSV:-${TMPDIR:-/tmp}/ktp-relay-policy-s
 KTP_SMOKE_CARRIER_RUNS="${KTP_SMOKE_CARRIER_RUNS:-3}"
 KTP_SMOKE_BATCH_READ_FRAMES="${KTP_SMOKE_BATCH_READ_FRAMES:-512}"
 KTP_SMOKE_BATCH_READ_PAYLOAD_BYTES="${KTP_SMOKE_BATCH_READ_PAYLOAD_BYTES:-4096}"
+KTP_SMOKE_CODEC_RUNS="${KTP_SMOKE_CODEC_RUNS:-3}"
+KTP_SMOKE_CODEC_FRAMES="${KTP_SMOKE_CODEC_FRAMES:-4096}"
+KTP_SMOKE_CODEC_PAYLOAD_BYTES="${KTP_SMOKE_CODEC_PAYLOAD_BYTES:-16384}"
+KTP_SMOKE_CODEC_CHUNK_FRAMES="${KTP_SMOKE_CODEC_CHUNK_FRAMES:-64}"
 
 echo "== tunnel preflight checks =="
 cargo test --test tunnel_preflight -- --nocapture
@@ -19,6 +23,9 @@ cargo test --test tunnel_async_runtime async_runtime_handles_100_concurrent_loop
 echo "== encrypted ktp tcp carrier performance gate =="
 cargo test --test ktp_transport encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips -- --nocapture
 cargo test --test ktp_transport encrypted_tcp_frame_relay_handles_100_bidirectional_rounds -- --nocapture
+echo "== ktp codec cursor performance gate =="
+cargo run --bin ktp-codec-bench -- --mode stream --frames "${KTP_SMOKE_CODEC_FRAMES}" --payload-bytes "${KTP_SMOKE_CODEC_PAYLOAD_BYTES}" --chunk-frames "${KTP_SMOKE_CODEC_CHUNK_FRAMES}" --runs "${KTP_SMOKE_CODEC_RUNS}"
+cargo run --bin ktp-codec-bench -- --mode crypto --frames "${KTP_SMOKE_CODEC_FRAMES}" --payload-bytes "${KTP_SMOKE_CODEC_PAYLOAD_BYTES}" --chunk-frames "${KTP_SMOKE_CODEC_CHUNK_FRAMES}" --runs "${KTP_SMOKE_CODEC_RUNS}"
 cargo run --bin ktp-tunnel-bench -- --frames 4096 --payload-bytes 16384 --runs "${KTP_SMOKE_CARRIER_RUNS}"
 cargo run --bin ktp-tunnel-bench -- --direction relay-to-client-batch-read --frames "${KTP_SMOKE_BATCH_READ_FRAMES}" --payload-bytes "${KTP_SMOKE_BATCH_READ_PAYLOAD_BYTES}"
 cargo run --bin ktp-e2e-bench -- --latency --frames 16 --payload-bytes 1024

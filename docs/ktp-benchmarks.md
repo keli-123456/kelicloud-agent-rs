@@ -187,6 +187,11 @@ measures only stream or crypto-record decode throughput. Its report includes
 `cursor_compaction=1`, `chunk_frames`, elapsed min/median/max, and throughput
 min/median/max. Use it after codec-buffer changes to catch regressions in the
 cursor-based decoder path without running a full backend smoke.
+`scripts/tunnel-relay-local-smoke.sh` now runs both `--mode stream` and
+`--mode crypto` with the same defaults by default. Override
+`KTP_SMOKE_CODEC_RUNS`, `KTP_SMOKE_CODEC_FRAMES`,
+`KTP_SMOKE_CODEC_PAYLOAD_BYTES`, or `KTP_SMOKE_CODEC_CHUNK_FRAMES` for longer
+local soaks.
 
 For stricter performance-path evidence, set
 `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2` before running the helper. That keeps
