@@ -11,6 +11,8 @@ KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN:-0}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY:-}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT:-}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX:-${KOMARI_DB_NAME:-komari_tunnel_matrix}}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX:-agent-rs-tunnel-matrix}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -35,6 +37,18 @@ require_positive_integer() {
         echo "${name} must be a positive integer" >&2
         return 2
     }
+}
+
+matrix_db_name() {
+    local clients="$1"
+    local prefix="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX}"
+    prefix="${prefix//[^a-zA-Z0-9_]/_}"
+    printf '%s_clients_%s' "${prefix}" "${clients}"
+}
+
+matrix_identity_name() {
+    local clients="$1"
+    printf '%s-c%s' "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX}" "${clients}"
 }
 
 init_matrix_paths() {
@@ -127,19 +141,26 @@ run_clients() {
     local clients="$1"
     local log_dir="${MATRIX_LOG_ROOT}/clients-${clients}"
     local work_dir=""
+    local db_name
+    local identity_name
     local smoke_status=0
     local status
 
     require_positive_integer "client count" "${clients}"
     log_dir="$(trim_trailing_slash "${log_dir}")"
+    db_name="$(matrix_db_name "${clients}")"
+    identity_name="$(matrix_identity_name "${clients}")"
     if [[ -n "${MATRIX_WORK_ROOT}" ]]; then
         work_dir="${MATRIX_WORK_ROOT}/clients-${clients}"
     fi
 
     echo "== ktp local backend tunnel clients=${clients} =="
     if [[ "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN}" == "1" ]]; then
-        printf 'dry_run: clients=%s KELICLOUD_SMOKE_KTP_TCP=true KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s SMOKE_LOG_DIR=%s' \
+        printf 'dry_run: clients=%s KELICLOUD_SMOKE_KTP_TCP=true KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s SMOKE_LOG_DIR=%s' \
             "${clients}" \
+            "${db_name}" \
+            "${identity_name}" \
+            "${identity_name}" \
             "${clients}" \
             "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS}" \
             "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE}" \
@@ -160,6 +181,9 @@ run_clients() {
 
     (
         export KELICLOUD_SMOKE_KTP_TCP=true
+        export KOMARI_DB_NAME="${db_name}"
+        export SMOKE_AGENT_HOSTNAME="${identity_name}"
+        export SMOKE_TUNNEL_GROUP="${identity_name}"
         export KELICLOUD_TUNNEL_ECHO_CLIENTS="${clients}"
         export KELICLOUD_TUNNEL_ECHO_ROUNDS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS}"
         export KELICLOUD_TUNNEL_ECHO_PROFILE="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE}"

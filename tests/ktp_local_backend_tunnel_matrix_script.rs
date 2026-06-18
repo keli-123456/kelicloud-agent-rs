@@ -14,6 +14,10 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_ROUNDS"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_PROFILE"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES"));
+    assert!(script.contains("KOMARI_DB_NAME"));
+    assert!(script.contains("SMOKE_AGENT_HOSTNAME"));
+    assert!(script.contains("SMOKE_TUNNEL_GROUP"));
+    assert!(script.contains("matrix_db_name"));
     assert!(script.contains("KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES"));
     assert!(script.contains("tunnel-echo.evidence.md"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
@@ -76,6 +80,12 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
     assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/clients-4"));
     assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/ktp-tunnel-work/clients-1"));
     assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/ktp-tunnel-work/clients-4"));
+    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_clients_1"));
+    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_clients_4"));
+    assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-c1"));
+    assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-c4"));
+    assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-c1"));
+    assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-c4"));
 }
 
 #[test]
