@@ -241,6 +241,7 @@ jobs:
             --require-pass \
             --require-ktp-aead \
             --require-ktp-tunnel-rtt \
+            --require-ktp-rdp-like-rtt \
             "${summary}" | tee "${report}"
           summary_status="${PIPESTATUS[0]}"
           exit "${summary_status}"

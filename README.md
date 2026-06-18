@@ -302,12 +302,12 @@ carrier and the KTP TCP data carrier, then uploads separate
 `kelicloud-agent-rs-local-backend-smoke-ktp_tcp` log artifacts. A follow-up
 summary job downloads both artifacts, writes `matrix-summary.tsv`, runs
 `ktp-local-backend-matrix-summary --require-pass --require-ktp-aead
---require-ktp-tunnel-rtt`, and uploads
+--require-ktp-tunnel-rtt --require-ktp-rdp-like-rtt`, and uploads
 `kelicloud-agent-rs-local-backend-carrier-summary` with
 `matrix-summary.report.txt`. The summary also surfaces each row's
 `tunnel-echo.evidence.md` profile, client count, rounds, payload total, RTT
 p50/p95/p99/max, and client p95 spread; the KTP TCP row must include that
-real-forwarding RTT evidence.
+real-forwarding RTT evidence as a non-trivial `rdp-like` multi-client sample.
 
 To run that same real-backend smoke through the KTP TCP data carrier instead
 of the WebSocket data carrier, enable the opt-in KTP mode:

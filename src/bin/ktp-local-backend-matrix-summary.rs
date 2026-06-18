@@ -53,6 +53,7 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<CarrierReport> {
     let mut require_pass = false;
     let mut require_ktp_aead = false;
     let mut require_ktp_tunnel_rtt = false;
+    let mut require_ktp_rdp_like_rtt = false;
     let mut path = None::<String>;
 
     for arg in args {
@@ -60,6 +61,7 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<CarrierReport> {
             "--require-pass" => require_pass = true,
             "--require-ktp-aead" => require_ktp_aead = true,
             "--require-ktp-tunnel-rtt" => require_ktp_tunnel_rtt = true,
+            "--require-ktp-rdp-like-rtt" => require_ktp_rdp_like_rtt = true,
             _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("unexpected extra argument".into()),
@@ -73,6 +75,7 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<CarrierReport> {
         require_pass,
         require_ktp_aead,
         require_ktp_tunnel_rtt,
+        require_ktp_rdp_like_rtt,
     )
 }
 
@@ -81,6 +84,7 @@ fn summarize_tsv(
     require_pass: bool,
     require_ktp_aead: bool,
     require_ktp_tunnel_rtt: bool,
+    require_ktp_rdp_like_rtt: bool,
 ) -> SummaryResult<CarrierReport> {
     let mut lines = content.lines().filter(|line| !line.trim().is_empty());
     let header = lines.next().ok_or("matrix summary is empty")?;
@@ -200,6 +204,40 @@ fn summarize_tsv(
         }
     }
 
+    let ktp_rdp_like_rtt_row = rows.iter().find(|row| {
+        row.carrier == "ktp_tcp"
+            && row.ktp_tcp == "true"
+            && row.status == "pass"
+            && row.tunnel_profile == "rdp-like"
+            && parse_u64_metric(&row.tunnel_clients).is_some_and(|value| value >= 2)
+            && parse_u64_metric(&row.tunnel_rounds).is_some_and(|value| value >= 4)
+            && parse_u64_metric(&row.tunnel_total_payload_bytes).is_some_and(|value| value > 0)
+            && parse_u64_metric(&row.rtt_micros_p50).is_some_and(|value| value > 0)
+            && parse_u64_metric(&row.rtt_micros_p95).is_some_and(|value| value > 0)
+            && parse_u64_metric(&row.rtt_micros_p99).is_some_and(|value| value > 0)
+            && parse_u64_metric(&row.rtt_micros_max).is_some_and(|value| value > 0)
+            && parse_u64_metric(&row.rtt_client_p95_spread_micros).is_some()
+    });
+    match ktp_rdp_like_rtt_row {
+        Some(row) => output.push_str(&format!(
+            "\nktp_tcp_rdp_like_rtt_evidence=present clients={} rounds={} total_payload_bytes={} rtt_micros_p95={} rtt_client_p95_spread_micros={}",
+            row.tunnel_clients,
+            row.tunnel_rounds,
+            row.tunnel_total_payload_bytes,
+            row.rtt_micros_p95,
+            row.rtt_client_p95_spread_micros
+        )),
+        None => {
+            output.push_str("\nktp_tcp_rdp_like_rtt_evidence=missing");
+            if require_ktp_rdp_like_rtt {
+                gate_failures.push(
+                    "carrier matrix missing pass row with carrier=ktp_tcp rdp-like multi-client RTT evidence"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
     Ok(CarrierReport {
         output,
         gate_failures,
@@ -308,8 +346,15 @@ fn optional_column(positions: &HashMap<String, usize>, name: &str) -> Option<usi
     positions.get(name).copied()
 }
 
+fn parse_u64_metric(value: &str) -> Option<u64> {
+    if value == "-" {
+        return None;
+    }
+    value.parse::<u64>().ok()
+}
+
 fn print_usage() {
     eprintln!(
-        "usage: ktp-local-backend-matrix-summary [--require-pass] [--require-ktp-aead] [--require-ktp-tunnel-rtt] <matrix-summary.tsv>"
+        "usage: ktp-local-backend-matrix-summary [--require-pass] [--require-ktp-aead] [--require-ktp-tunnel-rtt] [--require-ktp-rdp-like-rtt] <matrix-summary.tsv>"
     );
 }
