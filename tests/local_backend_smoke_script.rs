@@ -127,6 +127,56 @@ fn local_backend_smoke_script_requires_node_only_when_preparing_frontend() {
 }
 
 #[test]
+fn local_backend_smoke_script_creates_minimal_frontend_placeholder_when_skipping_frontend_build() {
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping frontend placeholder test");
+        return;
+    };
+
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+    let sourced_script = script
+        .strip_suffix("main \"$@\"\n")
+        .or_else(|| script.strip_suffix("main \"$@\""))
+        .expect("script should end with main invocation");
+    let temp_dir = std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-frontend-placeholder-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let backend_dir = temp_dir.join("backend");
+    std::fs::create_dir_all(backend_dir.join("public")).unwrap();
+    let sourced_path = temp_dir.join("smoke-local-backend-functions.sh");
+    std::fs::write(&sourced_path, sourced_script).unwrap();
+
+    let output = Command::new(bash)
+        .arg("-c")
+        .arg(
+            r#"
+set -Eeuo pipefail
+source "$1"
+BACKEND_DIR="$2"
+ensure_backend_frontend_placeholder
+test -f "${BACKEND_DIR}/public/frontend/dist/index.html"
+"#,
+        )
+        .arg("bash")
+        .arg(&sourced_path)
+        .arg(&backend_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "frontend placeholder helper failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn local_backend_smoke_script_retries_admin_login_until_database_is_ready() {
     let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
 

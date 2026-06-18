@@ -350,6 +350,28 @@ wait_for_mysql() {
     fi
 }
 
+ensure_backend_frontend_placeholder() {
+    local index_file="${BACKEND_DIR}/public/frontend/dist/index.html"
+    if [[ -f "${index_file}" ]]; then
+        return
+    fi
+
+    log "Creating minimal frontend placeholder for headless backend build"
+    mkdir -p "$(dirname "${index_file}")"
+    cat >"${index_file}" <<'HTML'
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Komari Monitor</title>
+</head>
+<body>
+  <div id="root">A simple server monitor tool.</div>
+</body>
+</html>
+HTML
+}
+
 prepare_backend() {
     if [[ -n "${KELICLOUD_BACKEND_PATH}" ]]; then
         BACKEND_DIR="$(cd "${KELICLOUD_BACKEND_PATH}" && pwd)"
@@ -364,6 +386,8 @@ prepare_backend() {
     if [[ "${KELICLOUD_PREPARE_FRONTEND}" == "true" ]]; then
         log "Preparing frontend bundle with scripts/prepare-frontend.sh"
         (cd "${BACKEND_DIR}" && KOMARI_FRONTEND_REF="${KOMARI_FRONTEND_REF}" bash scripts/prepare-frontend.sh)
+    else
+        ensure_backend_frontend_placeholder
     fi
 
     log "Building kelicloud backend"
