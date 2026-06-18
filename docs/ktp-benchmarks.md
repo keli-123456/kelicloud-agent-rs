@@ -1088,12 +1088,15 @@ combination that produced each value. Older TSV artifacts without
 and show those write metrics as `-`. When a TSV has passing
 `fixed` and `adaptive` rows for the same client count, the report also emits a
 `policy_compare` line with elapsed, RTT p95, and per-client p95-spread deltas
-plus a verdict such as
-`adaptive_better`, `fixed_better`, `same`, or `mixed`. Add `--require-pass`
-when the summary itself should fail with exit code `3` if any matrix row has
-`fail`, `timeout`, or another non-pass status. Add `--fail-on-fixed-better`
-when a release-host comparison should fail if adaptive batching is worse on all
-tracked latency/elapsed dimensions.
+plus a verdict such as `adaptive_better`, `fixed_better`, `same`, or `mixed`.
+It also emits `policy_recommend` for each comparable client count: `adaptive`
+when adaptive is no worse on elapsed time, RTT p95, and client p95 spread;
+`fixed` when fixed is no worse; `fixed` for identical rows to preserve the
+current default; and `manual_review` when the metrics trade off. Add
+`--require-pass` when the summary itself should fail with exit code `3` if any
+matrix row has `fail`, `timeout`, or another non-pass status. Add
+`--fail-on-fixed-better` when a release-host comparison should fail if adaptive
+batching is worse on all tracked latency/elapsed dimensions.
 The `KTP Tunnel Matrix` workflow now writes this output to
 `matrix-summary.report.txt` beside the raw TSV artifact. Push-triggered runs
 keep the light `fixed` policy self-check; manual workflow dispatch defaults to

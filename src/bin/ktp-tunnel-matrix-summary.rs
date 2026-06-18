@@ -300,6 +300,8 @@ fn summarize_tsv(
     for comparison in policy_comparisons(&rows) {
         output.push('\n');
         output.push_str(&comparison.report_line());
+        output.push('\n');
+        output.push_str(&comparison.recommendation_line());
         if fail_on_fixed_better && comparison.verdict == PolicyVerdict::FixedBetter {
             gate_failures.push(format!(
                 "fixed_better tunnel matrix verdict failed KTP tunnel policy gate for clients={}",
@@ -518,6 +520,17 @@ impl PolicyComparison {
             self.verdict.as_str(),
         )
     }
+
+    fn recommendation_line(&self) -> String {
+        let (recommended, reason) = self.verdict.recommendation();
+        format!(
+            "policy_recommend clients={} recommended={} verdict={} reason={}",
+            self.clients,
+            recommended,
+            self.verdict.as_str(),
+            reason
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -567,6 +580,15 @@ impl PolicyVerdict {
             Self::FixedBetter => "fixed_better",
             Self::Same => "same",
             Self::Mixed => "mixed",
+        }
+    }
+
+    fn recommendation(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::AdaptiveBetter => ("adaptive", "adaptive_not_worse"),
+            Self::FixedBetter => ("fixed", "fixed_not_worse"),
+            Self::Same => ("fixed", "same_metrics_keep_default"),
+            Self::Mixed => ("manual_review", "metric_tradeoff"),
         }
     }
 }
