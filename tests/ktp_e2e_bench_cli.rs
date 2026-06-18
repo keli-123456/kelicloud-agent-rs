@@ -25,6 +25,7 @@ fn ktp_e2e_bench_cli_reports_runtime_ingress_egress_throughput() {
     assert!(stdout.contains("runs=1"));
     assert!(stdout.contains("frames=3"));
     assert!(stdout.contains("payload_bytes=128"));
+    assert!(stdout.contains("client_payload_reused=1"));
     assert!(stdout.contains("bytes=384"));
     assert!(stdout.contains("elapsed_ms="));
     assert!(stdout.contains("throughput_mib_s="));
@@ -91,6 +92,7 @@ fn ktp_e2e_bench_cli_reports_multi_client_aggregate_throughput() {
     assert!(stdout.contains("clients=2"));
     assert!(stdout.contains("frames=2"));
     assert!(stdout.contains("payload_bytes=128"));
+    assert!(stdout.contains("client_payload_reused=1"));
     assert!(stdout.contains("bytes=512"));
     assert!(stdout.contains("throughput_mib_s="));
 }
@@ -123,6 +125,7 @@ fn ktp_e2e_bench_cli_reports_repeated_run_statistics() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("runs=2"));
     assert!(stdout.contains("clients=2"));
+    assert!(stdout.contains("client_payload_reused=1"));
     assert!(stdout.contains("bytes=512"));
     assert!(stdout.contains("elapsed_ms_min="));
     assert!(stdout.contains("elapsed_ms_median="));

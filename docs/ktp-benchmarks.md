@@ -152,7 +152,10 @@ Runtime RDP-like mixed-payload evidence:
 The RDP-like profile keeps the same ingress-to-egress runtime path but sends a
 deterministic mix of small interactive frames and occasional larger refresh
 bursts. In this mode, `--payload-bytes` is the cap for any one benchmark frame,
-and the report's `bytes` field is the aggregate mixed-payload byte count.
+and the report's `bytes` field is the aggregate mixed-payload byte count. The
+runtime e2e client preallocates one max-size payload buffer per client and
+reports `client_payload_reused=1`, so throughput samples are not dominated by
+per-frame payload allocation.
 
 Live KTP tunnel diagnostics evidence:
 
@@ -737,6 +740,17 @@ bash scripts/ktp-relay-batch-matrix.sh
 `KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1` requires `KTP_BATCH_MATRIX_CSV` in
 non-dry-run mode. The script runs `ktp-policy-summary --fail-on-fixed-better`
 against that CSV and returns the summary exit code.
+
+The relay batch matrix CSV includes `client_payload_reused` from
+`ktp-e2e-bench`; current runtime e2e samples should report `1` because the
+benchmark client reuses a preallocated payload buffer for each frame.
+
+Linux runtime payload-reuse smoke sample:
+
+```text
+profile,runs,clients,frames,payload_bytes,client_payload_reused,relay_batch_frames,relay_batch_policy,relay_batch_frames_effective,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max,rtt_micros_p50,rtt_micros_p95,rtt_micros_p99,rtt_micros_max,rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max,relay_turns,relay_wait_turns,ingress_batches,egress_batches,ingress_max_batch_frames,egress_max_batch_frames
+rdp-like,1,1,8,1024,1,4,fixed,4,4.162,4.162,4.162,0.337,0.337,0.337,206,1042,1042,1042,1042,1042,0,1042,28,26,9,8,1,2
+```
 
 The local tunnel smoke keeps this policy gate optional so ordinary smoke runs
 do not fail while a candidate adaptive policy is still being tuned:

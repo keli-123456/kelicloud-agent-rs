@@ -19,7 +19,7 @@ CSV_PATH="${KTP_BATCH_MATRIX_CSV:-}"
 FAIL_ON_FIXED_BETTER="${KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER:-0}"
 
 csv_header() {
-  printf '%s\n' "profile,runs,clients,frames,payload_bytes,relay_batch_frames,relay_batch_policy,relay_batch_frames_effective,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max,rtt_micros_p50,rtt_micros_p95,rtt_micros_p99,rtt_micros_max,rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max,relay_turns,relay_wait_turns,ingress_batches,egress_batches,ingress_max_batch_frames,egress_max_batch_frames"
+  printf '%s\n' "profile,runs,clients,frames,payload_bytes,client_payload_reused,relay_batch_frames,relay_batch_policy,relay_batch_frames_effective,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max,rtt_micros_p50,rtt_micros_p95,rtt_micros_p99,rtt_micros_max,rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max,relay_turns,relay_wait_turns,ingress_batches,egress_batches,ingress_max_batch_frames,egress_max_batch_frames"
 }
 
 metric_value() {
@@ -57,6 +57,7 @@ write_csv_row() {
   local clients="$1"
   local batch="$2"
   local output="$3"
+  local client_payload_reused
   local elapsed_ms_min elapsed_ms_median elapsed_ms_max
   local throughput_mib_s_min throughput_mib_s_median throughput_mib_s_max
   local rtt_micros_p50 rtt_micros_p95 rtt_micros_p99 rtt_micros_max
@@ -66,6 +67,7 @@ write_csv_row() {
   local relay_turns relay_wait_turns ingress_batches egress_batches
   local ingress_max_batch_frames egress_max_batch_frames
 
+  client_payload_reused="$(required_metric_value "${output}" client_payload_reused)"
   relay_batch_policy="$(required_metric_value "${output}" relay_batch_policy)"
   relay_batch_frames_effective="$(required_metric_value "${output}" relay_batch_frames_effective relay_batch_frames)"
   elapsed_ms_min="$(required_metric_value "${output}" elapsed_ms_min elapsed_ms)"
@@ -89,12 +91,13 @@ write_csv_row() {
   ingress_max_batch_frames="$(required_metric_value "${output}" ingress_max_batch_frames)"
   egress_max_batch_frames="$(required_metric_value "${output}" egress_max_batch_frames)"
 
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "${PROFILE}" \
     "${RUNS}" \
     "${clients}" \
     "${FRAMES}" \
     "${PAYLOAD_BYTES}" \
+    "${client_payload_reused}" \
     "${batch}" \
     "${relay_batch_policy}" \
     "${relay_batch_frames_effective}" \

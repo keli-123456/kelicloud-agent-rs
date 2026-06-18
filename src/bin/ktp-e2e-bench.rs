@@ -354,7 +354,7 @@ fn format_report(config: BenchConfig, samples: &[BenchSample]) -> String {
     if samples.len() == 1 {
         let sample = &samples[0];
         return format!(
-            "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile={} runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}{}",
+            "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile={} runs={} clients={} frames={} payload_bytes={} client_payload_reused=1 bytes={} elapsed_ms={:.3} throughput_mib_s={:.3}{}",
             config.profile.report_value(),
             config.runs,
             config.clients,
@@ -379,7 +379,7 @@ fn format_report(config: BenchConfig, samples: &[BenchSample]) -> String {
     throughput_values.sort_by(f64::total_cmp);
 
     format!(
-        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile={} runs={} clients={} frames={} payload_bytes={} bytes={} elapsed_ms_min={:.3} elapsed_ms_median={:.3} elapsed_ms_max={:.3} throughput_mib_s_min={:.3} throughput_mib_s_median={:.3} throughput_mib_s_max={:.3}{}",
+        "ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile={} runs={} clients={} frames={} payload_bytes={} client_payload_reused=1 bytes={} elapsed_ms_min={:.3} elapsed_ms_median={:.3} elapsed_ms_max={:.3} throughput_mib_s_min={:.3} throughput_mib_s_median={:.3} throughput_mib_s_max={:.3}{}",
         config.profile.report_value(),
         config.runs,
         config.clients,
