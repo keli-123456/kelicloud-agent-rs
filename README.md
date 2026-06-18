@@ -71,8 +71,9 @@ Supported flags:
   Linux installer default to `adaptive`. Adaptive keeps low-concurrency drains
   large, caps high-concurrency drains, and tightens the cap further when recent
   outbound queue dwell p95 rises. Set `fixed` explicitly to roll back.
-  Diagnostics expose both lifetime and recent dwell so the adaptive decision
-  can be checked from agent logs.
+  Startup output reports the active policy and adaptive thresholds. Diagnostics
+  expose both lifetime and recent dwell so the adaptive decision can be checked
+  from agent logs.
 
 ## Linux Install
 

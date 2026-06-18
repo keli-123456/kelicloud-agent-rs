@@ -665,11 +665,24 @@ pub fn startup_summary(config: &AgentConfig) -> String {
         "web ssh: enabled"
     };
 
-    format!(
+    let mut summary = format!(
         "kelicloud-agent-rs prototype\nendpoint: {}\ntoken: {}\n{tls}\n{web_ssh}",
         config.endpoint,
         redact_secret(&config.token),
-    )
+    );
+    if config.tunnel_data_enabled {
+        let tuning = config.tunnel_ktp_relay_batch_tuning;
+        summary.push_str(&format!(
+            "\ntunnel data: enabled\nktp relay batch policy: {}\nadaptive high_sessions={} elevated_dwell_us={} severe_dwell_us={} elevated_cap={} severe_cap={}",
+            config.tunnel_ktp_relay_batch_policy.config_value(),
+            tuning.high_session_threshold,
+            tuning.elevated_dwell_p95_micros,
+            tuning.severe_dwell_p95_micros,
+            tuning.elevated_batch_cap,
+            tuning.severe_batch_cap
+        ));
+    }
+    summary
 }
 
 fn redact_secret(secret: &str) -> String {

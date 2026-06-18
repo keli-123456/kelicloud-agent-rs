@@ -67,6 +67,58 @@ fn startup_summary_redacts_token() {
 }
 
 #[test]
+fn startup_summary_reports_ktp_relay_policy_when_tunnel_data_is_enabled() {
+    let config = AgentConfig {
+        endpoint: "https://panel.example.com".to_string(),
+        token: "secret-token-value".to_string(),
+        auto_discovery_key: String::new(),
+        insecure: false,
+        disable_web_ssh: false,
+        tunnel_control_enabled: true,
+        tunnel_data_enabled: true,
+        tunnel_ktp_tcp_address: "127.0.0.1:25775".to_string(),
+        tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Adaptive,
+        tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning {
+            high_session_threshold: 6,
+            elevated_dwell_p95_micros: 40_000,
+            severe_dwell_p95_micros: 120_000,
+            elevated_batch_cap: 24,
+            severe_batch_cap: 6,
+        },
+        interval_seconds: 1.0,
+        max_retries: 3,
+        reconnect_interval_seconds: 5,
+        info_report_interval_minutes: 5,
+        cf_access_client_id: String::new(),
+        cf_access_client_secret: String::new(),
+        include_nics: String::new(),
+        exclude_nics: String::new(),
+        include_mountpoints: String::new(),
+        custom_ipv4: String::new(),
+        custom_ipv6: String::new(),
+        custom_dns: String::new(),
+        get_ip_addr_from_nic: false,
+        memory_include_cache: false,
+        memory_report_raw_used: false,
+        enable_gpu: false,
+        month_rotate: 0,
+        host_proc: String::new(),
+        once: false,
+    };
+
+    let summary = startup_summary(&config);
+
+    assert!(summary.contains("tunnel data: enabled"));
+    assert!(summary.contains("ktp relay batch policy: adaptive"));
+    assert!(summary.contains("adaptive high_sessions=6"));
+    assert!(summary.contains("elevated_dwell_us=40000"));
+    assert!(summary.contains("severe_dwell_us=120000"));
+    assert!(summary.contains("elevated_cap=24"));
+    assert!(summary.contains("severe_cap=6"));
+    assert!(!summary.contains("secret-token-value"));
+}
+
+#[test]
 fn shared_token_recovery_emits_smoke_event_without_token_value() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let shared = SharedAgentToken::new("stale-token");

@@ -929,6 +929,9 @@ Tunnel-data receive batch foundation:
   `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=fixed|adaptive` remains the rollback
   lever. This changes neither the KTP frame format, backend schema, nor default
   WebSocket behavior.
+- Agent startup output now reports the active KTP relay batch policy and
+  adaptive thresholds when tunnel data is enabled, so live logs capture the
+  default/rollback state before forwarding traffic starts.
 - Adaptive now uses both active session count and observed outbound queue dwell:
   it keeps the configured batch at low concurrency, caps to 16 frames when
   active sessions reach 8 or recent queue dwell p95 reaches 50 ms, and caps to
