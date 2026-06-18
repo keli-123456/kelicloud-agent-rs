@@ -3087,6 +3087,10 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -3107,8 +3111,9 @@ mod tests {
     #[test]
     fn public_ip_probe_clients_filter_resolved_addresses_by_family_like_go_agent() {
         let (v4_listener, v6_listener, port) = bind_dual_stack_loopback_listeners();
-        let v4_server = serve_one_response(v4_listener, "ip=203.0.113.10\n");
-        let v6_server = serve_one_response(v6_listener, "ip=2001:db8::1\n");
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let v4_server = serve_one_response(v4_listener, "ip=203.0.113.10\n", Arc::clone(&shutdown));
+        let v6_server = serve_one_response(v6_listener, "ip=2001:db8::1\n", Arc::clone(&shutdown));
         let resolver = StaticResolver {
             addrs: vec![
                 SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
@@ -3123,18 +3128,20 @@ mod tests {
         .build()
         .unwrap();
 
-        assert_eq!(
-            probe_public_ipv4_from_urls(&client, &[&format!("http://kelicloud.test:{port}")])
-                .as_deref(),
-            Some("203.0.113.10")
-        );
+        let result =
+            probe_public_ipv4_from_urls(&client, &[&format!("http://kelicloud.test:{port}")]);
+        shutdown.store(true, Ordering::Relaxed);
+        let v4_seen = v4_server.join().unwrap();
+        let v6_seen = v6_server.join().unwrap();
 
-        assert!(v4_server.join().unwrap());
-        assert!(!v6_server.join().unwrap());
+        assert_eq!(result.as_deref(), Some("203.0.113.10"));
+        assert!(v4_seen);
+        assert!(!v6_seen);
 
         let (v4_listener, v6_listener, port) = bind_dual_stack_loopback_listeners();
-        let v4_server = serve_one_response(v4_listener, "ip=203.0.113.10\n");
-        let v6_server = serve_one_response(v6_listener, "ip=2001:db8::1\n");
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let v4_server = serve_one_response(v4_listener, "ip=203.0.113.10\n", Arc::clone(&shutdown));
+        let v6_server = serve_one_response(v6_listener, "ip=2001:db8::1\n", Arc::clone(&shutdown));
         let resolver = StaticResolver {
             addrs: vec![
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
@@ -3149,14 +3156,15 @@ mod tests {
         .build()
         .unwrap();
 
-        assert_eq!(
-            probe_public_ipv6_from_urls(&client, &[&format!("http://kelicloud.test:{port}")])
-                .as_deref(),
-            Some("2001:db8::1")
-        );
+        let result =
+            probe_public_ipv6_from_urls(&client, &[&format!("http://kelicloud.test:{port}")]);
+        shutdown.store(true, Ordering::Relaxed);
+        let v6_seen = v6_server.join().unwrap();
+        let v4_seen = v4_server.join().unwrap();
 
-        assert!(v6_server.join().unwrap());
-        assert!(!v4_server.join().unwrap());
+        assert_eq!(result.as_deref(), Some("2001:db8::1"));
+        assert!(v6_seen);
+        assert!(!v4_seen);
     }
 
     fn bind_dual_stack_loopback_listeners() -> (TcpListener, TcpListener, u16) {
@@ -3166,10 +3174,14 @@ mod tests {
         (v4, v6, port)
     }
 
-    fn serve_one_response(listener: TcpListener, body: &'static str) -> thread::JoinHandle<bool> {
+    fn serve_one_response(
+        listener: TcpListener,
+        body: &'static str,
+        shutdown: Arc<AtomicBool>,
+    ) -> thread::JoinHandle<bool> {
         thread::spawn(move || {
             listener.set_nonblocking(true).unwrap();
-            let deadline = Instant::now() + Duration::from_millis(250);
+            let deadline = Instant::now() + Duration::from_secs(5);
 
             loop {
                 match listener.accept() {
@@ -3186,7 +3198,7 @@ mod tests {
                         return true;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        if Instant::now() >= deadline {
+                        if shutdown.load(Ordering::Relaxed) || Instant::now() >= deadline {
                             return false;
                         }
                         thread::sleep(Duration::from_millis(5));
