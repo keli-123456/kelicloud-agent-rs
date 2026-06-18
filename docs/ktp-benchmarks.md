@@ -428,6 +428,104 @@ Notes:
   Use RTT and socket batch evidence for this real-backend gate; use carrier and
   e2e benches for raw data-plane throughput.
 
+## 2026-06-18 Release Host High-Concurrency Tunnel Matrix Sample
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Agent commit: `59a0a1d`
+- Backend ref: `main`
+- Remote evidence checkout:
+  `/root/kelicloud-agent-rs-tunnel-matrix-high-59a0a1d-20260618105051`
+- Remote backend checkout:
+  `/root/kelicloud-backend-tunnel-matrix-high-59a0a1d-20260618105051`
+- Local evidence mirror:
+  `target/release-evidence-59a0a1d-high-tunnel-matrix`
+- Build mode:
+  `cargo build --locked --release --bin ktp-tunnel-matrix-summary --bin kelicloud-agent-rs`
+
+Host:
+
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- CPU: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+- CPU cores: 4
+- Memory: 3.8 GiB
+- Rust: `cargo 1.95.0`
+- Go: `go1.24.11`
+- Database: MariaDB `10.11.14`
+
+Command shape:
+
+```bash
+export PATH="/usr/local/go1.24.11/bin:/root/.cargo/bin:$PATH"
+export KELICLOUD_PREPARE_FRONTEND=false
+export KELICLOUD_BACKEND_PATH=/root/kelicloud-backend-tunnel-matrix-high-59a0a1d-20260618105051
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="4 8"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="fixed adaptive"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=8
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=8192
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES=2
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES=2
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR=evidence/tunnel-matrix-logs
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX=komari_tunnel_matrix_high_59a0a1d_20260618105051_extra_long_release_host_prefix
+
+bash scripts/ktp-local-backend-tunnel-matrix.sh
+
+./target/release/ktp-tunnel-matrix-summary \
+  --require-pass \
+  --expect-policies "fixed adaptive" \
+  --expect-clients "4 8" \
+  evidence/tunnel-matrix-logs/matrix-summary.tsv
+```
+
+Matrix summary:
+
+```text
+ktp_tunnel_matrix_summary rows=4 pass=4 fail=0 timeout=0 status=pass
+expected_matrix policies=fixed,adaptive clients=4,8 status=pass missing=0
+max_rtt_micros_p95=24131 policy=fixed clients=8
+max_rtt_client_p95_spread_micros=11110 policy=adaptive clients=4
+max_socket_read_max_batch_frames=11 policy=fixed clients=8
+max_socket_write_max_batch_frames=16 policy=fixed clients=8
+min_socket_write_batch_limit_min=16 policy=adaptive clients=4
+```
+
+Tunnel matrix rows:
+
+| Policy | Clients | Status | Elapsed | Total Payload | RTT p50 | RTT p95 | RTT p99 | Client p95 Spread | Read Max Batch | Write Max Batch | Write Limit Last |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fixed | 4 | pass | 143043 ms | 39680 B | 14316 us | 17205 us | 17540 us | 2328 us | 10 | 7 | 64 |
+| fixed | 8 | pass | 60761 ms | 79360 B | 11034 us | 24131 us | 26292 us | 6659 us | 11 | 16 | 64 |
+| adaptive | 4 | pass | 57821 ms | 39680 B | 10173 us | 15456 us | 16872 us | 11110 us | 11 | 8 | 16 |
+| adaptive | 8 | pass | 58173 ms | 79360 B | 6808 us | 17701 us | 24315 us | 9316 us | 7 | 16 | 16 |
+
+Policy comparison:
+
+| Clients | Verdict | Recommendation | Notes |
+| ---: | --- | --- | --- |
+| 4 | mixed | manual_review | Adaptive reduced elapsed time by 59.58% and RTT p95 by 10.17%, but increased per-client p95 spread. |
+| 8 | mixed | manual_review | Adaptive reduced elapsed time by 4.26% and RTT p95 by 26.65%, but still increased per-client p95 spread. |
+
+Notes:
+
+- This is a high-concurrency real-backend matrix, not a carrier-only bench. Each
+  row includes backend startup, agent startup, token recovery, exec, ping,
+  terminal, CN connectivity, KTP TCP tunnel setup, multi-client tunnel echo, and
+  live KTP diagnostics collection.
+- The intentionally long database prefix exercises the matrix database-name
+  truncation guard. Earlier runs failed MariaDB's 64-byte database identifier
+  limit before `59a0a1d`.
+- Adaptive batching currently looks promising for latency under 4 and 8
+  clients, but fairness still trades off against p95 spread. Keep adaptive as a
+  tuning candidate instead of making it the unconditional default from this
+  sample alone.
+- The `throughput_mib_s` values are still not production throughput claims
+  because matrix elapsed time includes full smoke setup. The next benchmark
+  improvement should record tunnel echo duration separately so real-backend
+  matrix reports can compute echo-only throughput.
+
 ## 2026-06-18 Release Host Latency Sample
 
 Code:
@@ -1658,8 +1756,8 @@ Notes:
 
 Next evidence to collect:
 
-- Higher sample-count multi-client runs, including at least one 8+ client
-  release-host matrix after the next relay scheduling change, with
+- Repeat the 4/8 client release-host matrix after the next relay scheduling
+  change and compare it against the `59a0a1d` high-concurrency baseline, with
   `rtt_client_p95_spread_micros` included in the comparison.
 - Longer release-host and live-canary samples for
   `ktp-e2e-bench --profile rdp-like` so tunnel tuning compares interactive
