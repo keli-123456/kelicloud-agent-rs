@@ -328,6 +328,11 @@ Observations:
   record queue dwell at dequeue. Tunnel-data diagnostics expose cumulative
   frames, total/max microseconds, and p50/p95/p99 bucket upper bounds, so logs
   can distinguish scheduler wait from time spent sitting in the runtime queue.
+- When queue dwell exceeds the largest finite bucket, newer diagnostics report
+  the observed max dwell for p50/p95/p99 instead of the overflow bucket's
+  `u64::MAX` sentinel. Older logs with `18446744073709551615` in dwell
+  percentiles should be read as "beyond the finite bucket range", not as a real
+  microsecond value.
 - The `9590a4f` sample did not show an obvious benchmark regression from the
   enqueue timestamp and dequeue bucket accounting, but the run-to-run variance
   above still means this should be treated as a measurement point, not proof of

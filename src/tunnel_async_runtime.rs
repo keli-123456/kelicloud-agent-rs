@@ -401,6 +401,8 @@ impl TunnelRuntimeStats {
 
     pub fn snapshot(&self) -> TunnelRuntimeStatsSnapshot {
         let outbound_queue_dwell_frames = self.outbound_queue_dwell.frames.load(Ordering::Relaxed);
+        let outbound_queue_dwell_micros_max =
+            self.outbound_queue_dwell.micros_max.load(Ordering::Relaxed);
         let mut outbound_queue_dwell_buckets = [0u64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()];
         for (index, bucket) in self.outbound_queue_dwell.micros_buckets.iter().enumerate() {
             outbound_queue_dwell_buckets[index] = bucket.load(Ordering::Relaxed);
@@ -421,21 +423,24 @@ impl TunnelRuntimeStats {
                     .outbound_queue_dwell
                     .micros_total
                     .load(Ordering::Relaxed),
-                micros_max: self.outbound_queue_dwell.micros_max.load(Ordering::Relaxed),
+                micros_max: outbound_queue_dwell_micros_max,
                 p50_micros: outbound_queue_dwell_percentile(
                     &outbound_queue_dwell_buckets,
                     outbound_queue_dwell_frames,
                     50,
+                    outbound_queue_dwell_micros_max,
                 ),
                 p95_micros: outbound_queue_dwell_percentile(
                     &outbound_queue_dwell_buckets,
                     outbound_queue_dwell_frames,
                     95,
+                    outbound_queue_dwell_micros_max,
                 ),
                 p99_micros: outbound_queue_dwell_percentile(
                     &outbound_queue_dwell_buckets,
                     outbound_queue_dwell_frames,
                     99,
+                    outbound_queue_dwell_micros_max,
                 ),
             },
         }
@@ -453,6 +458,7 @@ fn outbound_queue_dwell_percentile(
     buckets: &[u64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()],
     total: u64,
     percentile: u64,
+    overflow_bucket_value: u64,
 ) -> u64 {
     if total == 0 {
         return 0;
@@ -462,10 +468,13 @@ fn outbound_queue_dwell_percentile(
     for (index, count) in buckets.iter().enumerate() {
         cumulative = cumulative.saturating_add(*count);
         if cumulative >= rank {
+            if index == OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len() - 1 {
+                return overflow_bucket_value;
+            }
             return OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS[index];
         }
     }
-    OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS[OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len() - 1]
+    overflow_bucket_value
 }
 
 fn update_atomic_max(target: &AtomicU64, candidate: u64) {

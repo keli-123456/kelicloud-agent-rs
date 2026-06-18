@@ -130,6 +130,37 @@ fn async_frame_queue_records_enqueue_to_drain_dwell() {
 }
 
 #[test]
+fn async_frame_queue_reports_observed_max_for_overflow_dwell_percentiles() {
+    let stats = TunnelRuntimeStats::default();
+    let queue = AsyncTunnelFrameQueue::new_with_stats(4, stats.clone());
+    queue
+        .try_push(frame(17, b"long-queued"))
+        .expect("push frame");
+
+    thread::sleep(Duration::from_millis(1100));
+    let frames = queue.drain(4);
+    let snapshot = stats.snapshot();
+
+    assert_eq!(frames.len(), 1);
+    assert!(
+        snapshot.outbound_queue_dwell.micros_max > 1_000_000,
+        "test should hit the overflow dwell bucket: {snapshot:?}"
+    );
+    assert_eq!(
+        snapshot.outbound_queue_dwell.p50_micros,
+        snapshot.outbound_queue_dwell.micros_max
+    );
+    assert_eq!(
+        snapshot.outbound_queue_dwell.p95_micros,
+        snapshot.outbound_queue_dwell.micros_max
+    );
+    assert_eq!(
+        snapshot.outbound_queue_dwell.p99_micros,
+        snapshot.outbound_queue_dwell.micros_max
+    );
+}
+
+#[test]
 fn async_frame_queue_drain_after_wait_wakes_when_frame_is_pushed() {
     let queue = AsyncTunnelFrameQueue::new(4);
     let producer = queue.clone();
