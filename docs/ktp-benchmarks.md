@@ -1039,6 +1039,21 @@ log directory, `agent.summary.md`, and the KTP live-canary evidence path when
 that carrier produces one. The WebSocket row uses `-` for `ktp_crypto`; the KTP
 TCP row should show `ktp_aead` when the dedicated encrypted data path is proven.
 
+To publish a concise carrier comparison from that TSV artifact:
+
+```bash
+cargo run --locked --bin ktp-local-backend-matrix-summary -- \
+  --require-pass \
+  --require-ktp-aead \
+  smoke-logs/local-backend-matrix/matrix-summary.tsv
+```
+
+`--require-pass` exits with code `3` if any carrier row failed. `--require-ktp-aead`
+also exits with code `3` unless a passing `ktp_tcp` row proves
+`ktp_crypto=ktp_aead` and includes a KTP live-canary evidence file. This makes
+the local backend carrier matrix usable as a small CI gate for the dedicated
+encrypted KTP TCP data path.
+
 Tunnel concurrency matrix smoke:
 
 ```bash
