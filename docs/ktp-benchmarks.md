@@ -1034,6 +1034,44 @@ Strict smoke diagnostics:
 tunnel data diagnostics: runtime_wait_attempts=2627 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=497549 runtime_wait_elapsed_micros_max=3825 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=250 runtime_wait_elapsed_p99_micros=500 outbound_runtime_frames=5 outbound_queue_dwell_frames=5 outbound_queue_dwell_micros_total=14335 outbound_queue_dwell_micros_max=7448 outbound_queue_dwell_p50_micros=100 outbound_queue_dwell_p95_micros=10000 outbound_queue_dwell_p99_micros=10000 socket_idle_reads=2627 socket_idle_empty_reads=2624 socket_read_batches=3 socket_read_frames=5 socket_read_max_batch_frames=2
 ```
 
+Multi-round strict local-backend KTP smoke:
+
+- Agent build base: `9cf8aa2`
+- Backend commit: `334a82c`
+- Smoke driver: `KELICLOUD_TUNNEL_ECHO_ROUNDS=8`
+- Backend KTP TCP relay listened on `127.0.0.1:45235`.
+- Tunnel rule echo succeeded through `127.0.0.1:60461` for 8 rounds.
+- Evidence file:
+  `/tmp/kelicloud-agent-rs-ktp-multiecho-9cf8aa2/logs/ktp-live-canary.evidence.md`
+- The run kept `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2`, and the observed
+  maximum socket read batch reached 3 frames.
+
+Command shape:
+
+```bash
+PATH=/usr/local/go1.24.11/bin:$PATH \
+KELICLOUD_SMOKE_KTP_TCP=true \
+KELICLOUD_PREPARE_FRONTEND=false \
+KELICLOUD_BACKEND_PATH=/root/kelicloud-backend-live-smoke-active-batch \
+KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=2 \
+KELICLOUD_TUNNEL_ECHO_ROUNDS=8 \
+KOMARI_DB_USER=komari_smoke \
+KOMARI_DB_PASS=komari-smoke-pass \
+KOMARI_DB_NAME=komari_ktp_multiecho_9cf8aa2 \
+BACKEND_LISTEN=127.0.0.1:27076 \
+BACKEND_ENDPOINT=http://127.0.0.1:27076 \
+KTP_DIAGNOSTICS_TIMEOUT_SECONDS=90 \
+SMOKE_LOG_DIR=/tmp/kelicloud-agent-rs-ktp-multiecho-9cf8aa2/logs \
+SMOKE_WORK_DIR=/tmp/kelicloud-agent-rs-ktp-multiecho-9cf8aa2/work \
+  bash scripts/smoke-local-backend.sh
+```
+
+Multi-round strict diagnostics:
+
+```text
+tunnel data diagnostics: runtime_wait_attempts=2635 runtime_wait_hits=9 runtime_wait_elapsed_micros_total=497399 runtime_wait_elapsed_micros_max=2434 runtime_wait_elapsed_p50_micros=250 runtime_wait_elapsed_p95_micros=250 runtime_wait_elapsed_p99_micros=500 outbound_runtime_frames=40 outbound_queue_dwell_frames=40 outbound_queue_dwell_micros_total=126150 outbound_queue_dwell_micros_max=11185 outbound_queue_dwell_p50_micros=100 outbound_queue_dwell_p95_micros=25000 outbound_queue_dwell_p99_micros=25000 socket_idle_reads=2646 socket_idle_empty_reads=2621 socket_read_batches=25 socket_read_frames=40 socket_read_max_batch_frames=3
+```
+
 Latest active batch-read diagnostics:
 
 ```text

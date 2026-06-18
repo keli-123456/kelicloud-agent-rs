@@ -14,6 +14,7 @@ BACKEND_START_TIMEOUT_SECONDS="${BACKEND_START_TIMEOUT_SECONDS:-240}"
 KTP_TCP_LISTEN="${KTP_TCP_LISTEN:-}"
 KTP_DIAGNOSTICS_TIMEOUT_SECONDS="${KTP_DIAGNOSTICS_TIMEOUT_SECONDS:-45}"
 KTP_LIVE_CANARY_MIN_LINES="${KTP_LIVE_CANARY_MIN_LINES:-1}"
+KELICLOUD_TUNNEL_ECHO_ROUNDS="${KELICLOUD_TUNNEL_ECHO_ROUNDS:-1}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin-smoke-password}"
 
@@ -128,6 +129,12 @@ trap cleanup EXIT
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || die "$1 command is required"
+}
+
+require_positive_integer() {
+    local name="$1"
+    local value="$2"
+    [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${name} must be a positive integer"
 }
 
 ktp_tcp_smoke_enabled() {
@@ -671,37 +678,45 @@ else:
 
 verify_tunnel_relay_echo() {
     local mark="kelicloud-tunnel-smoke-${TUNNEL_RULE_ID}"
-    if ! python3 - "${TUNNEL_LISTEN_PORT}" "${mark}" <<'PY'
+    if ! python3 - "${TUNNEL_LISTEN_PORT}" "${mark}" "${KELICLOUD_TUNNEL_ECHO_ROUNDS}" <<'PY'
 import socket
 import sys
 import time
 
 port = int(sys.argv[1])
-payload = sys.argv[2].encode("utf-8")
-expected = b"echo:" + payload
+base_payload = sys.argv[2]
+rounds = int(sys.argv[3])
 deadline = time.time() + 45
 last_error = None
-while time.time() < deadline:
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
-            sock.settimeout(5)
-            sock.sendall(payload)
-            data = sock.recv(65536)
-            if data == expected:
-                print("tunnel relay echo succeeded")
-                raise SystemExit(0)
-            last_error = f"unexpected echo response: {data!r}"
-    except Exception as exc:
-        last_error = str(exc)
-    time.sleep(1)
-print(f"tunnel relay echo failed: {last_error}", file=sys.stderr)
-raise SystemExit(1)
+
+for round in range(1, rounds + 1):
+    payload_text = base_payload if rounds == 1 else f"{base_payload}-{round}"
+    payload = payload_text.encode("utf-8")
+    expected = b"echo:" + payload
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=3) as sock:
+                sock.settimeout(5)
+                sock.sendall(payload)
+                data = sock.recv(65536)
+                if data == expected:
+                    break
+                last_error = f"round {round}: unexpected echo response: {data!r}"
+        except Exception as exc:
+            last_error = f"round {round}: {exc}"
+        time.sleep(1)
+    else:
+        print(f"tunnel relay echo failed: {last_error}", file=sys.stderr)
+        raise SystemExit(1)
+
+print(f"tunnel relay echo succeeded rounds={rounds}")
+raise SystemExit(0)
 PY
     then
         die "tunnel relay echo verification failed$(log_tail_for_error)"
     fi
-    printf '%s\n' "smoke: tunnel_relay_echo_succeeded rule_id=${TUNNEL_RULE_ID} listen_port=${TUNNEL_LISTEN_PORT}" >>"${AGENT_LOG}"
-    log "Tunnel relay echo succeeded through 127.0.0.1:${TUNNEL_LISTEN_PORT}"
+    printf '%s\n' "smoke: tunnel_relay_echo_succeeded rule_id=${TUNNEL_RULE_ID} listen_port=${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS}" >>"${AGENT_LOG}"
+    log "Tunnel relay echo succeeded through 127.0.0.1:${TUNNEL_LISTEN_PORT} rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS}"
 }
 
 collect_ktp_live_canary_evidence() {
@@ -745,6 +760,7 @@ main() {
     if ktp_tcp_smoke_enabled; then
         require_command bash
     fi
+    require_positive_integer "KELICLOUD_TUNNEL_ECHO_ROUNDS" "${KELICLOUD_TUNNEL_ECHO_ROUNDS}"
 
     local root
     root="$(repo_root)"

@@ -29,7 +29,11 @@ fn local_backend_smoke_script_orchestrates_real_backend_controls() {
     assert!(script.contains("AGENT_TUNNEL_DATA_ENABLED=true"));
     assert!(script.contains("create_tunnel_rule"));
     assert!(script.contains("verify_tunnel_relay_echo"));
+    assert!(script.contains("KELICLOUD_TUNNEL_ECHO_ROUNDS"));
+    assert!(script.contains("require_positive_integer \"KELICLOUD_TUNNEL_ECHO_ROUNDS\""));
+    assert!(script.contains("for round in range(1, rounds + 1):"));
     assert!(script.contains("smoke: tunnel_relay_echo_succeeded"));
+    assert!(script.contains("rounds=${KELICLOUD_TUNNEL_ECHO_ROUNDS}"));
     assert!(script.contains("wait_for_log_count"));
     assert!(script.contains("\"smoke: auto_discovery_registered\" 2"));
     assert!(script.contains("\"smoke: token_recovered\" 1"));
