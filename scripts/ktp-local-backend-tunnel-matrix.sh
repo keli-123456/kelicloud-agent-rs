@@ -153,7 +153,7 @@ init_summary() {
         return
     fi
     mkdir -p "$(dirname "${MATRIX_SUMMARY_PATH}")"
-    printf '%s\n' "relay_batch_policy	clients	relay_adaptive_high_sessions	relay_adaptive_elevated_dwell_us	relay_adaptive_severe_dwell_us	relay_adaptive_elevated_cap	relay_adaptive_severe_cap	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max	socket_write_batch_limit_min	socket_write_batch_limit_last" >"${MATRIX_SUMMARY_PATH}"
+    printf '%s\n' "relay_batch_policy	clients	relay_adaptive_high_sessions	relay_adaptive_elevated_dwell_us	relay_adaptive_severe_dwell_us	relay_adaptive_elevated_cap	relay_adaptive_severe_cap	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	echo_elapsed_micros	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max	socket_write_batch_limit_min	socket_write_batch_limit_last" >"${MATRIX_SUMMARY_PATH}"
 }
 
 plain_markdown_value() {
@@ -198,7 +198,7 @@ write_summary_row() {
     local ktp_evidence_file="${log_dir}/ktp-live-canary.evidence.md"
     local tunnel_evidence_summary="-"
     local ktp_evidence_summary="-"
-    local total_payload_bytes rtt_micros_p50 rtt_micros_p95 rtt_micros_p99 rtt_micros_max
+    local total_payload_bytes echo_elapsed_micros rtt_micros_p50 rtt_micros_p95 rtt_micros_p99 rtt_micros_max
     local rtt_client_p95_spread_micros socket_read_batches socket_read_frames socket_read_max_batch_frames
     local socket_write_batches socket_write_frames socket_write_max_batch_frames
     local socket_write_batch_limit_max socket_write_batch_limit_min socket_write_batch_limit_last
@@ -211,6 +211,7 @@ write_summary_row() {
     fi
 
     total_payload_bytes="$(plain_markdown_value "${tunnel_evidence_file}" "total_payload_bytes")"
+    echo_elapsed_micros="$(plain_markdown_value "${tunnel_evidence_file}" "echo_elapsed_micros")"
     rtt_micros_p50="$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p50")"
     rtt_micros_p95="$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p95")"
     rtt_micros_p99="$(plain_markdown_value "${tunnel_evidence_file}" "rtt_micros_p99")"
@@ -226,7 +227,7 @@ write_summary_row() {
     socket_write_batch_limit_min="$(backtick_markdown_value "${ktp_evidence_file}" "socket_write_batch_limit_min")"
     socket_write_batch_limit_last="$(backtick_markdown_value "${ktp_evidence_file}" "socket_write_batch_limit_last")"
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${policy}" \
         "${clients}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}" \
@@ -243,6 +244,7 @@ write_summary_row() {
         "${tunnel_evidence_summary}" \
         "${ktp_evidence_summary}" \
         "${total_payload_bytes}" \
+        "${echo_elapsed_micros}" \
         "${rtt_micros_p50}" \
         "${rtt_micros_p95}" \
         "${rtt_micros_p99}" \

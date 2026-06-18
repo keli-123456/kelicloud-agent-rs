@@ -813,10 +813,12 @@ threads = [
     threading.Thread(target=client_worker, args=(client_id,), daemon=True)
     for client_id in range(1, client_count + 1)
 ]
+echo_started = time.perf_counter()
 for thread in threads:
     thread.start()
 for thread in threads:
     thread.join()
+echo_elapsed_micros = max(1, int((time.perf_counter() - echo_started) * 1_000_000))
 
 expected_samples = client_count * rounds
 if errors or len(samples) != expected_samples:
@@ -826,6 +828,9 @@ if errors or len(samples) != expected_samples:
 
 rtts = sorted(sample["rtt_micros"] for sample in samples)
 total_payload_bytes = sum(sample["payload_bytes"] for sample in samples)
+echo_throughput_mib_s = (
+    (total_payload_bytes / 1024.0 / 1024.0) / (echo_elapsed_micros / 1_000_000.0)
+)
 client_p95s = []
 for client_id in range(1, client_count + 1):
     client_rtts = sorted(
@@ -850,6 +855,8 @@ with open(evidence_file, "w", encoding="utf-8") as fh:
     fh.write(f"- rounds: {rounds}\n")
     fh.write(f"- clients: {client_count}\n")
     fh.write(f"- total_payload_bytes: {total_payload_bytes}\n")
+    fh.write(f"- echo_elapsed_micros: {echo_elapsed_micros}\n")
+    fh.write(f"- echo_throughput_mib_s: {echo_throughput_mib_s:.3f}\n")
     for key, value in summary.items():
         fh.write(f"- {key}: {value}\n")
     fh.write("\n## Client RTT P95\n\n")
@@ -866,6 +873,8 @@ with open(evidence_file, "w", encoding="utf-8") as fh:
 print(
     f"tunnel relay echo succeeded rounds={rounds} clients={client_count} profile={profile} "
     f"total_payload_bytes={total_payload_bytes} "
+    f"echo_elapsed_micros={echo_elapsed_micros} "
+    f"echo_throughput_mib_s={echo_throughput_mib_s:.3f} "
     f"rtt_micros_p50={summary['rtt_micros_p50']} "
     f"rtt_micros_p95={summary['rtt_micros_p95']} "
     f"rtt_micros_p99={summary['rtt_micros_p99']} "

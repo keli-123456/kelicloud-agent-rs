@@ -41,6 +41,7 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("matrix-summary.tsv"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS"));
     assert!(script.contains("elapsed_millis"));
+    assert!(script.contains("echo_elapsed_micros"));
     assert!(script.contains("timeout"));
     assert!(script.contains("rtt_client_p95_spread_micros"));
     assert!(script.contains("socket_read_max_batch_frames"));
@@ -298,7 +299,7 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
     );
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert!(summary.contains(
-        "relay_batch_policy\tclients\trelay_adaptive_high_sessions\trelay_adaptive_elevated_dwell_us\trelay_adaptive_severe_dwell_us\trelay_adaptive_elevated_cap\trelay_adaptive_severe_cap\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last"
+        "relay_batch_policy\tclients\trelay_adaptive_high_sessions\trelay_adaptive_elevated_dwell_us\trelay_adaptive_severe_dwell_us\trelay_adaptive_elevated_cap\trelay_adaptive_severe_cap\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\techo_elapsed_micros\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last"
     ));
     assert_summary_row_with_adaptive(
         &summary,
@@ -324,6 +325,7 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
                 log_dir.join("fixed").join("clients-1").display()
             ),
             "9920",
+            "100000",
             "100",
             "200",
             "300",
@@ -364,6 +366,7 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
                 log_dir.join("fixed").join("clients-4").display()
             ),
             "39680",
+            "200000",
             "500",
             "600",
             "700",
@@ -459,6 +462,7 @@ sleep 5
             "-",
             "-",
             "-",
+            "-",
         ],
     );
 }
@@ -530,6 +534,7 @@ fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summa
                 log_dir.join("fixed").join("clients-1").display()
             ),
             "9920",
+            "100000",
             "100",
             "200",
             "300",
@@ -569,6 +574,7 @@ fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summa
                 log_dir.join("fixed").join("clients-4").display()
             ),
             "39680",
+            "200000",
             "500",
             "600",
             "700",
@@ -649,6 +655,7 @@ set -euo pipefail
 mkdir -p "${SMOKE_LOG_DIR}"
 if [[ "${KELICLOUD_TUNNEL_ECHO_CLIENTS}" == "1" ]]; then
   total_payload_bytes=9920
+  echo_elapsed_micros=100000
   rtt_p50=100
   rtt_p95=200
   rtt_p99=300
@@ -665,6 +672,7 @@ if [[ "${KELICLOUD_TUNNEL_ECHO_CLIENTS}" == "1" ]]; then
   socket_write_batch_limit_last=64
 else
   total_payload_bytes=39680
+  echo_elapsed_micros=200000
   rtt_p50=500
   rtt_p95=600
   rtt_p99=700
@@ -687,6 +695,7 @@ cat >"${SMOKE_LOG_DIR}/tunnel-echo.evidence.md" <<EOF
 - rounds: ${KELICLOUD_TUNNEL_ECHO_ROUNDS}
 - clients: ${KELICLOUD_TUNNEL_ECHO_CLIENTS}
 - total_payload_bytes: ${total_payload_bytes}
+- echo_elapsed_micros: ${echo_elapsed_micros}
 - rtt_micros_p50: ${rtt_p50}
 - rtt_micros_p95: ${rtt_p95}
 - rtt_micros_p99: ${rtt_p99}

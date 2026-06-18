@@ -80,6 +80,8 @@ fn local_backend_smoke_script_records_tunnel_echo_latency_evidence() {
     assert!(script.contains("rtt_micros_p99"));
     assert!(script.contains("rtt_client_p95_spread_micros"));
     assert!(script.contains("total_payload_bytes"));
+    assert!(script.contains("echo_elapsed_micros"));
+    assert!(script.contains("echo_throughput_mib_s"));
     assert!(script.contains("profile={profile}"));
     assert!(script.contains("smoke: tunnel_echo_evidence="));
 }
@@ -385,6 +387,8 @@ verify_tunnel_relay_echo
     assert!(evidence.contains("- rounds: 3"));
     assert!(evidence.contains("- clients: 2"));
     assert!(evidence.contains("- total_payload_bytes:"));
+    assert!(evidence.contains("- echo_elapsed_micros:"));
+    assert!(evidence.contains("- echo_throughput_mib_s:"));
     assert!(evidence.contains("- rtt_micros_p95:"));
     assert!(evidence.contains("- rtt_client_p95_spread_micros:"));
     assert!(evidence.contains("| client | round | payload_bytes | rtt_micros |"));

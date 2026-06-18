@@ -522,9 +522,10 @@ Notes:
   tuning candidate instead of making it the unconditional default from this
   sample alone.
 - The `throughput_mib_s` values are still not production throughput claims
-  because matrix elapsed time includes full smoke setup. The next benchmark
-  improvement should record tunnel echo duration separately so real-backend
-  matrix reports can compute echo-only throughput.
+  because matrix elapsed time includes full smoke setup. Newer matrix summaries
+  add `echo_elapsed_micros` and `echo_throughput_mib_s`; use those echo-only
+  metrics for the next real-backend throughput comparison instead of this
+  sample's full-smoke throughput.
 
 ## 2026-06-18 Release Host Latency Sample
 
@@ -1696,6 +1697,10 @@ Notes:
 - New matrix summaries include `elapsed_millis` and support per-client-count
   hard timeouts. Older tables above were captured before that column existed,
   so they intentionally preserve the original artifact shape.
+- Newer real-backend tunnel matrix TSVs also include `echo_elapsed_micros`.
+  `ktp-tunnel-matrix-summary` keeps `throughput_mib_s` as the older full-smoke
+  compatibility value and adds `echo_throughput_mib_s` plus
+  `min_echo_throughput_mib_s` for data-plane-only comparisons.
 
 Latest active batch-read diagnostics:
 
@@ -1749,10 +1754,12 @@ Notes:
   CI row into a continuous multi-round tunnel echo and multi-frame socket
   batch-read/write gate.
 - The local backend smoke now also writes `tunnel-echo.evidence.md` with
-  per-round tunnel echo payload sizes and RTT percentiles. The GitHub Actions
-  `ktp_tcp` row runs that echo as `KELICLOUD_TUNNEL_ECHO_PROFILE=rdp-like` with
+  per-round tunnel echo payload sizes, total echo duration, echo-only
+  throughput, and RTT percentiles. The GitHub Actions `ktp_tcp` row runs that
+  echo as `KELICLOUD_TUNNEL_ECHO_PROFILE=rdp-like` with
   `KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=8192`, so CI artifacts include a small
-  real-forwarding latency signal next to the KTP socket diagnostics.
+  real-forwarding latency and throughput signal next to the KTP socket
+  diagnostics.
 
 Next evidence to collect:
 
