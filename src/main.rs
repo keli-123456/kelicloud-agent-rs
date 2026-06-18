@@ -18,7 +18,7 @@ use kelicloud_agent_rs::task::{
 use kelicloud_agent_rs::terminal::{TerminalControlMessageHandler, TungsteniteTerminalConnector};
 use kelicloud_agent_rs::token::{SharedAgentToken, SharedTokenRecovery};
 use kelicloud_agent_rs::transport::{
-    access_headers, ReqwestHttpTransport, TungsteniteWebSocketTransport,
+    access_headers, ReqwestHttpTransport, TransportError, TungsteniteWebSocketTransport,
 };
 use kelicloud_agent_rs::tunnel_async_runtime::TunnelFrameReadyNotifier;
 use kelicloud_agent_rs::tunnel_control::{
@@ -30,8 +30,9 @@ use kelicloud_agent_rs::tunnel_control::{
 use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_session_with_ready_source_and_runtime,
     run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter,
-    tunnel_data_diagnostics_line, tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport,
-    SharedTunnelDataDiagnostics, TungsteniteTunnelDataTransport,
+    tunnel_data_diagnostics_line, tunnel_data_reconnect_delay_after_attempt,
+    tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport, SharedTunnelDataDiagnostics,
+    TungsteniteTunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::{SharedTunnelRuleState, TunnelTcpRuntime};
 use std::sync::Arc;
@@ -213,19 +214,21 @@ fn main() {
             };
             let ktp_ready_source = tunnel_data_ready_state
                 .ready_source_for_data_transport(TUNNEL_DATA_TRANSPORT_KTP_TCP);
+            let mut retry_delay = std::time::Duration::from_secs(5);
             loop {
                 let url_result = if ktp_tcp_enabled {
                     build_tunnel_data_ktp_tcp_url(&tunnel_ktp_tcp_address)
                 } else {
                     build_tunnel_data_ws_url(&tunnel_data_endpoint, &tunnel_data_shared_token.get())
                 };
-                match url_result {
+                let session_result = match url_result {
                     Ok(url) => {
                         if ktp_tcp_enabled {
                             let mut transport = KtpEncryptedTcpTunnelDataTransport::new_with_token(
                                 &tunnel_data_shared_token.get(),
                             );
-                            if let Err(error) = run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
+                            let result =
+                                run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
                                     &url,
                                     &[],
                                     "",
@@ -235,37 +238,39 @@ fn main() {
                                     &mut tunnel_runtime,
                                     &tunnel_data_diagnostics,
                                     std::time::Duration::from_secs(30),
-                                    |diagnostics| eprintln!("{}", tunnel_data_diagnostics_line(diagnostics)),
-                                )
-                            {
-                                eprintln!("tunnel data warning: {error}");
-                            }
+                                    |diagnostics| {
+                                        eprintln!("{}", tunnel_data_diagnostics_line(diagnostics));
+                                    },
+                                );
                             let diagnostics = tunnel_data_diagnostics.snapshot();
                             if diagnostics.has_activity() {
                                 eprintln!("{}", tunnel_data_diagnostics_line(&diagnostics));
                             }
+                            result
                         } else {
                             let mut transport = TungsteniteTunnelDataTransport::new_with_custom_dns(
                                 &tunnel_data_custom_dns,
                             );
-                            if let Err(error) =
-                                run_tunnel_data_session_with_ready_source_and_runtime(
-                                    &url,
-                                    &tunnel_data_headers,
-                                    "",
-                                    &tunnel_data_agent_version,
-                                    &tunnel_data_ready_state,
-                                    &mut transport,
-                                    &mut tunnel_runtime,
-                                )
-                            {
-                                eprintln!("tunnel data warning: {error}");
-                            }
+                            run_tunnel_data_session_with_ready_source_and_runtime(
+                                &url,
+                                &tunnel_data_headers,
+                                "",
+                                &tunnel_data_agent_version,
+                                &tunnel_data_ready_state,
+                                &mut transport,
+                                &mut tunnel_runtime,
+                            )
                         }
                     }
-                    Err(error) => eprintln!("tunnel data warning: {error}"),
+                    Err(error) => Err(TransportError::RequestFailed(error.to_string())),
+                };
+                if let Err(error) = &session_result {
+                    eprintln!("tunnel data warning: {error}");
                 }
-                std::thread::sleep(std::time::Duration::from_secs(30));
+                let (sleep_delay, next_retry_delay) =
+                    tunnel_data_reconnect_delay_after_attempt(retry_delay, session_result.is_ok());
+                std::thread::sleep(sleep_delay);
+                retry_delay = next_retry_delay;
             }
         });
     }

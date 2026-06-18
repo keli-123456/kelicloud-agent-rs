@@ -1382,6 +1382,27 @@ pub fn tunnel_data_startup_line(url: &str, enabled: bool) -> String {
     format!("tunnel data: enabled url={}", redact_token_in_url(url))
 }
 
+pub fn tunnel_data_reconnect_delay_after_attempt(
+    current_delay: Duration,
+    session_succeeded: bool,
+) -> (Duration, Duration) {
+    let current_delay = if current_delay.is_zero() {
+        Duration::from_secs(5)
+    } else {
+        current_delay
+    };
+    let sleep_delay = if session_succeeded {
+        Duration::from_secs(15)
+    } else {
+        current_delay
+    };
+    let next_delay = sleep_delay
+        .checked_add(sleep_delay)
+        .unwrap_or(Duration::MAX)
+        .min(Duration::from_secs(60));
+    (sleep_delay, next_delay)
+}
+
 fn is_nonfatal_connect_error(error: &TransportError) -> bool {
     match error {
         TransportError::RequestFailed(message) => {

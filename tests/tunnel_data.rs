@@ -18,10 +18,11 @@ use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_session_with_ready_source_and_runtime,
     run_tunnel_data_session_with_ready_source_runtime_and_diagnostics,
     run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter,
-    tunnel_data_diagnostics_line, tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport,
-    SharedTunnelDataDiagnostics, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
-    TunnelDataDiagnosticsSnapshot, TunnelDataReadySource, TunnelDataReadyState,
-    TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
+    tunnel_data_diagnostics_line, tunnel_data_reconnect_delay_after_attempt,
+    tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport, SharedTunnelDataDiagnostics,
+    SharedTunnelDataReadyState, TungsteniteTunnelDataTransport, TunnelDataDiagnosticsSnapshot,
+    TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket,
+    TunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::TunnelSessionRuntime;
 
@@ -516,6 +517,29 @@ fn tunnel_data_session_closes_runtime_sessions_when_socket_closes() {
         ["carrier_disconnect"],
         "carrier disconnect must tear down active tunnel sessions"
     );
+}
+
+#[test]
+fn tunnel_data_reconnect_delay_fast_retries_then_resets_after_success() {
+    let (sleep, next) = tunnel_data_reconnect_delay_after_attempt(Duration::from_secs(5), false);
+    assert_eq!(sleep, Duration::from_secs(5));
+    assert_eq!(next, Duration::from_secs(10));
+
+    let (sleep, next) = tunnel_data_reconnect_delay_after_attempt(next, false);
+    assert_eq!(sleep, Duration::from_secs(10));
+    assert_eq!(next, Duration::from_secs(20));
+
+    let (sleep, next) = tunnel_data_reconnect_delay_after_attempt(Duration::from_secs(40), false);
+    assert_eq!(sleep, Duration::from_secs(40));
+    assert_eq!(next, Duration::from_secs(60));
+
+    let (sleep, next) = tunnel_data_reconnect_delay_after_attempt(Duration::from_secs(60), false);
+    assert_eq!(sleep, Duration::from_secs(60));
+    assert_eq!(next, Duration::from_secs(60));
+
+    let (sleep, next) = tunnel_data_reconnect_delay_after_attempt(Duration::from_secs(60), true);
+    assert_eq!(sleep, Duration::from_secs(15));
+    assert_eq!(next, Duration::from_secs(30));
 }
 
 #[test]
