@@ -131,6 +131,7 @@ fn summarize_csv(content: &str, gate_config: &GateConfig) -> SummaryResult<CsvSu
         let (Some(fixed), Some(adaptive)) = (pair.fixed, pair.adaptive) else {
             continue;
         };
+        let verdict = verdict(&fixed, &adaptive);
         output.push('\n');
         output.push_str(&format!(
             "clients={} relay_batch_frames={} fixed_effective={} adaptive_effective={} throughput_delta_pct={:.2} rtt_p95_delta_pct={:.2} client_p95_spread_delta_pct={:.2} verdict={}",
@@ -141,7 +142,13 @@ fn summarize_csv(content: &str, gate_config: &GateConfig) -> SummaryResult<CsvSu
             percent_delta(adaptive.throughput_mib_s_median, fixed.throughput_mib_s_median),
             percent_delta(adaptive.rtt_micros_p95, fixed.rtt_micros_p95),
             percent_delta(adaptive.client_p95_spread_micros, fixed.client_p95_spread_micros),
-            verdict(&fixed, &adaptive)
+            verdict
+        ));
+        let (recommended, reason) = policy_recommendation(verdict);
+        output.push('\n');
+        output.push_str(&format!(
+            "policy_recommend clients={} relay_batch_frames={} recommended={} verdict={} reason={}",
+            fixed.clients, fixed.relay_batch_frames, recommended, verdict, reason
         ));
         collect_adaptive_gate_failures(&adaptive, gate_config, &mut gate_failures);
     }
@@ -260,6 +267,15 @@ fn verdict(fixed: &PolicyRow, adaptive: &PolicyRow) -> &'static str {
         "fixed_better"
     } else {
         "mixed"
+    }
+}
+
+fn policy_recommendation(verdict: &str) -> (&'static str, &'static str) {
+    match verdict {
+        "adaptive_better" => ("adaptive", "adaptive_not_worse"),
+        "fixed_better" => ("fixed", "fixed_not_worse"),
+        "same_effective" => ("fixed", "same_effective_keep_default"),
+        _ => ("manual_review", "metric_tradeoff"),
     }
 }
 

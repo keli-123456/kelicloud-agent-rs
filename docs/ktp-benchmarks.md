@@ -757,6 +757,9 @@ Policy summary gate:
     worse, and client p95 spread is no worse.
   - `fixed_better` when adaptive regresses all three primary metrics.
   - `mixed` for trade-offs that require human review before runtime changes.
+- The report also emits `policy_recommend` per pair: `adaptive` for
+  `adaptive_better`, `fixed` for `fixed_better` and `same_effective`, and
+  `manual_review` for `mixed`.
 
 Validation command:
 
@@ -769,6 +772,7 @@ Validation output:
 ```text
 ktp_policy_summary rows=2 pairs=1
 clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=32 throughput_delta_pct=-39.94 rtt_p95_delta_pct=53.42 client_p95_spread_delta_pct=729.84 verdict=fixed_better
+policy_recommend clients=4 relay_batch_frames=64 recommended=fixed verdict=fixed_better reason=fixed_not_worse
 ```
 
 Gate command:
@@ -868,6 +872,7 @@ Summary:
 
 ```text
 clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=64 throughput_delta_pct=17.48 rtt_p95_delta_pct=-28.70 client_p95_spread_delta_pct=-48.73 verdict=same_effective
+policy_recommend clients=4 relay_batch_frames=64 recommended=fixed verdict=same_effective reason=same_effective_keep_default
 KTP_SMOKE_POLICY_GATE=1 bash scripts/tunnel-relay-local-smoke.sh completed successfully.
 ```
 
