@@ -685,8 +685,16 @@ fn metric_text(value: Option<u64>) -> String {
 
 fn float_metric_text(value: Option<f64>) -> String {
     value
-        .map(|value| format!("{value:.3}"))
+        .map(format_float_metric)
         .unwrap_or_else(|| "-".to_string())
+}
+
+fn format_float_metric(value: f64) -> String {
+    if value != 0.0 && value.abs() < 0.001 {
+        format!("{value:.6}")
+    } else {
+        format!("{value:.3}")
+    }
 }
 
 fn throughput_mib_s(row: &MatrixRow) -> Option<f64> {

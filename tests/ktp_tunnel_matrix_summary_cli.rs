@@ -259,6 +259,31 @@ adaptive	4	8	rdp-like	8192	pass	60000	logs/adaptive/clients-4	logs/adaptive/clie
 }
 
 #[test]
+fn ktp_tunnel_matrix_summary_keeps_precision_for_small_echo_throughput() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-small-echo-throughput",
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	echo_elapsed_micros	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	1	4	rdp-like	4096	pass	60000	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	1024	2000000	100	200	300	400	0	3	40	2
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert!(
+        output.status.success(),
+        "summary failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("echo_throughput_mib_s=0.000488"));
+    assert!(stdout.contains("min_echo_throughput_mib_s=0.000488 policy=fixed clients=1"));
+}
+
+#[test]
 fn ktp_tunnel_matrix_summary_expect_matrix_rejects_missing_policy_client_rows() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-missing-expected-row",

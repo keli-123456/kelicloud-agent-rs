@@ -527,6 +527,74 @@ Notes:
   metrics for the next real-backend throughput comparison instead of this
   sample's full-smoke throughput.
 
+## 2026-06-18 Release Host Echo Throughput Gate Sample
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Agent/evidence commit: `90134ac`
+- Backend ref: `main`
+- Remote evidence checkout:
+  `/root/kelicloud-agent-rs-echo-matrix-90134ac-remote1`
+- Local evidence mirror:
+  `target/release-evidence-90134ac-echo-matrix`
+- Summary gate:
+  `--require-pass --min-echo-throughput-mib-s 0.0001 --expect-policies "fixed adaptive" --expect-clients "1 2"`
+
+Command shape:
+
+```bash
+export PATH="/usr/local/go1.24.11/bin:/root/.cargo/bin:$PATH"
+export KELICLOUD_PREPARE_FRONTEND=false
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="fixed adaptive"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=4
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=4096
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES=2
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES=2
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR=evidence/tunnel-matrix-logs
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS=360
+
+bash scripts/ktp-local-backend-tunnel-matrix.sh
+
+cargo run --locked --bin ktp-tunnel-matrix-summary -- \
+  --require-pass \
+  --min-echo-throughput-mib-s 0.0001 \
+  --expect-policies "fixed adaptive" \
+  --expect-clients "1 2" \
+  evidence/tunnel-matrix-logs/matrix-summary.tsv
+```
+
+Echo gate summary:
+
+```text
+ktp_tunnel_matrix_summary rows=4 pass=4 fail=0 timeout=0 status=pass
+min_echo_throughput_mib_s=0.000254 policy=adaptive clients=2
+expected_matrix policies=fixed,adaptive clients=1,2 status=pass missing=0
+```
+
+Tunnel matrix rows:
+
+| Policy | Clients | Status | Echo Elapsed | Echo Throughput | RTT p95 | Client p95 Spread | Read Max Batch | Write Max Batch |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| fixed | 1 | pass | 68015 us | 0.008 MiB/s | 29823 us | 0 us | 2 | 2 |
+| fixed | 2 | pass | 1055327 us | 0.000983 MiB/s | 16252 us | 1898 us | 5 | 4 |
+| adaptive | 1 | pass | 71732 us | 0.007 MiB/s | 17663 us | 0 us | 2 | 2 |
+| adaptive | 2 | pass | 4085750 us | 0.000254 MiB/s | 16031 us | 2124 us | 4 | 4 |
+
+Notes:
+
+- This sample proves the new echo-only throughput gate can run against real
+  backend KTP tunnel evidence. It intentionally uses a conservative
+  `0.0001 MiB/s` floor because the lightweight `rounds=4` RDP-like payload sends
+  only 544 or 1088 bytes per row.
+- `throughput_mib_s` remains useful as a compatibility column but is still
+  dominated by backend and agent startup. `echo_throughput_mib_s` is the metric
+  to compare when tuning the data plane.
+- The adaptive clients=2 row has the lowest echo throughput in this small
+  sample. The next scheduling change should repeat this matrix with a larger
+  payload or more rounds before raising the default floor.
+
 ## 2026-06-18 Release Host Latency Sample
 
 Code:
