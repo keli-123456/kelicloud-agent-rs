@@ -63,6 +63,63 @@ adaptive	4	8	rdp-like	8192	fail	456	logs/adaptive/clients-4	-	-	-	-	-	-	-	-	-	-	
 }
 
 #[test]
+fn ktp_tunnel_matrix_summary_reports_fixed_adaptive_pair_verdicts() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-policy-compare",
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	4	8	rdp-like	8192	pass	500	logs/fixed/clients-4	logs/fixed/clients-4/tunnel-echo.evidence.md	logs/fixed/clients-4/ktp-live-canary.evidence.md	39680	700	1000	1200	1500	200	12	224	8
+adaptive	4	8	rdp-like	8192	pass	450	logs/adaptive/clients-4	logs/adaptive/clients-4/tunnel-echo.evidence.md	logs/adaptive/clients-4/ktp-live-canary.evidence.md	39680	500	800	900	1000	100	14	224	11
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert!(
+        output.status.success(),
+        "summary failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("policy_compare clients=4 fixed_elapsed_millis=500 adaptive_elapsed_millis=450 elapsed_delta_pct=-10.00 fixed_rtt_micros_p95=1000 adaptive_rtt_micros_p95=800 rtt_p95_delta_pct=-20.00 fixed_rtt_client_p95_spread_micros=200 adaptive_rtt_client_p95_spread_micros=100 spread_delta_pct=-50.00 verdict=adaptive_better"));
+}
+
+#[test]
+fn ktp_tunnel_matrix_summary_fail_gate_rejects_fixed_better_verdict() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-fixed-better",
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	4	8	rdp-like	8192	pass	400	logs/fixed/clients-4	logs/fixed/clients-4/tunnel-echo.evidence.md	logs/fixed/clients-4/ktp-live-canary.evidence.md	39680	400	700	900	1000	80	12	224	8
+adaptive	4	8	rdp-like	8192	pass	500	logs/adaptive/clients-4	logs/adaptive/clients-4/tunnel-echo.evidence.md	logs/adaptive/clients-4/ktp-live-canary.evidence.md	39680	500	900	1000	1200	120	14	224	11
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--fail-on-fixed-better")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "fixed-better gate should exit 3: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("policy_compare clients=4"));
+    assert!(stdout.contains("verdict=fixed_better"));
+    assert!(stderr.contains(
+        "fixed_better tunnel matrix verdict failed KTP tunnel policy gate for clients=4"
+    ));
+}
+
+#[test]
 fn ktp_tunnel_matrix_summary_rejects_missing_required_columns() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-missing-column",

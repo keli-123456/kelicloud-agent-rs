@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fs;
 
@@ -42,10 +42,12 @@ fn main() {
 
 fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
     let mut require_pass = false;
+    let mut fail_on_fixed_better = false;
     let mut path = None::<String>;
     for arg in args {
         match arg.as_str() {
             "--require-pass" => require_pass = true,
+            "--fail-on-fixed-better" => fail_on_fixed_better = true,
             _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("unexpected extra argument".into()),
@@ -54,10 +56,14 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
 
     let path = path.ok_or("matrix-summary.tsv path is required")?;
     let content = fs::read_to_string(&path)?;
-    summarize_tsv(&content, require_pass)
+    summarize_tsv(&content, require_pass, fail_on_fixed_better)
 }
 
-fn summarize_tsv(content: &str, require_pass: bool) -> SummaryResult<MatrixReport> {
+fn summarize_tsv(
+    content: &str,
+    require_pass: bool,
+    fail_on_fixed_better: bool,
+) -> SummaryResult<MatrixReport> {
     let mut lines = content.lines().filter(|line| !line.trim().is_empty());
     let header = lines.next().ok_or("matrix summary is empty")?;
     let indexes = MatrixIndexes::from_header(header)?;
@@ -156,6 +162,17 @@ fn summarize_tsv(content: &str, require_pass: bool) -> SummaryResult<MatrixRepor
         max_socket_batch.clients.as_deref().unwrap_or("-")
     ));
 
+    for comparison in policy_comparisons(&rows) {
+        output.push('\n');
+        output.push_str(&comparison.report_line());
+        if fail_on_fixed_better && comparison.verdict == PolicyVerdict::FixedBetter {
+            gate_failures.push(format!(
+                "fixed_better tunnel matrix verdict failed KTP tunnel policy gate for clients={}",
+                comparison.clients
+            ));
+        }
+    }
+
     Ok(MatrixReport {
         output,
         gate_failures,
@@ -246,6 +263,150 @@ fn metric_text(value: Option<u64>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
+#[derive(Clone, Debug)]
+struct PolicyComparison {
+    clients: String,
+    fixed_elapsed_millis: u64,
+    adaptive_elapsed_millis: u64,
+    fixed_rtt_micros_p95: u64,
+    adaptive_rtt_micros_p95: u64,
+    fixed_spread_micros: u64,
+    adaptive_spread_micros: u64,
+    verdict: PolicyVerdict,
+}
+
+impl PolicyComparison {
+    fn report_line(&self) -> String {
+        format!(
+            "policy_compare clients={} fixed_elapsed_millis={} adaptive_elapsed_millis={} elapsed_delta_pct={:.2} fixed_rtt_micros_p95={} adaptive_rtt_micros_p95={} rtt_p95_delta_pct={:.2} fixed_rtt_client_p95_spread_micros={} adaptive_rtt_client_p95_spread_micros={} spread_delta_pct={:.2} verdict={}",
+            self.clients,
+            self.fixed_elapsed_millis,
+            self.adaptive_elapsed_millis,
+            percent_delta(self.adaptive_elapsed_millis, self.fixed_elapsed_millis),
+            self.fixed_rtt_micros_p95,
+            self.adaptive_rtt_micros_p95,
+            percent_delta(self.adaptive_rtt_micros_p95, self.fixed_rtt_micros_p95),
+            self.fixed_spread_micros,
+            self.adaptive_spread_micros,
+            percent_delta(self.adaptive_spread_micros, self.fixed_spread_micros),
+            self.verdict.as_str(),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PolicyVerdict {
+    AdaptiveBetter,
+    FixedBetter,
+    Same,
+    Mixed,
+}
+
+impl PolicyVerdict {
+    fn from_metrics(
+        fixed_elapsed_millis: u64,
+        adaptive_elapsed_millis: u64,
+        fixed_rtt_micros_p95: u64,
+        adaptive_rtt_micros_p95: u64,
+        fixed_spread_micros: u64,
+        adaptive_spread_micros: u64,
+    ) -> Self {
+        let adaptive_not_worse = adaptive_elapsed_millis <= fixed_elapsed_millis
+            && adaptive_rtt_micros_p95 <= fixed_rtt_micros_p95
+            && adaptive_spread_micros <= fixed_spread_micros;
+        let adaptive_strictly_better = adaptive_elapsed_millis < fixed_elapsed_millis
+            || adaptive_rtt_micros_p95 < fixed_rtt_micros_p95
+            || adaptive_spread_micros < fixed_spread_micros;
+        let fixed_not_worse = fixed_elapsed_millis <= adaptive_elapsed_millis
+            && fixed_rtt_micros_p95 <= adaptive_rtt_micros_p95
+            && fixed_spread_micros <= adaptive_spread_micros;
+        let fixed_strictly_better = fixed_elapsed_millis < adaptive_elapsed_millis
+            || fixed_rtt_micros_p95 < adaptive_rtt_micros_p95
+            || fixed_spread_micros < adaptive_spread_micros;
+
+        if adaptive_not_worse && adaptive_strictly_better {
+            Self::AdaptiveBetter
+        } else if fixed_not_worse && fixed_strictly_better {
+            Self::FixedBetter
+        } else if !adaptive_strictly_better && !fixed_strictly_better {
+            Self::Same
+        } else {
+            Self::Mixed
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::AdaptiveBetter => "adaptive_better",
+            Self::FixedBetter => "fixed_better",
+            Self::Same => "same",
+            Self::Mixed => "mixed",
+        }
+    }
+}
+
+#[derive(Default)]
+struct PolicyPair<'a> {
+    fixed: Option<&'a MatrixRow>,
+    adaptive: Option<&'a MatrixRow>,
+}
+
+fn policy_comparisons(rows: &[MatrixRow]) -> Vec<PolicyComparison> {
+    let mut pairs = BTreeMap::<&str, PolicyPair<'_>>::new();
+    for row in rows {
+        if row.status != "pass" {
+            continue;
+        }
+        let pair = pairs.entry(row.clients.as_str()).or_default();
+        match row.relay_batch_policy.as_str() {
+            "fixed" => pair.fixed = Some(row),
+            "adaptive" => pair.adaptive = Some(row),
+            _ => {}
+        }
+    }
+
+    pairs
+        .into_iter()
+        .filter_map(|(clients, pair)| {
+            let fixed = pair.fixed?;
+            let adaptive = pair.adaptive?;
+            let fixed_rtt_micros_p95 = fixed.rtt_micros_p95?;
+            let adaptive_rtt_micros_p95 = adaptive.rtt_micros_p95?;
+            let fixed_spread_micros = fixed.client_p95_spread_micros?;
+            let adaptive_spread_micros = adaptive.client_p95_spread_micros?;
+            Some(PolicyComparison {
+                clients: clients.to_string(),
+                fixed_elapsed_millis: fixed.elapsed_millis,
+                adaptive_elapsed_millis: adaptive.elapsed_millis,
+                fixed_rtt_micros_p95,
+                adaptive_rtt_micros_p95,
+                fixed_spread_micros,
+                adaptive_spread_micros,
+                verdict: PolicyVerdict::from_metrics(
+                    fixed.elapsed_millis,
+                    adaptive.elapsed_millis,
+                    fixed_rtt_micros_p95,
+                    adaptive_rtt_micros_p95,
+                    fixed_spread_micros,
+                    adaptive_spread_micros,
+                ),
+            })
+        })
+        .collect()
+}
+
+fn percent_delta(candidate: u64, baseline: u64) -> f64 {
+    if baseline == 0 {
+        if candidate == 0 {
+            0.0
+        } else {
+            100.0
+        }
+    } else {
+        ((candidate as f64 - baseline as f64) / baseline as f64) * 100.0
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct MaxMetric {
     value: Option<u64>,
@@ -310,5 +471,7 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-tunnel-matrix-summary [--require-pass] <matrix-summary.tsv>");
+    eprintln!(
+        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] <matrix-summary.tsv>"
+    );
 }
