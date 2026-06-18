@@ -32,10 +32,10 @@ Environment:
                             require socket_write_max_batch_frames to reach this
                             value, default: 1
 
-The script validates that live KTP startup output declares the active relay
-batch policy, that diagnostics include runtime wait, lifetime and recent
-outbound queue dwell, and socket batch-read/write fields, then writes a small
-evidence file.
+The script validates that live KTP startup output declares the dedicated
+carrier, self-managed crypto, and active relay batch policy, that diagnostics
+include runtime wait, lifetime and recent outbound queue dwell, and socket
+batch-read/write fields, then writes a small evidence file.
 USAGE
 }
 
@@ -118,6 +118,8 @@ startup_evidence_line() {
 }
 
 require_startup_evidence "tunnel data: enabled" "tunnel data enabled"
+require_startup_evidence "carrier=ktp_tcp" "ktp tcp carrier"
+require_startup_evidence "crypto=ktp_aead" "ktp tcp crypto"
 require_startup_evidence "ktp relay batch policy:" "ktp relay batch policy"
 require_startup_evidence "adaptive high_sessions=" "adaptive high_sessions"
 require_startup_evidence "elevated_dwell_us=" "adaptive elevated_dwell_us"

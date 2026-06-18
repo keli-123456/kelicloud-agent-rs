@@ -1379,7 +1379,20 @@ pub fn tunnel_data_startup_line(url: &str, enabled: bool) -> String {
         return "tunnel data: disabled".to_string();
     }
 
-    format!("tunnel data: enabled url={}", redact_token_in_url(url))
+    format!(
+        "tunnel data: enabled url={}{}",
+        redact_token_in_url(url),
+        tunnel_data_startup_transport_fields(url)
+    )
+}
+
+fn tunnel_data_startup_transport_fields(url: &str) -> &'static str {
+    let url = url.trim();
+    if url.starts_with("ktp+tcp://") || url.starts_with("tcp://") {
+        " carrier=ktp_tcp crypto=ktp_aead"
+    } else {
+        ""
+    }
 }
 
 pub fn tunnel_data_reconnect_delay_after_attempt(

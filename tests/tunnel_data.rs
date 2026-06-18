@@ -2095,6 +2095,16 @@ fn tunnel_data_startup_line_redacts_token() {
 }
 
 #[test]
+fn tunnel_data_startup_line_reports_ktp_tcp_carrier_and_crypto() {
+    let line = tunnel_data_startup_line("ktp+tcp://127.0.0.1:25775", true);
+
+    assert_eq!(
+        line,
+        "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead"
+    );
+}
+
+#[test]
 fn tunnel_data_startup_line_reports_disabled() {
     assert_eq!(tunnel_data_startup_line("", false), "tunnel data: disabled");
 }
