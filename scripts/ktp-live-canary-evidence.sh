@@ -111,8 +111,33 @@ REQUIRED_FIELDS=(
     "socket_read_max_batch_frames"
 )
 
+POSITIVE_FIELDS=(
+    "socket_read_batches"
+    "socket_read_frames"
+)
+
+max_metric_value() {
+    local field="$1"
+    awk -v field="${field}" '
+        {
+            for (i = 1; i <= NF; i++) {
+                split($i, pair, "=")
+                if (pair[1] == field && pair[2] ~ /^[0-9]+$/ && pair[2] + 0 > max) {
+                    max = pair[2] + 0
+                }
+            }
+        }
+        END { print max + 0 }
+    ' "$DIAGNOSTICS_LOG"
+}
+
 for field in "${REQUIRED_FIELDS[@]}"; do
     grep -F "${field}=" "$DIAGNOSTICS_LOG" >/dev/null || die "missing diagnostics field: ${field}"
+done
+
+for field in "${POSITIVE_FIELDS[@]}"; do
+    value="$(max_metric_value "${field}")"
+    (( value > 0 )) || die "expected positive diagnostics field: ${field}"
 done
 
 mkdir -p "$(dirname "$EVIDENCE_FILE")"
@@ -129,6 +154,10 @@ mkdir -p "$(dirname "$EVIDENCE_FILE")"
     printf '## Required Fields\n\n'
     for field in "${REQUIRED_FIELDS[@]}"; do
         printf -- '- `%s`\n' "$field"
+    done
+    printf '\n## Positive Fields\n\n'
+    for field in "${POSITIVE_FIELDS[@]}"; do
+        printf -- '- `%s`: `%s`\n' "$field" "$(max_metric_value "${field}")"
     done
     printf '\n## Latest Diagnostics\n\n'
     printf '```text\n'

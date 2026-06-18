@@ -170,8 +170,10 @@ During a real KTP canary window, run the helper after sending tunnel traffic.
 It reads `journalctl` by default, or `--log-file <path>` for captured agent
 logs, and verifies that `tunnel data diagnostics` lines include runtime wait
 and outbound queue dwell percentile fields, plus socket batch-read counters.
-Treat the generated Markdown file as the live-log companion to
-`ktp-e2e-bench --latency` output.
+It also requires positive `socket_read_batches` and `socket_read_frames` values,
+so a passing live canary proves the production KTP TCP socket batch-read path
+was active during the observation window. Treat the generated Markdown file as
+the live-log companion to `ktp-e2e-bench --latency` output.
 
 Local backend KTP smoke:
 
