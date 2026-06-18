@@ -168,9 +168,11 @@ scripts/ktp-live-canary-evidence.sh \
 
 During a real KTP canary window, run the helper after sending tunnel traffic.
 It reads `journalctl` by default, or `--log-file <path>` for captured agent
-logs, and verifies that `tunnel data diagnostics` lines include runtime wait,
-lifetime outbound queue dwell, recent outbound queue dwell, socket
-batch-read/write counters, and effective write batch limit max/min/last fields.
+logs. It first verifies startup output for tunnel data enablement, the active
+relay batch policy, and adaptive thresholds, then verifies that
+`tunnel data diagnostics` lines include runtime wait, lifetime outbound queue
+dwell, recent outbound queue dwell, socket batch-read/write counters, and
+effective write batch limit max/min/last fields.
 It also requires positive `socket_read_*`, `socket_write_*`,
 `socket_write_batch_limit_max`, `socket_write_batch_limit_min`, and
 `socket_write_batch_limit_last` values, so a passing live canary proves the

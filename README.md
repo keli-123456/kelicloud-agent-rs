@@ -312,8 +312,9 @@ In KTP mode the script starts the backend KTP TCP relay, passes the relay
 address to `kelicloud-agent-rs`, verifies the same tunnel echo path, waits for
 `tunnel data diagnostics`, and writes
 `smoke-logs/ktp-live-canary.evidence.md`. The KTP evidence helper now requires
-positive socket batch-read and batch-write counters so the dedicated TCP data
-path is observable in live smoke logs. Use
+startup lines for tunnel data enablement, the active relay batch policy, and
+adaptive thresholds, plus positive socket batch-read and batch-write counters
+so the dedicated TCP data path is observable in live smoke logs. Use
 `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES` or
 `KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES` for stricter multi-frame read/write
 batch evidence.

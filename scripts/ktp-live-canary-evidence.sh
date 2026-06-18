@@ -32,9 +32,10 @@ Environment:
                             require socket_write_max_batch_frames to reach this
                             value, default: 1
 
-The script validates that live KTP tunnel data diagnostics include runtime wait,
-lifetime and recent outbound queue dwell, and socket batch-read/write fields,
-then writes a small evidence file.
+The script validates that live KTP startup output declares the active relay
+batch policy, that diagnostics include runtime wait, lifetime and recent
+outbound queue dwell, and socket batch-read/write fields, then writes a small
+evidence file.
 USAGE
 }
 
@@ -104,6 +105,25 @@ else
     command -v journalctl >/dev/null 2>&1 || die "journalctl not found; use --log-file"
     journalctl -u "$SERVICE_NAME" --since "$SINCE" --no-pager >"$RAW_LOG"
 fi
+
+require_startup_evidence() {
+    local pattern="$1"
+    local name="$2"
+    grep -F "${pattern}" "$RAW_LOG" >/dev/null || die "missing startup evidence: ${name}"
+}
+
+startup_evidence_line() {
+    local pattern="$1"
+    grep -F "${pattern}" "$RAW_LOG" | tail -n 1
+}
+
+require_startup_evidence "tunnel data: enabled" "tunnel data enabled"
+require_startup_evidence "ktp relay batch policy:" "ktp relay batch policy"
+require_startup_evidence "adaptive high_sessions=" "adaptive high_sessions"
+require_startup_evidence "elevated_dwell_us=" "adaptive elevated_dwell_us"
+require_startup_evidence "severe_dwell_us=" "adaptive severe_dwell_us"
+require_startup_evidence "elevated_cap=" "adaptive elevated_cap"
+require_startup_evidence "severe_cap=" "adaptive severe_cap"
 
 grep -F "tunnel data diagnostics" "$RAW_LOG" >"$DIAGNOSTICS_LOG" || true
 LINE_COUNT="$(wc -l <"$DIAGNOSTICS_LOG" | tr -d ' ')"
@@ -236,6 +256,13 @@ mkdir -p "$(dirname "$EVIDENCE_FILE")"
         printf -- '- Since: `%s`\n' "$SINCE"
     fi
     printf -- '- Diagnostics lines: `%s`\n\n' "$LINE_COUNT"
+    printf '## Startup Policy\n\n'
+    printf '```text\n'
+    startup_evidence_line "tunnel data: enabled"
+    startup_evidence_line "ktp relay batch policy:"
+    startup_evidence_line "adaptive high_sessions="
+    printf '\n```\n'
+    printf '\n'
     printf '## Required Fields\n\n'
     for field in "${REQUIRED_FIELDS[@]}"; do
         printf -- '- `%s`\n' "$field"
