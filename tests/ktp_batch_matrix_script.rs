@@ -23,8 +23,12 @@ fn ktp_batch_matrix_script_sweeps_relay_batch_frames_with_rdp_like_defaults() {
     assert!(script.contains("rtt_client_p95_spread_micros"));
     assert!(script.contains("relay_batch_frames_effective"));
     assert!(script.contains("KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER"));
+    assert!(script.contains("KTP_BATCH_MATRIX_MAX_ADAPTIVE_RTT_P95_MICROS"));
+    assert!(script.contains("KTP_BATCH_MATRIX_MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS"));
     assert!(script.contains("ktp-policy-summary"));
     assert!(script.contains("--fail-on-fixed-better"));
+    assert!(script.contains("--max-adaptive-rtt-p95-micros"));
+    assert!(script.contains("--max-adaptive-client-p95-spread-micros"));
 }
 
 #[test]
@@ -330,6 +334,63 @@ fn ktp_batch_matrix_script_policy_gate_fails_on_fixed_better_on_linux() {
 }
 
 #[test]
+fn ktp_batch_matrix_script_passes_latency_and_fairness_gates_to_policy_summary_on_linux() {
+    if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+
+    let fake_bin_dir = unique_temp_path("ktp-policy-threshold-gate-fake-bin", "");
+    let _ = std::fs::remove_dir_all(&fake_bin_dir);
+    std::fs::create_dir_all(&fake_bin_dir).expect("fake bin dir should be created");
+    let fake_cargo = fake_bin_dir.join("cargo");
+    std::fs::write(&fake_cargo, fake_cargo_script()).expect("fake cargo should be written");
+    let chmod_status = Command::new("chmod")
+        .args([
+            "+x",
+            fake_cargo
+                .to_str()
+                .expect("fake cargo path should be utf-8"),
+        ])
+        .status()
+        .expect("chmod should run");
+    assert!(chmod_status.success());
+
+    let csv_path = unique_temp_path("ktp-policy-threshold-gate", "csv");
+    let _ = std::fs::remove_file(&csv_path);
+    let original_path = std::env::var("PATH").expect("PATH should be set");
+    let test_path = format!("{}:{original_path}", fake_bin_dir.display());
+    let output = Command::new("bash")
+        .env("PATH", test_path)
+        .env("KTP_BATCH_MATRIX_BATCH_POLICIES", "fixed adaptive")
+        .env("KTP_BATCH_MATRIX_BATCHES", "64")
+        .env("KTP_BATCH_MATRIX_RUNS", "1")
+        .env("KTP_BATCH_MATRIX_CLIENTS", "4")
+        .env("KTP_BATCH_MATRIX_FRAMES", "8")
+        .env("KTP_BATCH_MATRIX_PAYLOAD_BYTES", "1024")
+        .env("KTP_BATCH_MATRIX_CSV", &csv_path)
+        .env("KTP_BATCH_MATRIX_MAX_ADAPTIVE_RTT_P95_MICROS", "1500")
+        .env(
+            "KTP_BATCH_MATRIX_MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS",
+            "250",
+        )
+        .env("KTP_FAKE_POLICY_SUMMARY_ECHO_ARGS", "1")
+        .args(["scripts/ktp-relay-batch-matrix.sh"])
+        .output()
+        .expect("batch matrix should run with fake cargo");
+
+    assert!(
+        output.status.success(),
+        "batch matrix policy threshold gate failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("== ktp policy summary gate =="));
+    assert!(stdout.contains("--max-adaptive-rtt-p95-micros 1500"));
+    assert!(stdout.contains("--max-adaptive-client-p95-spread-micros 250"));
+}
+
+#[test]
 fn ktp_batch_matrix_script_writes_csv_from_bench_output_on_linux() {
     if !cfg!(target_os = "linux") || Command::new("bash").arg("--version").output().is_err() {
         return;
@@ -422,6 +483,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 if [[ "$bin" == "ktp-policy-summary" ]]; then
+  if [[ "${KTP_FAKE_POLICY_SUMMARY_ECHO_ARGS:-0}" == "1" ]]; then
+    printf 'policy_summary_args:'
+    printf ' %s' "$@"
+    printf '\n'
+  fi
   verdict="${KTP_FAKE_POLICY_SUMMARY_VERDICT:-adaptive_better}"
   echo "ktp_policy_summary rows=2 pairs=1"
   echo "clients=4 relay_batch_frames=64 fixed_effective=64 adaptive_effective=32 throughput_delta_pct=10.00 rtt_p95_delta_pct=-20.00 client_p95_spread_delta_pct=-50.00 verdict=${verdict}"

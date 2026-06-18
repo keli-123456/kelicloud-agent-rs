@@ -772,6 +772,20 @@ The gate still prints the summary, then exits non-zero if any pair is
 policy from being promoted when it loses throughput, RTT p95, and client p95
 fairness at the same time.
 
+Optional absolute gates are available for the adaptive candidate row:
+
+```bash
+cargo run --release --bin ktp-policy-summary -- \
+  --max-adaptive-rtt-p95-micros 1500 \
+  --max-adaptive-client-p95-spread-micros 250 \
+  /tmp/ktp-policy-compare-smoke.csv
+```
+
+These gates are intentionally opt-in because same-host CI latency can vary. They
+are useful for RDP-like tuning runs where a candidate must preserve both tail
+latency and per-client fairness even if the relative fixed/adaptive verdict looks
+acceptable.
+
 The matrix script can run the same gate automatically after all CSV rows are
 written:
 
@@ -779,12 +793,16 @@ written:
 KTP_BATCH_MATRIX_BATCH_POLICIES="fixed adaptive" \
 KTP_BATCH_MATRIX_CSV=/tmp/ktp-policy-compare.csv \
 KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1 \
+KTP_BATCH_MATRIX_MAX_ADAPTIVE_RTT_P95_MICROS=1500 \
+KTP_BATCH_MATRIX_MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS=250 \
 bash scripts/ktp-relay-batch-matrix.sh
 ```
 
-`KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER=1` requires `KTP_BATCH_MATRIX_CSV` in
-non-dry-run mode. The script runs `ktp-policy-summary --fail-on-fixed-better`
-against that CSV and returns the summary exit code.
+Any enabled policy summary gate requires `KTP_BATCH_MATRIX_CSV` in non-dry-run
+mode. The script forwards `KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER`,
+`KTP_BATCH_MATRIX_MAX_ADAPTIVE_RTT_P95_MICROS`, and
+`KTP_BATCH_MATRIX_MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS` to
+`ktp-policy-summary` and returns the summary exit code.
 
 The relay batch matrix CSV includes `client_payload_reused` from
 `ktp-e2e-bench`; current runtime e2e samples should report `1` because the

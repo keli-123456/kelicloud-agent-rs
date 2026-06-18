@@ -75,6 +75,54 @@ fn ktp_policy_summary_cli_fail_gate_allows_adaptive_better_verdict() {
 }
 
 #[test]
+fn ktp_policy_summary_cli_latency_gate_rejects_adaptive_p95_above_threshold() {
+    let csv_path = write_temp_csv("ktp-policy-summary-latency-gate", adaptive_better_csv());
+
+    let output = Command::new(policy_summary_exe())
+        .args(["--max-adaptive-rtt-p95-micros", "700"])
+        .arg(&csv_path)
+        .output()
+        .expect("ktp-policy-summary should run");
+
+    assert!(
+        !output.status.success(),
+        "ktp-policy-summary unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("verdict=adaptive_better"));
+    assert!(stderr.contains(
+        "adaptive rtt_micros_p95 800.00us exceeds max 700.00us for clients=8 relay_batch_frames=64"
+    ));
+}
+
+#[test]
+fn ktp_policy_summary_cli_fairness_gate_rejects_adaptive_spread_above_threshold() {
+    let csv_path = write_temp_csv("ktp-policy-summary-fairness-gate", adaptive_better_csv());
+
+    let output = Command::new(policy_summary_exe())
+        .args(["--max-adaptive-client-p95-spread-micros", "100"])
+        .arg(&csv_path)
+        .output()
+        .expect("ktp-policy-summary should run");
+
+    assert!(
+        !output.status.success(),
+        "ktp-policy-summary unexpectedly succeeded: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("verdict=adaptive_better"));
+    assert!(stderr.contains(
+        "adaptive rtt_client_p95_spread_micros 200.00us exceeds max 100.00us for clients=8 relay_batch_frames=64"
+    ));
+}
+
+#[test]
 fn ktp_policy_summary_cli_fail_gate_allows_same_effective_policy() {
     let csv_path = write_temp_csv("ktp-policy-summary-same-effective", same_effective_csv());
 

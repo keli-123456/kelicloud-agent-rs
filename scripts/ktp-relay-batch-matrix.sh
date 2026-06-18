@@ -17,6 +17,8 @@ RELAY_WAIT_TIMEOUT_US="${KTP_BATCH_MATRIX_RELAY_WAIT_TIMEOUT_US:-100}"
 DRY_RUN="${KTP_BATCH_MATRIX_DRY_RUN:-0}"
 CSV_PATH="${KTP_BATCH_MATRIX_CSV:-}"
 FAIL_ON_FIXED_BETTER="${KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER:-0}"
+MAX_ADAPTIVE_RTT_P95_MICROS="${KTP_BATCH_MATRIX_MAX_ADAPTIVE_RTT_P95_MICROS:-}"
+MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS="${KTP_BATCH_MATRIX_MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS:-}"
 
 csv_header() {
   printf '%s\n' "profile,runs,clients,frames,payload_bytes,client_payload_reused,relay_batch_frames,relay_batch_policy,relay_batch_frames_effective,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max,rtt_micros_p50,rtt_micros_p95,rtt_micros_p99,rtt_micros_max,rtt_client_p95_micros_min,rtt_client_p95_micros_max,rtt_client_p95_spread_micros,rtt_client_max_micros_max,relay_turns,relay_wait_turns,ingress_batches,egress_batches,ingress_max_batch_frames,egress_max_batch_frames"
@@ -127,8 +129,13 @@ echo "== ktp relay batch matrix =="
 echo "profile=${PROFILE} runs=${RUNS} clients=${CLIENTS} frames=${FRAMES} payload_bytes=${PAYLOAD_BYTES} relay_batch_policies=${RELAY_BATCH_POLICIES} relay_wait_timeout_us=${RELAY_WAIT_TIMEOUT_US}"
 echo "batches=${BATCHES}"
 
-if [[ "${FAIL_ON_FIXED_BETTER}" == "1" && "${DRY_RUN}" != "1" && -z "${CSV_PATH}" ]]; then
-  echo "KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER requires KTP_BATCH_MATRIX_CSV" >&2
+POLICY_GATE_ENABLED=0
+if [[ "${FAIL_ON_FIXED_BETTER}" == "1" || -n "${MAX_ADAPTIVE_RTT_P95_MICROS}" || -n "${MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS}" ]]; then
+  POLICY_GATE_ENABLED=1
+fi
+
+if [[ "${POLICY_GATE_ENABLED}" == "1" && "${DRY_RUN}" != "1" && -z "${CSV_PATH}" ]]; then
+  echo "KTP batch matrix policy gates require KTP_BATCH_MATRIX_CSV" >&2
   exit 2
 fi
 
@@ -187,11 +194,22 @@ for policy in ${RELAY_BATCH_POLICIES}; do
   done
 done
 
-if [[ "${FAIL_ON_FIXED_BETTER}" == "1" ]]; then
+if [[ "${POLICY_GATE_ENABLED}" == "1" ]]; then
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "ktp policy summary gate skipped in dry-run"
   else
     echo "== ktp policy summary gate =="
-    cargo run --release --bin ktp-policy-summary -- --fail-on-fixed-better "${CSV_PATH}"
+    summary_cmd=(cargo run --release --bin ktp-policy-summary --)
+    if [[ "${FAIL_ON_FIXED_BETTER}" == "1" ]]; then
+      summary_cmd+=(--fail-on-fixed-better)
+    fi
+    if [[ -n "${MAX_ADAPTIVE_RTT_P95_MICROS}" ]]; then
+      summary_cmd+=(--max-adaptive-rtt-p95-micros "${MAX_ADAPTIVE_RTT_P95_MICROS}")
+    fi
+    if [[ -n "${MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS}" ]]; then
+      summary_cmd+=(--max-adaptive-client-p95-spread-micros "${MAX_ADAPTIVE_CLIENT_P95_SPREAD_MICROS}")
+    fi
+    summary_cmd+=("${CSV_PATH}")
+    "${summary_cmd[@]}"
   fi
 fi

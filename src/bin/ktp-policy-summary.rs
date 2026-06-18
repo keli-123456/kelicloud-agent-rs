@@ -25,8 +25,10 @@ fn main() {
     match run(std::env::args().skip(1)) {
         Ok(report) => {
             println!("{}", report.output);
-            if report.fixed_better_gate_failed {
-                eprintln!("fixed_better verdict failed KTP policy gate");
+            if !report.gate_failures.is_empty() {
+                for failure in report.gate_failures {
+                    eprintln!("{failure}");
+                }
                 std::process::exit(3);
             }
         }
@@ -41,15 +43,35 @@ fn main() {
 #[derive(Clone, Debug)]
 struct SummaryReport {
     output: String,
-    fixed_better_gate_failed: bool,
+    gate_failures: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct GateConfig {
+    max_adaptive_rtt_p95_micros: Option<f64>,
+    max_adaptive_client_p95_spread_micros: Option<f64>,
 }
 
 fn run(args: impl Iterator<Item = String>) -> SummaryResult<SummaryReport> {
     let mut fail_on_fixed_better = false;
+    let mut gate_config = GateConfig::default();
     let mut path = None::<String>;
-    for arg in args {
+    let mut args = args;
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--fail-on-fixed-better" => fail_on_fixed_better = true,
+            "--max-adaptive-rtt-p95-micros" => {
+                gate_config.max_adaptive_rtt_p95_micros = Some(next_positive_f64_arg(
+                    &mut args,
+                    "--max-adaptive-rtt-p95-micros",
+                )?);
+            }
+            "--max-adaptive-client-p95-spread-micros" => {
+                gate_config.max_adaptive_client_p95_spread_micros = Some(next_positive_f64_arg(
+                    &mut args,
+                    "--max-adaptive-client-p95-spread-micros",
+                )?);
+            }
             _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("unexpected extra argument".into()),
@@ -58,14 +80,24 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<SummaryReport> {
 
     let path = path.ok_or("CSV path is required")?;
     let content = fs::read_to_string(&path)?;
-    let output = summarize_csv(&content)?;
+    let summary = summarize_csv(&content, &gate_config)?;
+    let mut gate_failures = summary.gate_failures;
+    if fail_on_fixed_better && summary.output.contains("verdict=fixed_better") {
+        gate_failures.push("fixed_better verdict failed KTP policy gate".to_string());
+    }
     Ok(SummaryReport {
-        fixed_better_gate_failed: fail_on_fixed_better && output.contains("verdict=fixed_better"),
-        output,
+        output: summary.output,
+        gate_failures,
     })
 }
 
-fn summarize_csv(content: &str) -> SummaryResult<String> {
+#[derive(Clone, Debug)]
+struct CsvSummary {
+    output: String,
+    gate_failures: Vec<String>,
+}
+
+fn summarize_csv(content: &str, gate_config: &GateConfig) -> SummaryResult<CsvSummary> {
     let mut lines = content.lines().filter(|line| !line.trim().is_empty());
     let header = lines.next().ok_or("CSV is empty")?;
     let indexes = CsvIndexes::from_header(header)?;
@@ -94,6 +126,7 @@ fn summarize_csv(content: &str) -> SummaryResult<String> {
     }
 
     let mut output = format!("ktp_policy_summary rows={row_count} pairs={complete_pairs}");
+    let mut gate_failures = Vec::new();
     for ((_clients, _batch), pair) in pairs {
         let (Some(fixed), Some(adaptive)) = (pair.fixed, pair.adaptive) else {
             continue;
@@ -110,8 +143,12 @@ fn summarize_csv(content: &str) -> SummaryResult<String> {
             percent_delta(adaptive.client_p95_spread_micros, fixed.client_p95_spread_micros),
             verdict(&fixed, &adaptive)
         ));
+        collect_adaptive_gate_failures(&adaptive, gate_config, &mut gate_failures);
     }
-    Ok(output)
+    Ok(CsvSummary {
+        output,
+        gate_failures,
+    })
 }
 
 fn parse_row(line: &str, indexes: &CsvIndexes) -> SummaryResult<PolicyRow> {
@@ -154,6 +191,20 @@ where
     Ok(field(fields, index, name)?.parse::<T>()?)
 }
 
+fn next_positive_f64_arg(
+    args: &mut impl Iterator<Item = String>,
+    flag: &str,
+) -> SummaryResult<f64> {
+    let value = args
+        .next()
+        .ok_or_else(|| format!("{flag} requires a value"))?;
+    let parsed = value.parse::<f64>()?;
+    if !parsed.is_finite() || parsed <= 0.0 {
+        return Err(format!("{flag} must be a positive finite number").into());
+    }
+    Ok(parsed)
+}
+
 fn percent_delta(candidate: f64, baseline: f64) -> f64 {
     if baseline == 0.0 {
         if candidate == 0.0 {
@@ -165,6 +216,32 @@ fn percent_delta(candidate: f64, baseline: f64) -> f64 {
         }
     } else {
         ((candidate - baseline) / baseline) * 100.0
+    }
+}
+
+fn collect_adaptive_gate_failures(
+    adaptive: &PolicyRow,
+    gate_config: &GateConfig,
+    gate_failures: &mut Vec<String>,
+) {
+    if let Some(max) = gate_config.max_adaptive_rtt_p95_micros {
+        if adaptive.rtt_micros_p95 > max {
+            gate_failures.push(format!(
+                "adaptive rtt_micros_p95 {:.2}us exceeds max {:.2}us for clients={} relay_batch_frames={}",
+                adaptive.rtt_micros_p95, max, adaptive.clients, adaptive.relay_batch_frames
+            ));
+        }
+    }
+    if let Some(max) = gate_config.max_adaptive_client_p95_spread_micros {
+        if adaptive.client_p95_spread_micros > max {
+            gate_failures.push(format!(
+                "adaptive rtt_client_p95_spread_micros {:.2}us exceeds max {:.2}us for clients={} relay_batch_frames={}",
+                adaptive.client_p95_spread_micros,
+                max,
+                adaptive.clients,
+                adaptive.relay_batch_frames
+            ));
+        }
     }
 }
 
@@ -230,5 +307,7 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 }
 
 fn print_usage() {
-    eprintln!("usage: ktp-policy-summary [--fail-on-fixed-better] <ktp-relay-batch-matrix.csv>");
+    eprintln!(
+        "usage: ktp-policy-summary [--fail-on-fixed-better] [--max-adaptive-rtt-p95-micros N] [--max-adaptive-client-p95-spread-micros N] <ktp-relay-batch-matrix.csv>"
+    );
 }
