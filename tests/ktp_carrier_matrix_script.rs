@@ -17,6 +17,8 @@ fn ktp_carrier_matrix_script_sweeps_directions_with_repeatable_defaults() {
     assert!(script.contains("--payload-bytes"));
     assert!(script.contains("KTP_CARRIER_MATRIX_CSV"));
     assert!(script.contains("write_csv_row"));
+    assert!(script.contains("required_metric_value \"${output}\" carrier"));
+    assert!(script.contains("required_metric_value \"${output}\" crypto"));
     assert!(script.contains("write_batch_frames"));
     assert!(script.contains("write_batch_reused"));
     assert!(script.contains("read_batch_frames"));
@@ -120,14 +122,16 @@ fn ktp_carrier_matrix_script_writes_csv_from_bench_output_on_linux() {
     );
     let csv = std::fs::read_to_string(&csv_path).expect("CSV should be written");
     assert!(csv.contains(
-        "direction,runs,frames,payload_bytes,write_batch_frames,write_batch_reused,read_batch_frames,read_batch_reused,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max"
-    ));
-    assert!(csv.contains("client_to_relay,3,8,1024,0,0,0,0,8.100,8.200,8.300,8.400,8.500,8.600"));
-    assert!(csv.contains(
-        "client_to_relay_batch_write,3,8,1024,64,1,0,0,8.100,8.200,8.300,8.400,8.500,8.600"
+        "carrier,crypto,direction,runs,frames,payload_bytes,write_batch_frames,write_batch_reused,read_batch_frames,read_batch_reused,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max"
     ));
     assert!(csv.contains(
-        "relay_to_client_batch_read,3,8,1024,0,0,64,1,8.100,8.200,8.300,8.400,8.500,8.600"
+        "ktp_tcp,ktp_aead,client_to_relay,3,8,1024,0,0,0,0,8.100,8.200,8.300,8.400,8.500,8.600"
+    ));
+    assert!(csv.contains(
+        "ktp_tcp,ktp_aead,client_to_relay_batch_write,3,8,1024,64,1,0,0,8.100,8.200,8.300,8.400,8.500,8.600"
+    ));
+    assert!(csv.contains(
+        "ktp_tcp,ktp_aead,relay_to_client_batch_read,3,8,1024,0,0,64,1,8.100,8.200,8.300,8.400,8.500,8.600"
     ));
 }
 
@@ -203,6 +207,6 @@ fi
 if [[ "$direction" == "relay-to-client-batch-read" ]]; then
   read_batch=" read_batch_frames=64 read_batch_reused=1"
 fi
-echo "ktp_tunnel_bench carrier=encrypted_tcp direction=${report_direction} runs=${runs} frames=${frames} payload_bytes=${payload_bytes} bytes=8192 bytes_per_run=8192 total_bytes=24576${write_batch}${read_batch} elapsed_ms_min=${frames}.100 elapsed_ms_median=${frames}.200 elapsed_ms_max=${frames}.300 throughput_mib_s_min=${frames}.400 throughput_mib_s_median=${frames}.500 throughput_mib_s_max=${frames}.600"
+echo "ktp_tunnel_bench carrier=ktp_tcp crypto=ktp_aead direction=${report_direction} runs=${runs} frames=${frames} payload_bytes=${payload_bytes} bytes=8192 bytes_per_run=8192 total_bytes=24576${write_batch}${read_batch} elapsed_ms_min=${frames}.100 elapsed_ms_median=${frames}.200 elapsed_ms_max=${frames}.300 throughput_mib_s_min=${frames}.400 throughput_mib_s_median=${frames}.500 throughput_mib_s_max=${frames}.600"
 "#
 }

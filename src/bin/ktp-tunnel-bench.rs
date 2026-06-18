@@ -51,6 +51,8 @@ impl BenchDirection {
 
 const WRITE_BATCH_FRAMES: usize = 64;
 const READ_BATCH_FRAMES: usize = 64;
+const BENCH_CARRIER: &str = "ktp_tcp";
+const BENCH_CRYPTO: &str = "ktp_aead";
 
 fn main() {
     let config = match parse_args(std::env::args().skip(1)) {
@@ -150,7 +152,9 @@ async fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
         let elapsed_secs = sample.elapsed.as_secs_f64().max(0.000_001);
         let throughput_mib_s = (sample.bytes as f64 / (1024.0 * 1024.0)) / elapsed_secs;
         return Ok(format!(
-            "ktp_tunnel_bench carrier=encrypted_tcp direction={} runs={} frames={} payload_bytes={} bytes={} bytes_per_run={} total_bytes={}{} elapsed_ms={:.3} throughput_mib_s={:.3}",
+            "ktp_tunnel_bench carrier={} crypto={} direction={} runs={} frames={} payload_bytes={} bytes={} bytes_per_run={} total_bytes={}{} elapsed_ms={:.3} throughput_mib_s={:.3}",
+            BENCH_CARRIER,
+            BENCH_CRYPTO,
             config.direction.report_value(),
             config.runs,
             config.frames,
@@ -179,7 +183,9 @@ async fn run_benchmark(config: BenchConfig) -> BenchResult<String> {
     throughput_values.sort_by(f64::total_cmp);
 
     Ok(format!(
-        "ktp_tunnel_bench carrier=encrypted_tcp direction={} runs={} frames={} payload_bytes={} bytes={} bytes_per_run={} total_bytes={}{} elapsed_ms_min={:.3} elapsed_ms_median={:.3} elapsed_ms_max={:.3} throughput_mib_s_min={:.3} throughput_mib_s_median={:.3} throughput_mib_s_max={:.3}",
+        "ktp_tunnel_bench carrier={} crypto={} direction={} runs={} frames={} payload_bytes={} bytes={} bytes_per_run={} total_bytes={}{} elapsed_ms_min={:.3} elapsed_ms_median={:.3} elapsed_ms_max={:.3} throughput_mib_s_min={:.3} throughput_mib_s_median={:.3} throughput_mib_s_max={:.3}",
+        BENCH_CARRIER,
+        BENCH_CRYPTO,
         config.direction.report_value(),
         config.runs,
         config.frames,

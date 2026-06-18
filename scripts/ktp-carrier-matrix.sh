@@ -14,7 +14,7 @@ DRY_RUN="${KTP_CARRIER_MATRIX_DRY_RUN:-0}"
 CSV_PATH="${KTP_CARRIER_MATRIX_CSV:-}"
 
 csv_header() {
-  printf '%s\n' "direction,runs,frames,payload_bytes,write_batch_frames,write_batch_reused,read_batch_frames,read_batch_reused,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max"
+  printf '%s\n' "carrier,crypto,direction,runs,frames,payload_bytes,write_batch_frames,write_batch_reused,read_batch_frames,read_batch_reused,elapsed_ms_min,elapsed_ms_median,elapsed_ms_max,throughput_mib_s_min,throughput_mib_s_median,throughput_mib_s_max"
 }
 
 metric_value() {
@@ -50,11 +50,13 @@ required_metric_value() {
 
 write_csv_row() {
   local output="$1"
-  local direction frames payload_bytes
+  local carrier crypto direction frames payload_bytes
   local write_batch_frames write_batch_reused read_batch_frames read_batch_reused
   local elapsed_ms_min elapsed_ms_median elapsed_ms_max
   local throughput_mib_s_min throughput_mib_s_median throughput_mib_s_max
 
+  carrier="$(required_metric_value "${output}" carrier)"
+  crypto="$(required_metric_value "${output}" crypto)"
   direction="$(required_metric_value "${output}" direction)"
   frames="$(required_metric_value "${output}" frames)"
   payload_bytes="$(required_metric_value "${output}" payload_bytes)"
@@ -81,7 +83,9 @@ write_csv_row() {
   throughput_mib_s_median="$(required_metric_value "${output}" throughput_mib_s_median throughput_mib_s)"
   throughput_mib_s_max="$(required_metric_value "${output}" throughput_mib_s_max throughput_mib_s)"
 
-  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "${carrier}" \
+    "${crypto}" \
     "${direction}" \
     "${RUNS}" \
     "${frames}" \

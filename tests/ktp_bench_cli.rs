@@ -18,6 +18,8 @@ fn ktp_tunnel_bench_cli_reports_loopback_throughput() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ktp_tunnel_bench"));
+    assert!(stdout.contains("carrier=ktp_tcp"));
+    assert!(stdout.contains("crypto=ktp_aead"));
     assert!(stdout.contains("frames=4"));
     assert!(stdout.contains("bytes=512"));
     assert!(stdout.contains("elapsed_ms="));
@@ -41,6 +43,8 @@ fn ktp_tunnel_bench_cli_can_average_multiple_runs() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("carrier=ktp_tcp"));
+    assert!(stdout.contains("crypto=ktp_aead"));
     assert!(stdout.contains("runs=2"));
     assert!(stdout.contains("frames=2"));
     assert!(stdout.contains("bytes_per_run=256"));
