@@ -290,6 +290,10 @@ pub trait TunnelSessionRuntime {
         Ok(())
     }
 
+    fn close_all_sessions(&mut self, _reason: &str) -> Result<(), TransportError> {
+        Ok(())
+    }
+
     fn handle_server_frame(&mut self, _frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {
         Ok(Vec::new())
     }
@@ -599,6 +603,12 @@ impl TunnelTcpRuntime {
 impl TunnelSessionRuntime for TunnelTcpRuntime {
     fn tick(&mut self) -> Result<(), TransportError> {
         self.refresh_listeners()
+    }
+
+    fn close_all_sessions(&mut self, reason: &str) -> Result<(), TransportError> {
+        self.async_runtime
+            .block_on(self.core.close_all_sessions(reason))
+            .map_err(runtime_error_to_transport)
     }
 
     fn handle_server_frame(&mut self, frame: KtpFrame) -> Result<Vec<KtpFrame>, TransportError> {

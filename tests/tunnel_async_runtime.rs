@@ -541,6 +541,40 @@ fn async_runtime_close_session_removes_active_count() {
 }
 
 #[test]
+fn async_runtime_close_all_sessions_removes_active_count() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let core = AsyncTunnelCore::new(TunnelRuntimeLimits::default());
+        let (first_port, _first_hold_thread) = hold_one_target_connection();
+        let (second_port, _second_hold_thread) = hold_one_target_connection();
+        core.open_egress_session(31, 7, "127.0.0.1", first_port, session_open_payload(7))
+            .await
+            .expect("first session should open");
+        core.open_egress_session(32, 7, "127.0.0.1", second_port, session_open_payload(7))
+            .await
+            .expect("second session should open");
+
+        assert_eq!(core.stats_snapshot().active_sessions, 2);
+        core.close_all_sessions("carrier disconnect")
+            .await
+            .expect("all sessions should close");
+
+        assert_eq!(core.stats_snapshot().active_sessions, 0);
+        let err = core
+            .handle_session_data(31, FrameLeg::Egress, b"late".to_vec())
+            .await
+            .expect_err("closed sessions should not accept more data");
+        assert_eq!(err.code(), "runtime_unavailable");
+    });
+}
+
+#[test]
 fn async_runtime_close_session_stops_target_reader_before_late_data() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()

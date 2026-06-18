@@ -1204,7 +1204,7 @@ pub fn run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporte
     runtime: &mut R,
     diagnostics: &SharedTunnelDataDiagnostics,
     diagnostics_report_interval: Duration,
-    mut report_diagnostics: F,
+    report_diagnostics: F,
 ) -> Result<(), TransportError>
 where
     T: TunnelDataTransport,
@@ -1217,22 +1217,63 @@ where
         Err(error) if is_nonfatal_connect_error(&error) => return Ok(()),
         Err(error) => return Err(error),
     };
+
+    let result =
+        run_connected_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
+            &mut socket,
+            agent_id_hint,
+            agent_version,
+            ready_source,
+            runtime,
+            diagnostics,
+            diagnostics_report_interval,
+            report_diagnostics,
+        );
+    let cleanup_result = runtime.close_all_sessions("carrier_disconnect");
+    match (result, cleanup_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(error)) => Err(error),
+        (Err(error), Ok(())) | (Err(error), Err(_)) => Err(error),
+    }
+}
+
+fn run_connected_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter<
+    S,
+    R,
+    U,
+    F,
+>(
+    socket: &mut U,
+    agent_id_hint: &str,
+    agent_version: &str,
+    ready_source: &S,
+    runtime: &mut R,
+    diagnostics: &SharedTunnelDataDiagnostics,
+    diagnostics_report_interval: Duration,
+    mut report_diagnostics: F,
+) -> Result<(), TransportError>
+where
+    S: TunnelDataReadySource,
+    R: TunnelSessionRuntime,
+    U: TunnelDataSocket,
+    F: FnMut(&TunnelDataDiagnosticsSnapshot),
+{
     let mut last_diagnostics_report = Instant::now();
 
     let hello_ready = ready_source.current_ready();
     let hello_payload = encode_hello_payload(agent_id_hint, agent_version, &hello_ready.revision)?;
     let hello_frame = KtpFrame::connection(FrameType::Hello, hello_payload);
-    if send_tunnel_data_ktp_frame(&mut socket, &hello_frame)? == SendFrameOutcome::Closed {
+    if send_tunnel_data_ktp_frame(socket, &hello_frame)? == SendFrameOutcome::Closed {
         return Ok(());
     }
 
-    if read_tunnel_data_hello_ack(&mut socket)? == ReadFrameOutcome::Closed {
+    if read_tunnel_data_hello_ack(socket)? == ReadFrameOutcome::Closed {
         return Ok(());
     }
 
     runtime.tick()?;
     let mut last_ready = ready_source.current_ready();
-    if send_ready_frame(&mut socket, &last_ready)? == SendFrameOutcome::Closed {
+    if send_ready_frame(socket, &last_ready)? == SendFrameOutcome::Closed {
         return Ok(());
     }
 
@@ -1240,12 +1281,12 @@ where
         runtime.tick()?;
         let current_ready = ready_source.current_ready();
         if current_ready != last_ready {
-            if send_ready_frame(&mut socket, &current_ready)? == SendFrameOutcome::Closed {
+            if send_ready_frame(socket, &current_ready)? == SendFrameOutcome::Closed {
                 return Ok(());
             }
             last_ready = current_ready;
         }
-        let sent_runtime_frames = drain_tunnel_session_runtime_frames(&mut socket, runtime)?;
+        let sent_runtime_frames = drain_tunnel_session_runtime_frames(socket, runtime)?;
         diagnostics.record_outbound_runtime_frames(sent_runtime_frames.frames);
         diagnostics.record_socket_write_batches(sent_runtime_frames);
         diagnostics.record_outbound_queue_dwell_snapshot(runtime.outbound_queue_dwell_snapshot());
@@ -1256,7 +1297,7 @@ where
             if let Some(timeout) = runtime.tunnel_data_client_frame_wait_timeout() {
                 let wait_started = Instant::now();
                 let waited_runtime_frames =
-                    drain_tunnel_session_runtime_frames_after_wait(&mut socket, runtime, timeout)?;
+                    drain_tunnel_session_runtime_frames_after_wait(socket, runtime, timeout)?;
                 diagnostics
                     .record_runtime_wait(wait_started.elapsed(), waited_runtime_frames.frames);
                 diagnostics.record_outbound_runtime_frames(waited_runtime_frames.frames);
@@ -1291,7 +1332,7 @@ where
         match read_result {
             Ok(Some(frames)) => {
                 diagnostics.record_socket_read_batch(frames.len());
-                handle_tunnel_data_session_frames(&mut socket, frames, runtime)?
+                handle_tunnel_data_session_frames(socket, frames, runtime)?
             }
             Ok(None) => {
                 diagnostics.record_socket_idle_empty_read();

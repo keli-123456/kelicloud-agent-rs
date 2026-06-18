@@ -897,6 +897,21 @@ impl AsyncTunnelCore {
         }
     }
 
+    pub async fn close_all_sessions(&self, _reason: &str) -> Result<(), TunnelRuntimeError> {
+        let removed = self
+            .sessions
+            .lock()
+            .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
+            .drain()
+            .map(|(_, session)| session)
+            .collect::<Vec<_>>();
+        for session in removed {
+            session.abort_reader();
+            self.stats.session_closed(session.rule_id);
+        }
+        Ok(())
+    }
+
     pub fn stats_snapshot(&self) -> TunnelRuntimeStatsSnapshot {
         self.stats.snapshot()
     }

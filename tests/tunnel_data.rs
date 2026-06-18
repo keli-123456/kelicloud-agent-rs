@@ -403,6 +403,17 @@ impl TunnelSessionRuntime for RecordingServerFrameRuntime {
     }
 }
 
+struct CleanupRecordingRuntime {
+    cleanup_reasons: Rc<RefCell<Vec<String>>>,
+}
+
+impl TunnelSessionRuntime for CleanupRecordingRuntime {
+    fn close_all_sessions(&mut self, reason: &str) -> Result<(), TransportError> {
+        self.cleanup_reasons.borrow_mut().push(reason.to_string());
+        Ok(())
+    }
+}
+
 #[test]
 fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
     let events = Rc::new(RefCell::new(Vec::new()));
@@ -470,6 +481,40 @@ fn tunnel_data_once_sends_hello_and_ready_without_listener_plan() {
             "listen_bind_failed".to_string(),
             "cannot bind listener 127.0.0.1:10088".to_string(),
         )]
+    );
+}
+
+#[test]
+fn tunnel_data_session_closes_runtime_sessions_when_socket_closes() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let cleanup_reasons = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = FakeTunnelDataTransport {
+        events,
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+        connect_error: None,
+        send_error_after: usize::MAX,
+        send_error: None,
+        optional_read_hook: None,
+    };
+    let mut runtime = CleanupRecordingRuntime {
+        cleanup_reasons: Rc::clone(&cleanup_reasons),
+    };
+
+    run_tunnel_data_session_with_ready_source_and_runtime(
+        "wss://panel.example.com/api/clients/tunnel/data?token=secret",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-cleanup"),
+        &mut transport,
+        &mut runtime,
+    )
+    .expect("socket close should end the data session without failing the agent");
+
+    assert_eq!(
+        cleanup_reasons.borrow().as_slice(),
+        ["carrier_disconnect"],
+        "carrier disconnect must tear down active tunnel sessions"
     );
 }
 
