@@ -642,6 +642,12 @@ struct AsyncTunnelSession {
     rule_id: u64,
     to_tcp: mpsc::Sender<Vec<u8>>,
     pending_bytes: Arc<AtomicUsize>,
+    tasks: Arc<Mutex<AsyncTunnelSessionTasks>>,
+}
+
+#[derive(Debug, Default)]
+struct AsyncTunnelSessionTasks {
+    reader: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AsyncTunnelCore {
@@ -759,20 +765,15 @@ impl AsyncTunnelCore {
         let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
         let pending_bytes = Arc::new(AtomicUsize::new(0));
 
+        let session = AsyncTunnelSession::new(rule_id, tx, Arc::clone(&pending_bytes));
         self.sessions
             .lock()
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
-            .insert(
-                session_id,
-                AsyncTunnelSession {
-                    rule_id,
-                    to_tcp: tx,
-                    pending_bytes: Arc::clone(&pending_bytes),
-                },
-            );
+            .insert(session_id, session.clone());
         self.stats.session_opened(rule_id);
-        self.spawn_session_reader(reader, session_id, rule_id, FrameLeg::Egress);
+        let reader_task = self.spawn_session_reader(reader, session_id, rule_id, FrameLeg::Egress);
         self.spawn_session_writer(writer, rx, rule_id, pending_bytes);
+        session.set_reader_task(reader_task);
 
         Ok(vec![KtpFrame {
             frame_type: FrameType::SessionAccept,
@@ -797,17 +798,11 @@ impl AsyncTunnelCore {
         let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
         let pending_bytes = Arc::new(AtomicUsize::new(0));
 
+        let session = AsyncTunnelSession::new(rule_id, tx, Arc::clone(&pending_bytes));
         self.sessions
             .lock()
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
-            .insert(
-                session_id,
-                AsyncTunnelSession {
-                    rule_id,
-                    to_tcp: tx,
-                    pending_bytes: Arc::clone(&pending_bytes),
-                },
-            );
+            .insert(session_id, session.clone());
         self.stats.session_opened(rule_id);
 
         let payload = encode_session_open_payload(&TunnelSessionOpenPayload {
@@ -824,8 +819,9 @@ impl AsyncTunnelCore {
             session_id,
             payload,
         })?;
-        self.spawn_session_reader(reader, session_id, rule_id, FrameLeg::Ingress);
+        let reader_task = self.spawn_session_reader(reader, session_id, rule_id, FrameLeg::Ingress);
         self.spawn_session_writer(writer, rx, rule_id, pending_bytes);
+        session.set_reader_task(reader_task);
         Ok(())
     }
 
@@ -893,6 +889,7 @@ impl AsyncTunnelCore {
             .map_err(|_| TunnelRuntimeError::runtime_unavailable("session map is unavailable"))?
             .remove(&session_id);
         if let Some(session) = removed {
+            session.abort_reader();
             self.stats.session_closed(session.rule_id);
             Ok(())
         } else {
@@ -919,7 +916,7 @@ impl AsyncTunnelCore {
         session_id: u64,
         rule_id: u64,
         leg: FrameLeg,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         let outbound = self.outbound.clone();
         let sessions = self.sessions.clone();
         let stats = self.stats.clone();
@@ -958,7 +955,7 @@ impl AsyncTunnelCore {
             if removed.is_some() {
                 stats.session_closed(rule_id);
             }
-        });
+        })
     }
 
     fn spawn_session_writer(
@@ -984,6 +981,29 @@ impl AsyncTunnelCore {
 }
 
 impl AsyncTunnelSession {
+    fn new(rule_id: u64, to_tcp: mpsc::Sender<Vec<u8>>, pending_bytes: Arc<AtomicUsize>) -> Self {
+        Self {
+            rule_id,
+            to_tcp,
+            pending_bytes,
+            tasks: Arc::new(Mutex::new(AsyncTunnelSessionTasks::default())),
+        }
+    }
+
+    fn set_reader_task(&self, reader: tokio::task::JoinHandle<()>) {
+        if let Ok(mut tasks) = self.tasks.lock() {
+            tasks.reader = Some(reader);
+        }
+    }
+
+    fn abort_reader(&self) {
+        if let Ok(mut tasks) = self.tasks.lock() {
+            if let Some(reader) = tasks.reader.take() {
+                reader.abort();
+            }
+        }
+    }
+
     fn reserve_pending_bytes(&self, bytes: usize, limit: usize) -> Result<(), TunnelRuntimeError> {
         loop {
             let current = self.pending_bytes.load(Ordering::Acquire);
