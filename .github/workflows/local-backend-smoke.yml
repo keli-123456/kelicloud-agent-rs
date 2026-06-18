@@ -242,6 +242,8 @@ jobs:
             --require-ktp-aead \
             --require-ktp-tunnel-rtt \
             --require-ktp-rdp-like-rtt \
+            --max-ktp-rdp-like-rtt-p95-micros "250000" \
+            --max-ktp-rdp-like-client-p95-spread-micros "250000" \
             "${summary}" | tee "${report}"
           summary_status="${PIPESTATUS[0]}"
           exit "${summary_status}"

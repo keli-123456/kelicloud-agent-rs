@@ -54,14 +54,29 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<CarrierReport> {
     let mut require_ktp_aead = false;
     let mut require_ktp_tunnel_rtt = false;
     let mut require_ktp_rdp_like_rtt = false;
+    let mut max_ktp_rdp_like_rtt_p95_micros = None::<u64>;
+    let mut max_ktp_rdp_like_client_p95_spread_micros = None::<u64>;
     let mut path = None::<String>;
+    let mut args = args.peekable();
 
-    for arg in args {
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--require-pass" => require_pass = true,
             "--require-ktp-aead" => require_ktp_aead = true,
             "--require-ktp-tunnel-rtt" => require_ktp_tunnel_rtt = true,
             "--require-ktp-rdp-like-rtt" => require_ktp_rdp_like_rtt = true,
+            "--max-ktp-rdp-like-rtt-p95-micros" => {
+                max_ktp_rdp_like_rtt_p95_micros = Some(next_u64_arg(
+                    &mut args,
+                    "--max-ktp-rdp-like-rtt-p95-micros",
+                )?);
+            }
+            "--max-ktp-rdp-like-client-p95-spread-micros" => {
+                max_ktp_rdp_like_client_p95_spread_micros = Some(next_u64_arg(
+                    &mut args,
+                    "--max-ktp-rdp-like-client-p95-spread-micros",
+                )?);
+            }
             _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("unexpected extra argument".into()),
@@ -76,6 +91,8 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<CarrierReport> {
         require_ktp_aead,
         require_ktp_tunnel_rtt,
         require_ktp_rdp_like_rtt,
+        max_ktp_rdp_like_rtt_p95_micros,
+        max_ktp_rdp_like_client_p95_spread_micros,
     )
 }
 
@@ -85,6 +102,8 @@ fn summarize_tsv(
     require_ktp_aead: bool,
     require_ktp_tunnel_rtt: bool,
     require_ktp_rdp_like_rtt: bool,
+    max_ktp_rdp_like_rtt_p95_micros: Option<u64>,
+    max_ktp_rdp_like_client_p95_spread_micros: Option<u64>,
 ) -> SummaryResult<CarrierReport> {
     let mut lines = content.lines().filter(|line| !line.trim().is_empty());
     let header = lines.next().ok_or("matrix summary is empty")?;
@@ -219,14 +238,36 @@ fn summarize_tsv(
             && parse_u64_metric(&row.rtt_client_p95_spread_micros).is_some()
     });
     match ktp_rdp_like_rtt_row {
-        Some(row) => output.push_str(&format!(
-            "\nktp_tcp_rdp_like_rtt_evidence=present clients={} rounds={} total_payload_bytes={} rtt_micros_p95={} rtt_client_p95_spread_micros={}",
-            row.tunnel_clients,
-            row.tunnel_rounds,
-            row.tunnel_total_payload_bytes,
-            row.rtt_micros_p95,
-            row.rtt_client_p95_spread_micros
-        )),
+        Some(row) => {
+            output.push_str(&format!(
+                "\nktp_tcp_rdp_like_rtt_evidence=present clients={} rounds={} total_payload_bytes={} rtt_micros_p95={} rtt_client_p95_spread_micros={}",
+                row.tunnel_clients,
+                row.tunnel_rounds,
+                row.tunnel_total_payload_bytes,
+                row.rtt_micros_p95,
+                row.rtt_client_p95_spread_micros
+            ));
+            if let (Some(actual), Some(max)) = (
+                parse_u64_metric(&row.rtt_micros_p95),
+                max_ktp_rdp_like_rtt_p95_micros,
+            ) {
+                if actual > max {
+                    gate_failures.push(format!(
+                        "ktp_tcp rdp-like rtt_micros_p95 {actual} exceeds max {max}"
+                    ));
+                }
+            }
+            if let (Some(actual), Some(max)) = (
+                parse_u64_metric(&row.rtt_client_p95_spread_micros),
+                max_ktp_rdp_like_client_p95_spread_micros,
+            ) {
+                if actual > max {
+                    gate_failures.push(format!(
+                        "ktp_tcp rdp-like rtt_client_p95_spread_micros {actual} exceeds max {max}"
+                    ));
+                }
+            }
+        }
         None => {
             output.push_str("\nktp_tcp_rdp_like_rtt_evidence=missing");
             if require_ktp_rdp_like_rtt {
@@ -353,8 +394,23 @@ fn parse_u64_metric(value: &str) -> Option<u64> {
     value.parse::<u64>().ok()
 }
 
+fn next_u64_arg(
+    args: &mut std::iter::Peekable<impl Iterator<Item = String>>,
+    name: &str,
+) -> SummaryResult<u64> {
+    let value = args
+        .next()
+        .ok_or_else(|| format!("{name} value is required"))?;
+    if value.trim().is_empty() {
+        return Err(format!("{name} value is empty").into());
+    }
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("{name} value must be an unsigned integer").into())
+}
+
 fn print_usage() {
     eprintln!(
-        "usage: ktp-local-backend-matrix-summary [--require-pass] [--require-ktp-aead] [--require-ktp-tunnel-rtt] [--require-ktp-rdp-like-rtt] <matrix-summary.tsv>"
+        "usage: ktp-local-backend-matrix-summary [--require-pass] [--require-ktp-aead] [--require-ktp-tunnel-rtt] [--require-ktp-rdp-like-rtt] [--max-ktp-rdp-like-rtt-p95-micros N] [--max-ktp-rdp-like-client-p95-spread-micros N] <matrix-summary.tsv>"
     );
 }

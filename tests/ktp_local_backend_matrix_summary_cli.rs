@@ -185,6 +185,66 @@ ktp_tcp	true	ktp_aead	pass	logs/ktp_tcp	logs/ktp_tcp/agent.summary.md	logs/ktp_t
 }
 
 #[test]
+fn ktp_local_backend_matrix_summary_rejects_rdp_like_rtt_p95_above_threshold() {
+    let summary_path = write_temp_summary(
+        "ktp-local-backend-matrix-summary-high-p95",
+        r#"carrier	ktp_tcp	ktp_crypto	status	log_dir	summary_file	ktp_evidence_file	tunnel_evidence_file	tunnel_profile	tunnel_clients	tunnel_rounds	tunnel_total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros
+websocket	false	-	pass	logs/websocket	logs/websocket/agent.summary.md	-	logs/websocket/tunnel-echo.evidence.md	fixed	1	1	64	1000	1100	1200	1300	0
+ktp_tcp	true	ktp_aead	pass	logs/ktp_tcp	logs/ktp_tcp/agent.summary.md	logs/ktp_tcp/ktp-live-canary.evidence.md	logs/ktp_tcp/tunnel-echo.evidence.md	rdp-like	4	8	39680	5958	600000	650000	700000	16954
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--require-ktp-rdp-like-rtt")
+        .arg("--max-ktp-rdp-like-rtt-p95-micros")
+        .arg("250000")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-local-backend-matrix-summary should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "high rdp-like RTT p95 should exit 3: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ktp_tcp rdp-like rtt_micros_p95 600000 exceeds max 250000"));
+}
+
+#[test]
+fn ktp_local_backend_matrix_summary_rejects_rdp_like_client_spread_above_threshold() {
+    let summary_path = write_temp_summary(
+        "ktp-local-backend-matrix-summary-high-spread",
+        r#"carrier	ktp_tcp	ktp_crypto	status	log_dir	summary_file	ktp_evidence_file	tunnel_evidence_file	tunnel_profile	tunnel_clients	tunnel_rounds	tunnel_total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros
+websocket	false	-	pass	logs/websocket	logs/websocket/agent.summary.md	-	logs/websocket/tunnel-echo.evidence.md	fixed	1	1	64	1000	1100	1200	1300	0
+ktp_tcp	true	ktp_aead	pass	logs/ktp_tcp	logs/ktp_tcp/agent.summary.md	logs/ktp_tcp/ktp-live-canary.evidence.md	logs/ktp_tcp/tunnel-echo.evidence.md	rdp-like	4	8	39680	5958	26909	30755	30755	300000
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--require-ktp-rdp-like-rtt")
+        .arg("--max-ktp-rdp-like-client-p95-spread-micros")
+        .arg("100000")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-local-backend-matrix-summary should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "high rdp-like client spread should exit 3: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ktp_tcp rdp-like rtt_client_p95_spread_micros 300000 exceeds max 100000")
+    );
+}
+
+#[test]
 fn ktp_local_backend_matrix_summary_rejects_missing_required_columns() {
     let summary_path = write_temp_summary(
         "ktp-local-backend-matrix-summary-missing-column",

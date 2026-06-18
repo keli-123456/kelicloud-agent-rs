@@ -106,6 +106,9 @@ fn local_backend_smoke_workflow_runs_full_linux_control_plane() {
     assert!(workflow.contains("--require-ktp-aead"));
     assert!(workflow.contains("--require-ktp-tunnel-rtt"));
     assert!(workflow.contains("--require-ktp-rdp-like-rtt"));
+    assert!(workflow.contains("--max-ktp-rdp-like-rtt-p95-micros"));
+    assert!(workflow.contains("--max-ktp-rdp-like-client-p95-spread-micros"));
+    assert!(workflow.contains("\"250000\""));
     assert!(workflow.contains("Local backend carrier matrix summary"));
     assert!(workflow.contains("kelicloud-agent-rs-local-backend-carrier-summary"));
 }
