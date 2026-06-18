@@ -6,6 +6,7 @@ type SummaryResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 #[derive(Clone, Debug)]
 struct MatrixRow {
+    relay_batch_policy: String,
     clients: String,
     status: String,
     elapsed_millis: u64,
@@ -98,8 +99,8 @@ fn summarize_tsv(content: &str, require_pass: bool) -> SummaryResult<MatrixRepor
     for row in &rows {
         if require_pass && row.status != "pass" {
             gate_failures.push(format!(
-                "tunnel matrix row clients={} status={} failed require-pass gate",
-                row.clients, row.status
+                "tunnel matrix row policy={} clients={} status={} failed require-pass gate",
+                row.relay_batch_policy, row.clients, row.status
             ));
         }
 
@@ -108,33 +109,50 @@ fn summarize_tsv(content: &str, require_pass: bool) -> SummaryResult<MatrixRepor
         let socket_batch = metric_text(row.socket_read_max_batch_frames);
         output.push('\n');
         output.push_str(&format!(
-            "clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={}",
-            row.clients, row.status, row.elapsed_millis, rtt, spread, socket_batch
+            "policy={} clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={}",
+            row.relay_batch_policy,
+            row.clients,
+            row.status,
+            row.elapsed_millis,
+            rtt,
+            spread,
+            socket_batch
         ));
 
         if row.status == "pass" {
-            max_rtt.record(&row.clients, row.rtt_micros_p95);
-            max_spread.record(&row.clients, row.client_p95_spread_micros);
-            max_socket_batch.record(&row.clients, row.socket_read_max_batch_frames);
+            max_rtt.record(&row.relay_batch_policy, &row.clients, row.rtt_micros_p95);
+            max_spread.record(
+                &row.relay_batch_policy,
+                &row.clients,
+                row.client_p95_spread_micros,
+            );
+            max_socket_batch.record(
+                &row.relay_batch_policy,
+                &row.clients,
+                row.socket_read_max_batch_frames,
+            );
         }
     }
 
     output.push('\n');
     output.push_str(&format!(
-        "max_rtt_micros_p95={} clients={}",
+        "max_rtt_micros_p95={} policy={} clients={}",
         metric_text(max_rtt.value),
+        max_rtt.policy.as_deref().unwrap_or("-"),
         max_rtt.clients.as_deref().unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "max_rtt_client_p95_spread_micros={} clients={}",
+        "max_rtt_client_p95_spread_micros={} policy={} clients={}",
         metric_text(max_spread.value),
+        max_spread.policy.as_deref().unwrap_or("-"),
         max_spread.clients.as_deref().unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "max_socket_read_max_batch_frames={} clients={}",
+        "max_socket_read_max_batch_frames={} policy={} clients={}",
         metric_text(max_socket_batch.value),
+        max_socket_batch.policy.as_deref().unwrap_or("-"),
         max_socket_batch.clients.as_deref().unwrap_or("-")
     ));
 
@@ -146,12 +164,18 @@ fn summarize_tsv(content: &str, require_pass: bool) -> SummaryResult<MatrixRepor
 
 fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> SummaryResult<MatrixRow> {
     let fields = line.split('\t').map(str::trim).collect::<Vec<_>>();
+    let relay_batch_policy = indexes
+        .relay_batch_policy
+        .map(|index| field(&fields, index, "relay_batch_policy").map(str::to_string))
+        .transpose()?
+        .unwrap_or_else(|| "fixed".to_string());
     let clients = field(&fields, indexes.clients, "clients")?.to_string();
     let status = field(&fields, indexes.status, "status")?.to_string();
     let elapsed_millis = parse_required_u64(&fields, indexes.elapsed_millis, "elapsed_millis")?;
     let pass_row = status == "pass";
 
     Ok(MatrixRow {
+        relay_batch_policy,
         clients: clients.clone(),
         status,
         elapsed_millis,
@@ -225,16 +249,18 @@ fn metric_text(value: Option<u64>) -> String {
 #[derive(Clone, Debug, Default)]
 struct MaxMetric {
     value: Option<u64>,
+    policy: Option<String>,
     clients: Option<String>,
 }
 
 impl MaxMetric {
-    fn record(&mut self, clients: &str, value: Option<u64>) {
+    fn record(&mut self, policy: &str, clients: &str, value: Option<u64>) {
         let Some(value) = value else {
             return;
         };
         if self.value.is_none_or(|current| value > current) {
             self.value = Some(value);
+            self.policy = Some(policy.to_string());
             self.clients = Some(clients.to_string());
         }
     }
@@ -242,6 +268,7 @@ impl MaxMetric {
 
 #[derive(Clone, Copy, Debug)]
 struct MatrixIndexes {
+    relay_batch_policy: Option<usize>,
     clients: usize,
     status: usize,
     elapsed_millis: usize,
@@ -258,6 +285,7 @@ impl MatrixIndexes {
             .map(|(index, name)| (name.trim().to_string(), index))
             .collect::<HashMap<_, _>>();
         Ok(Self {
+            relay_batch_policy: positions.get("relay_batch_policy").copied(),
             clients: required_column(&positions, "clients")?,
             status: required_column(&positions, "status")?,
             elapsed_millis: required_column(&positions, "elapsed_millis")?,

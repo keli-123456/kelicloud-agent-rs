@@ -104,6 +104,7 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("- scripts/ktp-local-backend-tunnel-matrix.sh"));
     assert!(workflow.contains("workflow_dispatch:"));
     assert!(workflow.contains("clients:"));
+    assert!(workflow.contains("relay_batch_policies:"));
     assert!(workflow.contains("rounds:"));
     assert!(workflow.contains("payload_bytes:"));
     assert!(workflow.contains("min_max_batch_frames:"));
@@ -111,6 +112,7 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("max_rtt_p95_micros:"));
     assert!(workflow.contains("max_client_p95_spread_micros:"));
     assert!(workflow.contains("default: \"1 2 4 8\""));
+    assert!(workflow.contains("default: \"fixed adaptive\""));
     assert!(workflow.contains("default: \"8\""));
     assert!(workflow.contains("default: \"8192\""));
     assert!(workflow.contains("default: \"900\""));
@@ -127,6 +129,9 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("cancel-in-progress: true"));
     assert!(workflow
         .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.clients || '1 2' }}"));
+    assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES: ${{ github.event_name == 'workflow_dispatch' && inputs.relay_batch_policies || 'fixed' }}"
+    ));
     assert!(
         workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '4' }}")
     );

@@ -21,6 +21,10 @@ on:
         description: Space-separated tunnel client counts to run.
         required: true
         default: "1 2 4 8"
+      relay_batch_policies:
+        description: Space-separated relay batch policies to run.
+        required: true
+        default: "fixed adaptive"
       rounds:
         description: Echo rounds per client.
         required: true
@@ -63,6 +67,7 @@ env:
   KELICLOUD_BACKEND_REF: main
   KOMARI_FRONTEND_REF: main
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.clients || '1 2' }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES: ${{ github.event_name == 'workflow_dispatch' && inputs.relay_batch_policies || 'fixed' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '4' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.payload_bytes || '4096' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.min_max_batch_frames || '2' }}

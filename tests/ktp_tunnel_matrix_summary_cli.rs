@@ -5,9 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn ktp_tunnel_matrix_summary_reports_pass_rows_and_extremes() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-pass",
-        r#"clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
-1	8	rdp-like	8192	pass	123	logs/clients-1	logs/clients-1/tunnel-echo.evidence.md	logs/clients-1/ktp-live-canary.evidence.md	9920	100	200	300	400	0	3	40	2
-4	8	rdp-like	8192	pass	456	logs/clients-4	logs/clients-4/tunnel-echo.evidence.md	logs/clients-4/ktp-live-canary.evidence.md	39680	500	600	700	800	90	12	224	11
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	1	8	rdp-like	8192	pass	123	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	9920	100	200	300	400	0	3	40	2
+adaptive	4	8	rdp-like	8192	pass	456	logs/adaptive/clients-4	logs/adaptive/clients-4/tunnel-echo.evidence.md	logs/adaptive/clients-4/ktp-live-canary.evidence.md	39680	500	600	700	800	90	12	224	11
 "#,
     );
 
@@ -24,20 +24,20 @@ fn ktp_tunnel_matrix_summary_reports_pass_rows_and_extremes() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ktp_tunnel_matrix_summary rows=2 pass=2 fail=0 timeout=0 status=pass"));
-    assert!(stdout.contains("clients=1 status=pass elapsed_millis=123 rtt_micros_p95=200 rtt_client_p95_spread_micros=0 socket_read_max_batch_frames=2"));
-    assert!(stdout.contains("clients=4 status=pass elapsed_millis=456 rtt_micros_p95=600 rtt_client_p95_spread_micros=90 socket_read_max_batch_frames=11"));
-    assert!(stdout.contains("max_rtt_micros_p95=600 clients=4"));
-    assert!(stdout.contains("max_rtt_client_p95_spread_micros=90 clients=4"));
-    assert!(stdout.contains("max_socket_read_max_batch_frames=11 clients=4"));
+    assert!(stdout.contains("policy=fixed clients=1 status=pass elapsed_millis=123 rtt_micros_p95=200 rtt_client_p95_spread_micros=0 socket_read_max_batch_frames=2"));
+    assert!(stdout.contains("policy=adaptive clients=4 status=pass elapsed_millis=456 rtt_micros_p95=600 rtt_client_p95_spread_micros=90 socket_read_max_batch_frames=11"));
+    assert!(stdout.contains("max_rtt_micros_p95=600 policy=adaptive clients=4"));
+    assert!(stdout.contains("max_rtt_client_p95_spread_micros=90 policy=adaptive clients=4"));
+    assert!(stdout.contains("max_socket_read_max_batch_frames=11 policy=adaptive clients=4"));
 }
 
 #[test]
 fn ktp_tunnel_matrix_summary_require_pass_rejects_failed_rows() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-fail",
-        r#"clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
-1	8	rdp-like	8192	pass	123	logs/clients-1	logs/clients-1/tunnel-echo.evidence.md	logs/clients-1/ktp-live-canary.evidence.md	9920	100	200	300	400	0	3	40	2
-4	8	rdp-like	8192	fail	456	logs/clients-4	-	-	-	-	-	-	-	-	-	-	-
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	1	8	rdp-like	8192	pass	123	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	9920	100	200	300	400	0	3	40	2
+adaptive	4	8	rdp-like	8192	fail	456	logs/adaptive/clients-4	-	-	-	-	-	-	-	-	-	-	-
 "#,
     );
 
@@ -57,7 +57,9 @@ fn ktp_tunnel_matrix_summary_require_pass_rejects_failed_rows() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("ktp_tunnel_matrix_summary rows=2 pass=1 fail=1 timeout=0 status=fail"));
-    assert!(stderr.contains("tunnel matrix row clients=4 status=fail failed require-pass gate"));
+    assert!(stderr.contains(
+        "tunnel matrix row policy=adaptive clients=4 status=fail failed require-pass gate"
+    ));
 }
 
 #[test]

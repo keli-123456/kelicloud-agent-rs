@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS:-1 2 4 8}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES:-fixed}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS:-8}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE:-rdp-like}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES:-8192}"
@@ -58,25 +59,39 @@ record_gate_failure() {
 }
 
 check_max_metric() {
-    local clients="$1"
-    local metric="$2"
-    local value="$3"
-    local max="$4"
+    local policy="$1"
+    local clients="$2"
+    local metric="$3"
+    local value="$4"
+    local max="$5"
 
     if [[ -z "${max}" ]]; then
         return
     fi
     if [[ -z "${value}" || "${value}" == "-" ]]; then
-        record_gate_failure "missing ${metric} for clients=${clients}"
+        record_gate_failure "missing ${metric} for policy=${policy} clients=${clients}"
         return
     fi
     if ! [[ "${value}" =~ ^[0-9]+$ ]]; then
-        record_gate_failure "non-numeric ${metric}=${value} for clients=${clients}"
+        record_gate_failure "non-numeric ${metric}=${value} for policy=${policy} clients=${clients}"
         return
     fi
     if ((value > max)); then
-        record_gate_failure "${metric} ${value} exceeds max ${max} for clients=${clients}"
+        record_gate_failure "${metric} ${value} exceeds max ${max} for policy=${policy} clients=${clients}"
     fi
+}
+
+validate_relay_batch_policy() {
+    local policy="$1"
+    if [[ "${policy}" != "fixed" && "${policy}" != "adaptive" ]]; then
+        echo "invalid relay batch policy: ${policy}" >&2
+        return 2
+    fi
+}
+
+policy_path_component() {
+    local policy="$1"
+    printf '%s' "${policy//[^a-zA-Z0-9_]/_}"
 }
 
 timestamp_millis() {
@@ -85,15 +100,21 @@ print(int(time.time() * 1000))'
 }
 
 matrix_db_name() {
-    local clients="$1"
+    local policy="$1"
+    local clients="$2"
     local prefix="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX}"
+    local policy_component
+    policy_component="$(policy_path_component "${policy}")"
     prefix="${prefix//[^a-zA-Z0-9_]/_}"
-    printf '%s_clients_%s' "${prefix}" "${clients}"
+    printf '%s_%s_clients_%s' "${prefix}" "${policy_component}" "${clients}"
 }
 
 matrix_identity_name() {
-    local clients="$1"
-    printf '%s-c%s' "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX}" "${clients}"
+    local policy="$1"
+    local clients="$2"
+    local policy_component
+    policy_component="$(policy_path_component "${policy}")"
+    printf '%s-%s-c%s' "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX}" "${policy_component}" "${clients}"
 }
 
 pick_free_tcp_port() {
@@ -119,7 +140,7 @@ init_summary() {
         return
     fi
     mkdir -p "$(dirname "${MATRIX_SUMMARY_PATH}")"
-    printf '%s\n' "clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames" >"${MATRIX_SUMMARY_PATH}"
+    printf '%s\n' "relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames" >"${MATRIX_SUMMARY_PATH}"
 }
 
 plain_markdown_value() {
@@ -155,10 +176,11 @@ backtick_markdown_value() {
 }
 
 write_summary_row() {
-    local clients="$1"
-    local status="$2"
-    local log_dir="$3"
-    local elapsed_millis="$4"
+    local policy="$1"
+    local clients="$2"
+    local status="$3"
+    local log_dir="$4"
+    local elapsed_millis="$5"
     local tunnel_evidence_file="${log_dir}/tunnel-echo.evidence.md"
     local ktp_evidence_file="${log_dir}/ktp-live-canary.evidence.md"
     local tunnel_evidence_summary="-"
@@ -183,7 +205,8 @@ write_summary_row() {
     socket_read_frames="$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_frames")"
     socket_read_max_batch_frames="$(backtick_markdown_value "${ktp_evidence_file}" "socket_read_max_batch_frames")"
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${policy}" \
         "${clients}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE}" \
@@ -204,14 +227,17 @@ write_summary_row() {
         "${socket_read_max_batch_frames}" >>"${MATRIX_SUMMARY_PATH}"
 
     if [[ "${status}" == "pass" ]]; then
-        check_max_metric "${clients}" "rtt_micros_p95" "${rtt_micros_p95}" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}"
-        check_max_metric "${clients}" "rtt_client_p95_spread_micros" "${rtt_client_p95_spread_micros}" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}"
+        check_max_metric "${policy}" "${clients}" "rtt_micros_p95" "${rtt_micros_p95}" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}"
+        check_max_metric "${policy}" "${clients}" "rtt_client_p95_spread_micros" "${rtt_client_p95_spread_micros}" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}"
     fi
 }
 
 run_clients() {
-    local clients="$1"
-    local log_dir="${MATRIX_LOG_ROOT}/clients-${clients}"
+    local policy="$1"
+    local clients="$2"
+    local policy_component
+    policy_component="$(policy_path_component "${policy}")"
+    local log_dir="${MATRIX_LOG_ROOT}/${policy_component}/clients-${clients}"
     local work_dir=""
     local db_name
     local identity_name
@@ -225,18 +251,20 @@ run_clients() {
 
     require_positive_integer "client count" "${clients}"
     log_dir="$(trim_trailing_slash "${log_dir}")"
-    db_name="$(matrix_db_name "${clients}")"
-    identity_name="$(matrix_identity_name "${clients}")"
+    db_name="$(matrix_db_name "${policy}" "${clients}")"
+    identity_name="$(matrix_identity_name "${policy}" "${clients}")"
     backend_listen="auto"
     backend_endpoint="auto"
     if [[ -n "${MATRIX_WORK_ROOT}" ]]; then
-        work_dir="${MATRIX_WORK_ROOT}/clients-${clients}"
+        work_dir="${MATRIX_WORK_ROOT}/${policy_component}/clients-${clients}"
     fi
 
-    echo "== ktp local backend tunnel clients=${clients} =="
+    echo "== ktp local backend tunnel relay_batch_policy=${policy} clients=${clients} =="
     if [[ "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN}" == "1" ]]; then
-        printf 'dry_run: clients=%s KELICLOUD_SMOKE_KTP_TCP=true BACKEND_LISTEN=%s BACKEND_ENDPOINT=%s KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s CLIENT_TIMEOUT_SECONDS=%s SMOKE_LOG_DIR=%s' \
+        printf 'dry_run: relay_batch_policy=%s clients=%s KELICLOUD_SMOKE_KTP_TCP=true AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=%s BACKEND_LISTEN=%s BACKEND_ENDPOINT=%s KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s CLIENT_TIMEOUT_SECONDS=%s SMOKE_LOG_DIR=%s' \
+            "${policy}" \
             "${clients}" \
+            "${policy}" \
             "${backend_listen}" \
             "${backend_endpoint}" \
             "${db_name}" \
@@ -266,6 +294,7 @@ run_clients() {
     started_millis="$(timestamp_millis)"
     (
         export KELICLOUD_SMOKE_KTP_TCP=true
+        export AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY="${policy}"
         export BACKEND_LISTEN="${backend_listen}"
         export BACKEND_ENDPOINT="${backend_endpoint}"
         export KOMARI_DB_NAME="${db_name}"
@@ -297,7 +326,7 @@ run_clients() {
         status="fail"
     fi
     echo "clients=${clients} status=${status} elapsed_millis=${elapsed_millis}"
-    write_summary_row "${clients}" "${status}" "${log_dir}" "${elapsed_millis}"
+    write_summary_row "${policy}" "${clients}" "${status}" "${log_dir}" "${elapsed_millis}"
     return "${smoke_status}"
 }
 
@@ -315,6 +344,7 @@ main() {
     init_matrix_paths
 
     echo "== ktp local backend tunnel matrix =="
+    echo "relay_batch_policies=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}"
     echo "clients=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}"
     echo "rounds=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS} profile=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE} payload_bytes=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}"
     echo "client_timeout_seconds=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS}"
@@ -325,9 +355,12 @@ main() {
     echo "summary=${MATRIX_SUMMARY_PATH}"
     init_summary
 
-    local clients
-    for clients in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}; do
-        run_clients "${clients}"
+    local policy clients
+    for policy in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}; do
+        validate_relay_batch_policy "${policy}"
+        for clients in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}; do
+            run_clients "${policy}" "${clients}"
+        done
     done
     if ((MATRIX_GATE_FAILURES > 0)); then
         echo "performance_gate_failures=${MATRIX_GATE_FAILURES}" >&2

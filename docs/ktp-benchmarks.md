@@ -998,6 +998,7 @@ Tunnel concurrency matrix smoke:
 
 ```bash
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2 4 8" \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="fixed adaptive" \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=8 \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=8192 \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS=900 \
@@ -1006,15 +1007,16 @@ KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR=/tmp/kelicloud-local-backend-tunnel-mat
   bash scripts/ktp-local-backend-tunnel-matrix.sh
 ```
 
-The tunnel matrix wrapper runs KTP TCP local-backend smoke once per client
-count, always with `KELICLOUD_SMOKE_KTP_TCP=true`. It writes
-`matrix-summary.tsv` with each run's status, elapsed milliseconds,
+The tunnel matrix wrapper runs KTP TCP local-backend smoke once per relay batch
+policy and client count, always with `KELICLOUD_SMOKE_KTP_TCP=true`. It exports
+`AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY` into each smoke run and writes
+`matrix-summary.tsv` with each row's policy, status, elapsed milliseconds,
 `tunnel-echo.evidence.md`, `ktp-live-canary.evidence.md`, RTT percentiles,
-client p95 spread, and socket batch-read counters. Each client-count row is
-bounded by `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS` so full
+client p95 spread, and socket batch-read counters. Each policy/client-count row
+is bounded by `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS` so full
 matrices fail with a `timeout` row instead of hanging without evidence. Use it
 after runtime scheduling changes to compare real backend tunnel forwarding
-across increasing concurrent session counts.
+across increasing concurrent session counts and fixed/adaptive batching.
 
 Optional real-forwarding latency gates can be set on the tunnel matrix:
 
@@ -1039,10 +1041,14 @@ cargo run --locked --bin ktp-tunnel-matrix-summary -- \
 
 The report emits row counts, per-client latency and batch-read highlights, plus
 the maximum RTT p95, maximum per-client p95 spread, and maximum socket batch
-size across passing rows. Add `--require-pass` when the summary itself should
-fail with exit code `3` if any matrix row has `fail`, `timeout`, or another
-non-pass status. The `KTP Tunnel Matrix` workflow now writes this output to
-`matrix-summary.report.txt` beside the raw TSV artifact.
+size across passing rows, including the policy/client combination that produced
+each maximum. Add `--require-pass` when the summary itself should fail with exit
+code `3` if any matrix row has `fail`, `timeout`, or another non-pass status.
+The `KTP Tunnel Matrix` workflow now writes this output to
+`matrix-summary.report.txt` beside the raw TSV artifact. Push-triggered runs
+keep the light `fixed` policy self-check; manual workflow dispatch defaults to
+`fixed adaptive` so scheduling experiments can collect comparable real
+forwarding rows without editing the workflow.
 
 Result:
 

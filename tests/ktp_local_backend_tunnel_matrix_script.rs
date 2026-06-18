@@ -9,6 +9,8 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
 
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS"));
     assert!(script.contains("1 2 4 8"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES"));
+    assert!(script.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY"));
     assert!(script.contains("KELICLOUD_SMOKE_KTP_TCP=true"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_CLIENTS"));
     assert!(script.contains("KELICLOUD_TUNNEL_ECHO_ROUNDS"));
@@ -95,19 +97,61 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
     assert!(stdout.contains("clients=4"));
     assert!(stdout.contains("KELICLOUD_TUNNEL_ECHO_CLIENTS=1"));
     assert!(stdout.contains("KELICLOUD_TUNNEL_ECHO_CLIENTS=4"));
-    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/clients-1"));
-    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/clients-4"));
-    assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/ktp-tunnel-work/clients-1"));
-    assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/ktp-tunnel-work/clients-4"));
-    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_clients_1"));
-    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_clients_4"));
-    assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-c1"));
-    assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-c4"));
-    assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-c1"));
-    assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-c4"));
+    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/fixed/clients-1"));
+    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/fixed/clients-4"));
+    assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/ktp-tunnel-work/fixed/clients-1"));
+    assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/ktp-tunnel-work/fixed/clients-4"));
+    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_fixed_clients_1"));
+    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_fixed_clients_4"));
+    assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-fixed-c1"));
+    assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-fixed-c4"));
+    assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-fixed-c1"));
+    assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-fixed-c4"));
     assert!(stdout.contains("BACKEND_LISTEN=auto"));
     assert!(stdout.contains("BACKEND_ENDPOINT=auto"));
     assert!(stdout.contains("CLIENT_TIMEOUT_SECONDS=300"));
+}
+
+#[test]
+fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_policies_and_clients() {
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping policy dry-run check");
+        return;
+    };
+
+    let output = Command::new(bash)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN", "1")
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES",
+            "fixed adaptive",
+        )
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS", "1 4")
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR",
+            "/tmp/ktp-tunnel-logs",
+        )
+        .arg(script_path())
+        .output()
+        .expect("tunnel matrix policy dry-run should run");
+
+    assert!(
+        output.status.success(),
+        "tunnel matrix policy dry-run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("dry_run:").count(), 4);
+    assert!(stdout.contains("relay_batch_policy=fixed clients=1"));
+    assert!(stdout.contains("relay_batch_policy=fixed clients=4"));
+    assert!(stdout.contains("relay_batch_policy=adaptive clients=1"));
+    assert!(stdout.contains("relay_batch_policy=adaptive clients=4"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=fixed"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=adaptive"));
+    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/fixed/clients-1"));
+    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/adaptive/clients-4"));
+    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_fixed_clients_1"));
+    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_adaptive_clients_4"));
 }
 
 #[test]
@@ -149,24 +193,29 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
     );
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert!(summary.contains(
-        "clients\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames"
+        "relay_batch_policy\tclients\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames"
     ));
     assert_summary_row(
         &summary,
+        "fixed",
         "1",
         &[
             "8",
             "rdp-like",
             "8192",
             "pass",
-            &log_dir.join("clients-1").display().to_string(),
+            &log_dir
+                .join("fixed")
+                .join("clients-1")
+                .display()
+                .to_string(),
             &format!(
                 "{}/tunnel-echo.evidence.md",
-                log_dir.join("clients-1").display()
+                log_dir.join("fixed").join("clients-1").display()
             ),
             &format!(
                 "{}/ktp-live-canary.evidence.md",
-                log_dir.join("clients-1").display()
+                log_dir.join("fixed").join("clients-1").display()
             ),
             "9920",
             "100",
@@ -181,20 +230,25 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
     );
     assert_summary_row(
         &summary,
+        "fixed",
         "4",
         &[
             "8",
             "rdp-like",
             "8192",
             "pass",
-            &log_dir.join("clients-4").display().to_string(),
+            &log_dir
+                .join("fixed")
+                .join("clients-4")
+                .display()
+                .to_string(),
             &format!(
                 "{}/tunnel-echo.evidence.md",
-                log_dir.join("clients-4").display()
+                log_dir.join("fixed").join("clients-4").display()
             ),
             &format!(
                 "{}/ktp-live-canary.evidence.md",
-                log_dir.join("clients-4").display()
+                log_dir.join("fixed").join("clients-4").display()
             ),
             "39680",
             "500",
@@ -257,13 +311,18 @@ sleep 5
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert_summary_row(
         &summary,
+        "fixed",
         "1",
         &[
             "8",
             "rdp-like",
             "8192",
             "timeout",
-            &log_dir.join("clients-1").display().to_string(),
+            &log_dir
+                .join("fixed")
+                .join("clients-1")
+                .display()
+                .to_string(),
             "-",
             "-",
             "-",
@@ -319,25 +378,31 @@ fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summa
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("rtt_micros_p95 600 exceeds max 500 for clients=4"));
-    assert!(stderr.contains("rtt_client_p95_spread_micros 90 exceeds max 80 for clients=4"));
+    assert!(stderr.contains("rtt_micros_p95 600 exceeds max 500 for policy=fixed clients=4"));
+    assert!(stderr
+        .contains("rtt_client_p95_spread_micros 90 exceeds max 80 for policy=fixed clients=4"));
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert_summary_row(
         &summary,
+        "fixed",
         "1",
         &[
             "8",
             "rdp-like",
             "8192",
             "pass",
-            &log_dir.join("clients-1").display().to_string(),
+            &log_dir
+                .join("fixed")
+                .join("clients-1")
+                .display()
+                .to_string(),
             &format!(
                 "{}/tunnel-echo.evidence.md",
-                log_dir.join("clients-1").display()
+                log_dir.join("fixed").join("clients-1").display()
             ),
             &format!(
                 "{}/ktp-live-canary.evidence.md",
-                log_dir.join("clients-1").display()
+                log_dir.join("fixed").join("clients-1").display()
             ),
             "9920",
             "100",
@@ -352,20 +417,25 @@ fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summa
     );
     assert_summary_row(
         &summary,
+        "fixed",
         "4",
         &[
             "8",
             "rdp-like",
             "8192",
             "pass",
-            &log_dir.join("clients-4").display().to_string(),
+            &log_dir
+                .join("fixed")
+                .join("clients-4")
+                .display()
+                .to_string(),
             &format!(
                 "{}/tunnel-echo.evidence.md",
-                log_dir.join("clients-4").display()
+                log_dir.join("fixed").join("clients-4").display()
             ),
             &format!(
                 "{}/ktp-live-canary.evidence.md",
-                log_dir.join("clients-4").display()
+                log_dir.join("fixed").join("clients-4").display()
             ),
             "39680",
             "500",
@@ -394,19 +464,29 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
 }
 
-fn assert_summary_row(summary: &str, clients: &str, expected_after_elapsed: &[&str]) {
+fn assert_summary_row(
+    summary: &str,
+    relay_batch_policy: &str,
+    clients: &str,
+    expected_after_elapsed: &[&str],
+) {
     let row = summary
         .lines()
-        .find(|line| line.starts_with(&format!("{clients}\t")))
-        .unwrap_or_else(|| panic!("summary row for clients={clients} should exist:\n{summary}"));
+        .find(|line| line.starts_with(&format!("{relay_batch_policy}\t{clients}\t")))
+        .unwrap_or_else(|| {
+            panic!(
+                "summary row for policy={relay_batch_policy} clients={clients} should exist:\n{summary}"
+            )
+        });
     let columns = row.split('\t').collect::<Vec<_>>();
-    assert_eq!(columns[0], clients);
+    assert_eq!(columns[0], relay_batch_policy);
+    assert_eq!(columns[1], clients);
     assert!(
-        columns[5].parse::<u64>().is_ok(),
+        columns[6].parse::<u64>().is_ok(),
         "elapsed_millis should be an unsigned integer in row: {row}"
     );
-    assert_eq!(&columns[1..5], &expected_after_elapsed[0..4]);
-    assert_eq!(&columns[6..], &expected_after_elapsed[4..]);
+    assert_eq!(&columns[2..6], &expected_after_elapsed[0..4]);
+    assert_eq!(&columns[7..], &expected_after_elapsed[4..]);
 }
 
 fn fake_smoke_script() -> &'static str {
