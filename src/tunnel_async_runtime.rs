@@ -488,6 +488,41 @@ fn update_atomic_max(target: &AtomicU64, candidate: u64) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outbound_queue_dwell_percentile_uses_observed_max_for_overflow_bucket() {
+        let mut buckets = [0u64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()];
+        buckets[OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len() - 1] = 1;
+
+        assert_eq!(
+            outbound_queue_dwell_percentile(&buckets, 1, 50, 1_100_000),
+            1_100_000
+        );
+        assert_eq!(
+            outbound_queue_dwell_percentile(&buckets, 1, 95, 1_100_000),
+            1_100_000
+        );
+        assert_eq!(
+            outbound_queue_dwell_percentile(&buckets, 1, 99, 1_100_000),
+            1_100_000
+        );
+    }
+
+    #[test]
+    fn outbound_queue_dwell_percentile_keeps_finite_bucket_upper_bounds() {
+        let mut buckets = [0u64; OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS.len()];
+        buckets[8] = 1;
+
+        assert_eq!(
+            outbound_queue_dwell_percentile(&buckets, 1, 95, 90_000_000),
+            OUTBOUND_QUEUE_DWELL_MICROS_BUCKETS[8]
+        );
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TunnelIngressListenerSpec {
     pub rule_id: u64,
