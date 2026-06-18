@@ -148,7 +148,7 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow
         .contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.clients || '1 2' }}"));
     assert!(workflow.contains(
-        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES: ${{ github.event_name == 'workflow_dispatch' && inputs.relay_batch_policies || 'fixed' }}"
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES: ${{ github.event_name == 'workflow_dispatch' && inputs.relay_batch_policies || 'fixed adaptive' }}"
     ));
     assert!(
         workflow.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '4' }}")
