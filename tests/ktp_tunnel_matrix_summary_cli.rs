@@ -24,8 +24,8 @@ adaptive	4	4	40000	120000	24	6	8	rdp-like	8192	pass	456	logs/adaptive/clients-4	
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ktp_tunnel_matrix_summary rows=2 pass=2 fail=0 timeout=0 status=pass"));
-    assert!(stdout.contains("policy=fixed clients=1 status=pass elapsed_millis=123 rtt_micros_p95=200 rtt_client_p95_spread_micros=0 socket_read_max_batch_frames=2 socket_write_max_batch_frames=5 socket_write_batch_limit_max=64 socket_write_batch_limit_min=64 socket_write_batch_limit_last=64"));
-    assert!(stdout.contains("policy=adaptive clients=4 status=pass elapsed_millis=456 rtt_micros_p95=600 rtt_client_p95_spread_micros=90 socket_read_max_batch_frames=11 socket_write_max_batch_frames=12 socket_write_batch_limit_max=64 socket_write_batch_limit_min=16 socket_write_batch_limit_last=16"));
+    assert!(stdout.contains("policy=fixed clients=1 status=pass elapsed_millis=123 total_payload_bytes=9920 throughput_mib_s=0.077 rtt_micros_p95=200 rtt_client_p95_spread_micros=0 socket_read_max_batch_frames=2 socket_write_max_batch_frames=5 socket_write_batch_limit_max=64 socket_write_batch_limit_min=64 socket_write_batch_limit_last=64"));
+    assert!(stdout.contains("policy=adaptive clients=4 status=pass elapsed_millis=456 total_payload_bytes=39680 throughput_mib_s=0.083 rtt_micros_p95=600 rtt_client_p95_spread_micros=90 socket_read_max_batch_frames=11 socket_write_max_batch_frames=12 socket_write_batch_limit_max=64 socket_write_batch_limit_min=16 socket_write_batch_limit_last=16"));
     assert!(stdout.contains("relay_adaptive_high_sessions=8 relay_adaptive_elevated_dwell_us=50000 relay_adaptive_severe_dwell_us=250000 relay_adaptive_elevated_cap=16 relay_adaptive_severe_cap=8"));
     assert!(stdout.contains("relay_adaptive_high_sessions=4 relay_adaptive_elevated_dwell_us=40000 relay_adaptive_severe_dwell_us=120000 relay_adaptive_elevated_cap=24 relay_adaptive_severe_cap=6"));
     assert!(stdout.contains("max_rtt_micros_p95=600 policy=adaptive clients=4"));
@@ -34,6 +34,7 @@ adaptive	4	4	40000	120000	24	6	8	rdp-like	8192	pass	456	logs/adaptive/clients-4	
     assert!(stdout.contains("max_socket_write_max_batch_frames=12 policy=adaptive clients=4"));
     assert!(stdout.contains("max_socket_write_batch_limit_max=64 policy=fixed clients=1"));
     assert!(stdout.contains("min_socket_write_batch_limit_min=16 policy=adaptive clients=4"));
+    assert!(stdout.contains("min_throughput_mib_s=0.077 policy=fixed clients=1"));
 }
 
 #[test]
@@ -189,6 +190,38 @@ adaptive	4	8	rdp-like	8192	pass	456	logs/adaptive/clients-4	logs/adaptive/client
         .contains("tunnel matrix row policy=fixed clients=1 rtt_micros_p95=700 exceeds max 650"));
     assert!(stderr.contains(
         "tunnel matrix row policy=adaptive clients=4 rtt_client_p95_spread_micros=90 exceeds max 80"
+    ));
+}
+
+#[test]
+fn ktp_tunnel_matrix_summary_threshold_gate_rejects_low_throughput() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-throughput-gate",
+        r#"relay_batch_policy	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	1	8	rdp-like	8192	pass	2000	logs/fixed/clients-1	logs/fixed/clients-1/tunnel-echo.evidence.md	logs/fixed/clients-1/ktp-live-canary.evidence.md	1048576	100	200	300	400	0	3	40	2
+adaptive	4	8	rdp-like	8192	pass	1000	logs/adaptive/clients-4	logs/adaptive/clients-4/tunnel-echo.evidence.md	logs/adaptive/clients-4/ktp-live-canary.evidence.md	4194304	500	600	700	800	90	12	224	11
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--min-throughput-mib-s")
+        .arg("1")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "throughput gate should exit 3: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("min_throughput_mib_s=0.500 policy=fixed clients=1"));
+    assert!(stderr.contains(
+        "tunnel matrix row policy=fixed clients=1 throughput_mib_s=0.500 below min 1.000"
     ));
 }
 

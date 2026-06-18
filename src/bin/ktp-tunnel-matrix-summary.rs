@@ -15,6 +15,7 @@ struct MatrixRow {
     relay_adaptive_severe_cap: Option<String>,
     status: String,
     elapsed_millis: u64,
+    total_payload_bytes: Option<u64>,
     rtt_micros_p95: Option<u64>,
     client_p95_spread_micros: Option<u64>,
     socket_read_max_batch_frames: Option<u64>,
@@ -34,6 +35,7 @@ struct MatrixReport {
 struct GateConfig {
     max_rtt_p95_micros: Option<u64>,
     max_client_p95_spread_micros: Option<u64>,
+    min_throughput_mib_s: Option<f64>,
 }
 
 fn main() {
@@ -77,6 +79,10 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
                     true,
                 )?);
             }
+            "--min-throughput-mib-s" => {
+                gate_config.min_throughput_mib_s =
+                    Some(next_f64_arg(&mut args, "--min-throughput-mib-s")?);
+            }
             _ if arg.trim().is_empty() => return Err("empty argument is not allowed".into()),
             _ if path.is_none() => path = Some(arg),
             _ => return Err("unexpected extra argument".into()),
@@ -104,6 +110,22 @@ fn next_u64_arg(
         .map_err(|error| format!("{flag} invalid integer '{value}': {error}"))?;
     if !allow_zero && parsed == 0 {
         return Err(format!("{flag} must be greater than 0").into());
+    }
+    Ok(parsed)
+}
+
+fn next_f64_arg(args: &mut impl Iterator<Item = String>, flag: &str) -> SummaryResult<f64> {
+    let value = args
+        .next()
+        .ok_or_else(|| format!("{flag} requires a value"))?;
+    if value.trim().is_empty() {
+        return Err(format!("{flag} requires a non-empty value").into());
+    }
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|error| format!("{flag} invalid number '{value}': {error}"))?;
+    if parsed < 0.0 {
+        return Err(format!("{flag} must be greater than or equal to 0").into());
     }
     Ok(parsed)
 }
@@ -153,6 +175,7 @@ fn summarize_tsv(
     let mut max_socket_write_batch = MaxMetric::default();
     let mut max_socket_write_batch_limit = MaxMetric::default();
     let mut min_socket_write_batch_limit = MinMetric::default();
+    let mut min_throughput = MinFloatMetric::default();
     let mut gate_failures = Vec::new();
 
     for row in &rows {
@@ -170,6 +193,7 @@ fn summarize_tsv(
         let socket_write_batch_limit = metric_text(row.socket_write_batch_limit_max);
         let socket_write_batch_limit_min = metric_text(row.socket_write_batch_limit_min);
         let socket_write_batch_limit_last = metric_text(row.socket_write_batch_limit_last);
+        let throughput_mib_s = throughput_mib_s(row);
         let relay_adaptive_high_sessions = text_value(row.relay_adaptive_high_sessions.as_deref());
         let relay_adaptive_elevated_dwell_us =
             text_value(row.relay_adaptive_elevated_dwell_us.as_deref());
@@ -179,11 +203,13 @@ fn summarize_tsv(
         let relay_adaptive_severe_cap = text_value(row.relay_adaptive_severe_cap.as_deref());
         output.push('\n');
         output.push_str(&format!(
-            "policy={} clients={} status={} elapsed_millis={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={} relay_adaptive_high_sessions={} relay_adaptive_elevated_dwell_us={} relay_adaptive_severe_dwell_us={} relay_adaptive_elevated_cap={} relay_adaptive_severe_cap={}",
+            "policy={} clients={} status={} elapsed_millis={} total_payload_bytes={} throughput_mib_s={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={} relay_adaptive_high_sessions={} relay_adaptive_elevated_dwell_us={} relay_adaptive_severe_dwell_us={} relay_adaptive_elevated_cap={} relay_adaptive_severe_cap={}",
             row.relay_batch_policy,
             row.clients,
             row.status,
             row.elapsed_millis,
+            metric_text(row.total_payload_bytes),
+            float_metric_text(throughput_mib_s),
             rtt,
             spread,
             socket_batch,
@@ -213,6 +239,12 @@ fn summarize_tsv(
                 row.client_p95_spread_micros,
                 gate_config.max_client_p95_spread_micros,
             );
+            record_min_throughput_gate_failure(
+                &mut gate_failures,
+                row,
+                throughput_mib_s,
+                gate_config.min_throughput_mib_s,
+            );
             max_rtt.record(&row.relay_batch_policy, &row.clients, row.rtt_micros_p95);
             max_spread.record(
                 &row.relay_batch_policy,
@@ -239,6 +271,7 @@ fn summarize_tsv(
                 &row.clients,
                 row.socket_write_batch_limit_min,
             );
+            min_throughput.record(&row.relay_batch_policy, &row.clients, throughput_mib_s);
         }
     }
 
@@ -296,6 +329,13 @@ fn summarize_tsv(
             .as_deref()
             .unwrap_or("-")
     ));
+    output.push('\n');
+    output.push_str(&format!(
+        "min_throughput_mib_s={} policy={} clients={}",
+        float_metric_text(min_throughput.value),
+        min_throughput.policy.as_deref().unwrap_or("-"),
+        min_throughput.clients.as_deref().unwrap_or("-")
+    ));
 
     for comparison in policy_comparisons(&rows) {
         output.push('\n');
@@ -314,6 +354,28 @@ fn summarize_tsv(
         output,
         gate_failures,
     })
+}
+
+fn record_min_throughput_gate_failure(
+    gate_failures: &mut Vec<String>,
+    row: &MatrixRow,
+    value: Option<f64>,
+    min: Option<f64>,
+) {
+    let Some(min) = min else {
+        return;
+    };
+    match value {
+        Some(value) if value < min => gate_failures.push(format!(
+            "tunnel matrix row policy={} clients={} throughput_mib_s={value:.3} below min {min:.3}",
+            row.relay_batch_policy, row.clients
+        )),
+        None => gate_failures.push(format!(
+            "tunnel matrix row policy={} clients={} throughput_mib_s missing for min {min:.3}",
+            row.relay_batch_policy, row.clients
+        )),
+        _ => {}
+    }
 }
 
 fn record_max_gate_failure(
@@ -367,6 +429,14 @@ fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> Summary
         relay_adaptive_severe_cap: optional_text(&fields, indexes.relay_adaptive_severe_cap),
         status,
         elapsed_millis,
+        total_payload_bytes: parse_optional_metric(
+            &fields,
+            indexes.total_payload_bytes,
+            "total_payload_bytes",
+            false,
+            line_number,
+            &clients,
+        )?,
         rtt_micros_p95: parse_metric(
             &fields,
             indexes.rtt_micros_p95,
@@ -485,6 +555,20 @@ fn metric_text(value: Option<u64>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
+}
+
+fn float_metric_text(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.3}"))
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn throughput_mib_s(row: &MatrixRow) -> Option<f64> {
+    let total_payload_bytes = row.total_payload_bytes?;
+    if row.elapsed_millis == 0 {
+        return None;
+    }
+    Some((total_payload_bytes as f64 / 1024.0 / 1024.0) / (row.elapsed_millis as f64 / 1000.0))
 }
 
 fn text_value(value: Option<&str>) -> &str {
@@ -695,6 +779,26 @@ impl MinMetric {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct MinFloatMetric {
+    value: Option<f64>,
+    policy: Option<String>,
+    clients: Option<String>,
+}
+
+impl MinFloatMetric {
+    fn record(&mut self, policy: &str, clients: &str, value: Option<f64>) {
+        let Some(value) = value else {
+            return;
+        };
+        if self.value.is_none_or(|current| value < current) {
+            self.value = Some(value);
+            self.policy = Some(policy.to_string());
+            self.clients = Some(clients.to_string());
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct MatrixIndexes {
     relay_batch_policy: Option<usize>,
@@ -706,6 +810,7 @@ struct MatrixIndexes {
     relay_adaptive_severe_cap: Option<usize>,
     status: usize,
     elapsed_millis: usize,
+    total_payload_bytes: Option<usize>,
     rtt_micros_p95: usize,
     rtt_client_p95_spread_micros: usize,
     socket_read_max_batch_frames: usize,
@@ -736,6 +841,7 @@ impl MatrixIndexes {
             relay_adaptive_severe_cap: positions.get("relay_adaptive_severe_cap").copied(),
             status: required_column(&positions, "status")?,
             elapsed_millis: required_column(&positions, "elapsed_millis")?,
+            total_payload_bytes: positions.get("total_payload_bytes").copied(),
             rtt_micros_p95: required_column(&positions, "rtt_micros_p95")?,
             rtt_client_p95_spread_micros: required_column(
                 &positions,
@@ -762,6 +868,6 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 
 fn print_usage() {
     eprintln!(
-        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] <matrix-summary.tsv>"
+        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] <matrix-summary.tsv>"
     );
 }

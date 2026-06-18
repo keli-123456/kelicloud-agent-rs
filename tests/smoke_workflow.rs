@@ -162,6 +162,7 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("client_timeout_seconds:"));
     assert!(workflow.contains("max_rtt_p95_micros:"));
     assert!(workflow.contains("max_client_p95_spread_micros:"));
+    assert!(workflow.contains("min_throughput_mib_s:"));
     assert!(workflow.contains("summary_require_pass:"));
     assert!(workflow.contains("summary_fail_on_fixed_better:"));
     assert!(workflow.contains("default: \"1 2 4 8\""));
@@ -227,6 +228,9 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_client_p95_spread_micros || '' }}"
     ));
     assert!(workflow.contains(
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_THROUGHPUT_MIB_S: ${{ github.event_name == 'workflow_dispatch' && inputs.min_throughput_mib_s || '' }}"
+    ));
+    assert!(workflow.contains(
         "KTP_TUNNEL_MATRIX_SUMMARY_REQUIRE_PASS: ${{ github.event_name == 'workflow_dispatch' && inputs.summary_require_pass || 'true' }}"
     ));
     assert!(workflow.contains(
@@ -245,6 +249,9 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
         .contains("summary_args+=(--max-rtt-p95-micros \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}\")"));
     assert!(workflow.contains(
         "summary_args+=(--max-client-p95-spread-micros \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS}\")"
+    ));
+    assert!(workflow.contains(
+        "summary_args+=(--min-throughput-mib-s \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_THROUGHPUT_MIB_S}\")"
     ));
     assert!(workflow.contains("cargo run --locked --bin ktp-tunnel-matrix-summary -- \"${summary_args[@]}\" \"${summary}\" | tee \"${report}\""));
     assert!(workflow.contains("matrix-summary.report.txt"));

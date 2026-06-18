@@ -1087,7 +1087,7 @@ concurrent session counts and fixed/adaptive batching.
 Set `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES` to raise the
 live canary's write-batch threshold independently of the read-batch threshold.
 
-Optional real-forwarding latency gates can be set on the tunnel matrix:
+Optional real-forwarding latency gates can be set on the tunnel matrix script:
 
 ```bash
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS=20000 \
@@ -1111,12 +1111,14 @@ cargo run --locked --bin ktp-tunnel-matrix-summary -- \
 ```
 
 The report emits row counts, per-client latency and socket batch-read/write
-highlights, plus the maximum RTT p95, maximum per-client p95 spread, maximum
-socket batch sizes, maximum effective write batch limit, and minimum observed
-effective write batch limit across passing rows, including the policy/client
-combination that produced each value. Older TSV artifacts without
-`socket_write_*` columns or `socket_write_batch_limit_*` columns remain readable
-and show those write metrics as `-`. When a TSV has passing
+highlights, per-row `throughput_mib_s` computed from `total_payload_bytes` and
+`elapsed_millis`, plus the maximum RTT p95, maximum per-client p95 spread,
+maximum socket batch sizes, maximum effective write batch limit, minimum
+observed effective write batch limit, and minimum observed throughput across
+passing rows, including the policy/client combination that produced each value.
+Older TSV artifacts without `total_payload_bytes`, `socket_write_*` columns, or
+`socket_write_batch_limit_*` columns remain readable and show those metrics as
+`-`. When a TSV has passing
 `fixed` and `adaptive` rows for the same client count, the report also emits a
 `policy_compare` line with elapsed, RTT p95, and per-client p95-spread deltas
 plus a verdict such as `adaptive_better`, `fixed_better`, `same`, or `mixed`.
@@ -1127,12 +1129,16 @@ current default; and `manual_review` when the metrics trade off. Add
 `--require-pass` when the summary itself should fail with exit code `3` if any
 matrix row has `fail`, `timeout`, or another non-pass status. Add
 `--fail-on-fixed-better` when a release-host comparison should fail if adaptive
-batching is worse on all tracked latency/elapsed dimensions.
+batching is worse on all tracked latency/elapsed dimensions. Add
+`--min-throughput-mib-s N` to fail passing rows whose real-backend tunnel echo
+throughput drops below the configured floor; this is intentionally optional so
+release hosts can set a threshold based on their own baseline.
 The `KTP Tunnel Matrix` workflow now writes this output to
 `matrix-summary.report.txt` beside the raw TSV artifact. Push-triggered runs
 keep the light `fixed` policy self-check; manual workflow dispatch defaults to
 `fixed adaptive` so scheduling experiments can collect comparable real
-forwarding rows without editing the workflow.
+forwarding rows without editing the workflow. Manual dispatch also exposes
+`min_throughput_mib_s` for the optional summary throughput gate.
 
 Result:
 
