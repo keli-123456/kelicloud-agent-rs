@@ -80,7 +80,8 @@ Install options:
   --tunnel-ktp-tcp-address ADDRESS
                                   Set AGENT_TUNNEL_KTP_TCP_ADDRESS
   --tunnel-ktp-relay-batch-policy POLICY
-                                  Set AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY
+                                  Set AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY,
+                                  default adaptive when tunnel data is enabled
 EOF
 }
 
@@ -347,6 +348,11 @@ install_binary() {
 }
 
 render_env() {
+    local tunnel_ktp_relay_batch_policy="$TUNNEL_KTP_RELAY_BATCH_POLICY"
+    if [[ "$TUNNEL_DATA_ENABLED" == "true" && -z "$tunnel_ktp_relay_batch_policy" ]]; then
+        tunnel_ktp_relay_batch_policy="adaptive"
+    fi
+
     emit_env "AGENT_ENDPOINT" "$ENDPOINT"
     emit_env "AGENT_TOKEN" "$TOKEN"
     emit_env "AGENT_AUTO_DISCOVERY_KEY" "$AUTO_DISCOVERY_KEY"
@@ -368,7 +374,7 @@ render_env() {
     emit_env "AGENT_MONTH_ROTATE" "$MONTH_ROTATE"
     emit_env "AGENT_TUNNEL_DATA_ENABLED" "$TUNNEL_DATA_ENABLED"
     emit_env "AGENT_TUNNEL_KTP_TCP_ADDRESS" "$TUNNEL_KTP_TCP_ADDRESS"
-    emit_env "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY" "$TUNNEL_KTP_RELAY_BATCH_POLICY"
+    emit_env "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY" "$tunnel_ktp_relay_batch_policy"
 }
 
 render_service() {

@@ -113,8 +113,6 @@ fn render_env_can_enable_tunnel_data_plane() {
         .arg("--enable-tunnel-data")
         .arg("--tunnel-ktp-tcp-address")
         .arg("127.0.0.1:25775")
-        .arg("--tunnel-ktp-relay-batch-policy")
-        .arg("adaptive")
         .output()
         .unwrap();
 
@@ -127,6 +125,32 @@ fn render_env_can_enable_tunnel_data_plane() {
     assert!(stdout.contains("AGENT_TUNNEL_DATA_ENABLED='true'"));
     assert!(stdout.contains("AGENT_TUNNEL_KTP_TCP_ADDRESS='127.0.0.1:25775'"));
     assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY='adaptive'"));
+}
+
+#[cfg(unix)]
+#[test]
+fn render_env_respects_explicit_tunnel_relay_batch_policy() {
+    let output = std::process::Command::new("bash")
+        .arg(install_script_path())
+        .arg("render-env")
+        .arg("--endpoint")
+        .arg("https://panel.example.com")
+        .arg("--token")
+        .arg("secret-token")
+        .arg("--enable-tunnel-data")
+        .arg("--tunnel-ktp-relay-batch-policy")
+        .arg("fixed")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("AGENT_TUNNEL_DATA_ENABLED='true'"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY='fixed'"));
 }
 
 #[cfg(unix)]
