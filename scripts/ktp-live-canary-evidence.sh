@@ -29,8 +29,8 @@ Environment:
                             value, default: 1
 
 The script validates that live KTP tunnel data diagnostics include runtime wait,
-lifetime and recent outbound queue dwell, and socket batch-read fields, then
-writes a small evidence file.
+lifetime and recent outbound queue dwell, and socket batch-read/write fields,
+then writes a small evidence file.
 USAGE
 }
 
@@ -119,11 +119,18 @@ REQUIRED_FIELDS=(
     "socket_read_batches"
     "socket_read_frames"
     "socket_read_max_batch_frames"
+    "socket_write_batches"
+    "socket_write_frames"
+    "socket_write_max_batch_frames"
 )
 
 POSITIVE_FIELDS=(
     "socket_read_batches"
     "socket_read_frames"
+    "socket_read_max_batch_frames"
+    "socket_write_batches"
+    "socket_write_frames"
+    "socket_write_max_batch_frames"
 )
 
 max_metric_value() {

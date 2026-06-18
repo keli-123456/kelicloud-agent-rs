@@ -310,7 +310,9 @@ KELICLOUD_SMOKE_KTP_TCP=true scripts/smoke-local-backend.sh
 In KTP mode the script starts the backend KTP TCP relay, passes the relay
 address to `kelicloud-agent-rs`, verifies the same tunnel echo path, waits for
 `tunnel data diagnostics`, and writes
-`smoke-logs/ktp-live-canary.evidence.md`.
+`smoke-logs/ktp-live-canary.evidence.md`. The KTP evidence helper now requires
+positive socket batch-read and batch-write counters so the dedicated TCP data
+path is observable in live smoke logs.
 
 ## Release Builds
 

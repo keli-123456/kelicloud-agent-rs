@@ -563,6 +563,40 @@ fn tunnel_data_session_batches_runtime_frames_when_socket_supports_it() {
 }
 
 #[test]
+fn tunnel_data_session_records_socket_batch_write_diagnostics() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut transport = BatchOnlyTunnelDataTransport {
+        events: Rc::clone(&events),
+        inbound: vec![Ok(hello_ack_frame()), Err(TransportError::SocketClosed)],
+    };
+    let mut runtime = MultiClientFrameRuntime {
+        frames: VecDeque::from([
+            session_data_frame(84, b"first"),
+            session_data_frame(85, b"second"),
+            session_data_frame(86, b"third"),
+        ]),
+    };
+    let diagnostics = SharedTunnelDataDiagnostics::new();
+
+    run_tunnel_data_session_with_ready_source_runtime_and_diagnostics(
+        "ktp+tcp://127.0.0.1:25775",
+        &[],
+        "node-a",
+        "0.2.1",
+        &TunnelDataReadyState::empty("rev-ktp"),
+        &mut transport,
+        &mut runtime,
+        &diagnostics,
+    )
+    .expect("data session should record socket batch-write diagnostics");
+
+    let snapshot = diagnostics.snapshot();
+    assert_eq!(snapshot.socket_write_batches, 1);
+    assert_eq!(snapshot.socket_write_frames, 3);
+    assert_eq!(snapshot.socket_write_max_batch_frames, 3);
+}
+
+#[test]
 fn tunnel_data_session_uses_runtime_batch_limit_for_runtime_frames() {
     let events = Rc::new(RefCell::new(Vec::new()));
     let mut transport = BatchOnlyTunnelDataTransport {
@@ -1686,6 +1720,9 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
         socket_read_batches: 2,
         socket_read_frames: 9,
         socket_read_max_batch_frames: 7,
+        socket_write_batches: 3,
+        socket_write_frames: 11,
+        socket_write_max_batch_frames: 6,
     };
 
     let line = tunnel_data_diagnostics_line(&snapshot);
@@ -1693,7 +1730,7 @@ fn tunnel_data_diagnostics_line_formats_local_counters_without_secrets() {
     assert!(snapshot.has_activity());
     assert_eq!(
         line,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7"
+        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7 socket_write_batches=3 socket_write_frames=11 socket_write_max_batch_frames=6"
     );
     assert!(!line.contains("token"));
 }

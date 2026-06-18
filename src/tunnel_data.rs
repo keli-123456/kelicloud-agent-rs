@@ -167,6 +167,9 @@ struct TunnelDataDiagnosticsInner {
     socket_read_batches: AtomicU64,
     socket_read_frames: AtomicU64,
     socket_read_max_batch_frames: AtomicU64,
+    socket_write_batches: AtomicU64,
+    socket_write_frames: AtomicU64,
+    socket_write_max_batch_frames: AtomicU64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -196,6 +199,33 @@ pub struct TunnelDataDiagnosticsSnapshot {
     pub socket_read_batches: u64,
     pub socket_read_frames: u64,
     pub socket_read_max_batch_frames: u64,
+    pub socket_write_batches: u64,
+    pub socket_write_frames: u64,
+    pub socket_write_max_batch_frames: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TunnelDataWriteBatchStats {
+    batches: usize,
+    frames: usize,
+    max_batch_frames: usize,
+}
+
+impl TunnelDataWriteBatchStats {
+    fn record_batch(&mut self, frame_count: usize) {
+        if frame_count == 0 {
+            return;
+        }
+        self.batches += 1;
+        self.frames += frame_count;
+        self.max_batch_frames = self.max_batch_frames.max(frame_count);
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.batches += other.batches;
+        self.frames += other.frames;
+        self.max_batch_frames = self.max_batch_frames.max(other.max_batch_frames);
+    }
 }
 
 impl SharedTunnelDataDiagnostics {
@@ -297,6 +327,12 @@ impl SharedTunnelDataDiagnostics {
             socket_read_max_batch_frames: self
                 .inner
                 .socket_read_max_batch_frames
+                .load(Ordering::Relaxed),
+            socket_write_batches: self.inner.socket_write_batches.load(Ordering::Relaxed),
+            socket_write_frames: self.inner.socket_write_frames.load(Ordering::Relaxed),
+            socket_write_max_batch_frames: self
+                .inner
+                .socket_write_max_batch_frames
                 .load(Ordering::Relaxed),
         }
     }
@@ -400,6 +436,22 @@ impl SharedTunnelDataDiagnostics {
             .fetch_add(frame_count as u64, Ordering::Relaxed);
         update_atomic_max(&self.inner.socket_read_max_batch_frames, frame_count as u64);
     }
+
+    fn record_socket_write_batches(&self, stats: TunnelDataWriteBatchStats) {
+        if stats.frames == 0 || stats.batches == 0 {
+            return;
+        }
+        self.inner
+            .socket_write_batches
+            .fetch_add(stats.batches as u64, Ordering::Relaxed);
+        self.inner
+            .socket_write_frames
+            .fetch_add(stats.frames as u64, Ordering::Relaxed);
+        update_atomic_max(
+            &self.inner.socket_write_max_batch_frames,
+            stats.max_batch_frames as u64,
+        );
+    }
 }
 
 impl TunnelDataDiagnosticsSnapshot {
@@ -413,12 +465,14 @@ impl TunnelDataDiagnosticsSnapshot {
             || self.socket_idle_empty_reads > 0
             || self.socket_read_batches > 0
             || self.socket_read_frames > 0
+            || self.socket_write_batches > 0
+            || self.socket_write_frames > 0
     }
 }
 
 pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) -> String {
     format!(
-        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} recent_outbound_queue_dwell_frames={} recent_outbound_queue_dwell_micros_total={} recent_outbound_queue_dwell_micros_max={} recent_outbound_queue_dwell_p50_micros={} recent_outbound_queue_dwell_p95_micros={} recent_outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={} socket_read_batches={} socket_read_frames={} socket_read_max_batch_frames={}",
+        "tunnel data diagnostics: runtime_wait_attempts={} runtime_wait_hits={} runtime_wait_elapsed_micros_total={} runtime_wait_elapsed_micros_max={} runtime_wait_elapsed_p50_micros={} runtime_wait_elapsed_p95_micros={} runtime_wait_elapsed_p99_micros={} outbound_runtime_frames={} outbound_queue_dwell_frames={} outbound_queue_dwell_micros_total={} outbound_queue_dwell_micros_max={} outbound_queue_dwell_p50_micros={} outbound_queue_dwell_p95_micros={} outbound_queue_dwell_p99_micros={} recent_outbound_queue_dwell_frames={} recent_outbound_queue_dwell_micros_total={} recent_outbound_queue_dwell_micros_max={} recent_outbound_queue_dwell_p50_micros={} recent_outbound_queue_dwell_p95_micros={} recent_outbound_queue_dwell_p99_micros={} socket_idle_reads={} socket_idle_empty_reads={} socket_read_batches={} socket_read_frames={} socket_read_max_batch_frames={} socket_write_batches={} socket_write_frames={} socket_write_max_batch_frames={}",
         snapshot.runtime_wait_attempts,
         snapshot.runtime_wait_hits,
         snapshot.runtime_wait_elapsed_micros_total,
@@ -443,7 +497,10 @@ pub fn tunnel_data_diagnostics_line(snapshot: &TunnelDataDiagnosticsSnapshot) ->
         snapshot.socket_idle_empty_reads,
         snapshot.socket_read_batches,
         snapshot.socket_read_frames,
-        snapshot.socket_read_max_batch_frames
+        snapshot.socket_read_max_batch_frames,
+        snapshot.socket_write_batches,
+        snapshot.socket_write_frames,
+        snapshot.socket_write_max_batch_frames
     )
 }
 
@@ -1111,24 +1168,27 @@ where
             last_ready = current_ready;
         }
         let sent_runtime_frames = drain_tunnel_session_runtime_frames(&mut socket, runtime)?;
-        diagnostics.record_outbound_runtime_frames(sent_runtime_frames);
+        diagnostics.record_outbound_runtime_frames(sent_runtime_frames.frames);
+        diagnostics.record_socket_write_batches(sent_runtime_frames);
         diagnostics.record_outbound_queue_dwell_snapshot(runtime.outbound_queue_dwell_snapshot());
         diagnostics.record_recent_outbound_queue_dwell_snapshot(
             runtime.recent_outbound_queue_dwell_snapshot(),
         );
-        if sent_runtime_frames == 0 {
+        if sent_runtime_frames.frames == 0 {
             if let Some(timeout) = runtime.tunnel_data_client_frame_wait_timeout() {
                 let wait_started = Instant::now();
                 let waited_runtime_frames =
                     drain_tunnel_session_runtime_frames_after_wait(&mut socket, runtime, timeout)?;
-                diagnostics.record_runtime_wait(wait_started.elapsed(), waited_runtime_frames);
-                diagnostics.record_outbound_runtime_frames(waited_runtime_frames);
+                diagnostics
+                    .record_runtime_wait(wait_started.elapsed(), waited_runtime_frames.frames);
+                diagnostics.record_outbound_runtime_frames(waited_runtime_frames.frames);
+                diagnostics.record_socket_write_batches(waited_runtime_frames);
                 diagnostics
                     .record_outbound_queue_dwell_snapshot(runtime.outbound_queue_dwell_snapshot());
                 diagnostics.record_recent_outbound_queue_dwell_snapshot(
                     runtime.recent_outbound_queue_dwell_snapshot(),
                 );
-                if waited_runtime_frames > 0 {
+                if waited_runtime_frames.frames > 0 {
                     report_tunnel_data_diagnostics_if_due(
                         diagnostics,
                         &mut last_diagnostics_report,
@@ -1282,20 +1342,20 @@ where
 fn drain_tunnel_session_runtime_frames<S, R>(
     socket: &mut S,
     runtime: &mut R,
-) -> Result<usize, TransportError>
+) -> Result<TunnelDataWriteBatchStats, TransportError>
 where
     S: TunnelDataSocket,
     R: TunnelSessionRuntime,
 {
-    let mut sent_count = 0usize;
+    let mut stats = TunnelDataWriteBatchStats::default();
     let max_frames = tunnel_session_runtime_frame_batch_limit(runtime);
     loop {
         let frames = runtime.next_client_frames(max_frames)?;
         if frames.is_empty() {
-            return Ok(sent_count);
+            return Ok(stats);
         }
-        sent_count += frames.len();
-        send_tunnel_session_runtime_frame_batch(socket, frames)?;
+        let frame_count = send_tunnel_session_runtime_frame_batch(socket, frames)?;
+        stats.record_batch(frame_count);
     }
 }
 
@@ -1303,7 +1363,7 @@ fn drain_tunnel_session_runtime_frames_after_wait<S, R>(
     socket: &mut S,
     runtime: &mut R,
     timeout: Duration,
-) -> Result<usize, TransportError>
+) -> Result<TunnelDataWriteBatchStats, TransportError>
 where
     S: TunnelDataSocket,
     R: TunnelSessionRuntime,
@@ -1311,11 +1371,13 @@ where
     let max_frames = tunnel_session_runtime_frame_batch_limit(runtime);
     let frames = runtime.next_client_frames_after_wait(max_frames, timeout)?;
     if frames.is_empty() {
-        return Ok(0);
+        return Ok(TunnelDataWriteBatchStats::default());
     }
-    let frame_count = frames.len();
-    send_tunnel_session_runtime_frame_batch(socket, frames)?;
-    Ok(frame_count + drain_tunnel_session_runtime_frames(socket, runtime)?)
+    let mut stats = TunnelDataWriteBatchStats::default();
+    let frame_count = send_tunnel_session_runtime_frame_batch(socket, frames)?;
+    stats.record_batch(frame_count);
+    stats.merge(drain_tunnel_session_runtime_frames(socket, runtime)?);
+    Ok(stats)
 }
 
 fn tunnel_session_runtime_frame_batch_limit<R>(runtime: &R) -> usize
@@ -1330,14 +1392,16 @@ where
 fn send_tunnel_session_runtime_frame_batch<S>(
     socket: &mut S,
     frames: Vec<KtpFrame>,
-) -> Result<(), TransportError>
+) -> Result<usize, TransportError>
 where
     S: TunnelDataSocket,
 {
-    if !frames.is_empty() {
-        let _ = send_tunnel_data_ktp_frame_batch(socket, &frames)?;
+    if frames.is_empty() {
+        return Ok(0);
     }
-    Ok(())
+    let frame_count = frames.len();
+    let _ = send_tunnel_data_ktp_frame_batch(socket, &frames)?;
+    Ok(frame_count)
 }
 
 fn handle_tunnel_data_session_frame<S, R>(

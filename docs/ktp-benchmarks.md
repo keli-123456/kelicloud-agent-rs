@@ -170,11 +170,11 @@ During a real KTP canary window, run the helper after sending tunnel traffic.
 It reads `journalctl` by default, or `--log-file <path>` for captured agent
 logs, and verifies that `tunnel data diagnostics` lines include runtime wait,
 lifetime outbound queue dwell, recent outbound queue dwell, and socket
-batch-read counters.
-It also requires positive `socket_read_batches` and `socket_read_frames` values,
-so a passing live canary proves the production KTP TCP socket batch-read path
-was active during the observation window. Treat the generated Markdown file as
-the live-log companion to `ktp-e2e-bench --latency` output.
+batch-read/write counters.
+It also requires positive `socket_read_*` and `socket_write_*` batch counters,
+so a passing live canary proves the production KTP TCP socket batch-read and
+batch-write paths were active during the observation window. Treat the generated
+Markdown file as the live-log companion to `ktp-e2e-bench --latency` output.
 
 KTP codec cursor microbench:
 
@@ -904,6 +904,10 @@ Tunnel-data receive batch foundation:
   `socket_read_frames`, and `socket_read_max_batch_frames`, so live KTP canary
   logs can prove whether the socket batch-read path is active and how full its
   reads are under real traffic.
+- Production tunnel-data diagnostics also expose `socket_write_batches`,
+  `socket_write_frames`, and `socket_write_max_batch_frames`. This lets live
+  canaries prove that runtime frames reached the carrier through the batched
+  send path, not only that the relay-to-agent read path was batched.
 - The conservative `fixed|adaptive` relay batch policy is now shared by
   benchmark tooling and the production tunnel runtime. The runtime default stays
   `fixed`; the Linux installer writes `adaptive` automatically when
@@ -1033,11 +1037,12 @@ policy and client count, always with `KELICLOUD_SMOKE_KTP_TCP=true`. It exports
 `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY` into each smoke run and writes
 `matrix-summary.tsv` with each row's policy, status, elapsed milliseconds,
 `tunnel-echo.evidence.md`, `ktp-live-canary.evidence.md`, RTT percentiles,
-client p95 spread, and socket batch-read counters. Each policy/client-count row
-is bounded by `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS` so full
-matrices fail with a `timeout` row instead of hanging without evidence. Use it
-after runtime scheduling changes to compare real backend tunnel forwarding
-across increasing concurrent session counts and fixed/adaptive batching.
+client p95 spread, and socket batch-read/write counters. Each
+policy/client-count row is bounded by
+`KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS` so full matrices fail
+with a `timeout` row instead of hanging without evidence. Use it after runtime
+scheduling changes to compare real backend tunnel forwarding across increasing
+concurrent session counts and fixed/adaptive batching.
 
 Optional real-forwarding latency gates can be set on the tunnel matrix:
 
@@ -1368,6 +1373,9 @@ Notes:
   fails unless live diagnostics include positive `socket_read_batches` and
   `socket_read_frames`, so the evidence proves the dedicated KTP TCP
   batch-read path was used by real tunnel traffic.
+- Newer canary evidence also requires positive `socket_write_batches`,
+  `socket_write_frames`, and `socket_write_max_batch_frames`, so the same live
+  smoke proves runtime frames used the batched carrier send path.
 - The `Local Backend Smoke` GitHub Actions matrix now keeps the WebSocket row
   on the single-round compatibility smoke while the `ktp_tcp` row runs
   `KELICLOUD_TUNNEL_ECHO_ROUNDS=8` and
