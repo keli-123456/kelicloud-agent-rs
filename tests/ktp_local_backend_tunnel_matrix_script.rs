@@ -25,6 +25,9 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("tunnel-echo.evidence.md"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
     assert!(script.contains("matrix-summary.tsv"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS"));
+    assert!(script.contains("elapsed_millis"));
+    assert!(script.contains("timeout"));
     assert!(script.contains("rtt_client_p95_spread_micros"));
     assert!(script.contains("socket_read_max_batch_frames"));
 }
@@ -62,6 +65,10 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS", "1 4")
         .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS", "8")
         .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS",
+            "300",
+        )
+        .env(
             "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR",
             "/tmp/ktp-tunnel-logs",
         )
@@ -97,6 +104,7 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
     assert!(stdout.contains("SMOKE_TUNNEL_GROUP=agent-rs-tunnel-matrix-c4"));
     assert!(stdout.contains("BACKEND_LISTEN=auto"));
     assert!(stdout.contains("BACKEND_ENDPOINT=auto"));
+    assert!(stdout.contains("CLIENT_TIMEOUT_SECONDS=300"));
 }
 
 #[test]
@@ -138,20 +146,134 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
     );
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert!(summary.contains(
-        "clients\trounds\tprofile\tpayload_bytes\tstatus\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames"
+        "clients\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames"
     ));
-    assert!(summary.contains(&format!(
-        "1\t8\trdp-like\t8192\tpass\t{}\t{}/tunnel-echo.evidence.md\t{}/ktp-live-canary.evidence.md\t9920\t100\t200\t300\t400\t0\t3\t40\t2",
-        log_dir.join("clients-1").display(),
-        log_dir.join("clients-1").display(),
-        log_dir.join("clients-1").display()
-    )));
-    assert!(summary.contains(&format!(
-        "4\t8\trdp-like\t8192\tpass\t{}\t{}/tunnel-echo.evidence.md\t{}/ktp-live-canary.evidence.md\t39680\t500\t600\t700\t800\t90\t12\t224\t11",
-        log_dir.join("clients-4").display(),
-        log_dir.join("clients-4").display(),
-        log_dir.join("clients-4").display()
-    )));
+    assert_summary_row(
+        &summary,
+        "1",
+        &[
+            "8",
+            "rdp-like",
+            "8192",
+            "pass",
+            &log_dir.join("clients-1").display().to_string(),
+            &format!(
+                "{}/tunnel-echo.evidence.md",
+                log_dir.join("clients-1").display()
+            ),
+            &format!(
+                "{}/ktp-live-canary.evidence.md",
+                log_dir.join("clients-1").display()
+            ),
+            "9920",
+            "100",
+            "200",
+            "300",
+            "400",
+            "0",
+            "3",
+            "40",
+            "2",
+        ],
+    );
+    assert_summary_row(
+        &summary,
+        "4",
+        &[
+            "8",
+            "rdp-like",
+            "8192",
+            "pass",
+            &log_dir.join("clients-4").display().to_string(),
+            &format!(
+                "{}/tunnel-echo.evidence.md",
+                log_dir.join("clients-4").display()
+            ),
+            &format!(
+                "{}/ktp-live-canary.evidence.md",
+                log_dir.join("clients-4").display()
+            ),
+            "39680",
+            "500",
+            "600",
+            "700",
+            "800",
+            "90",
+            "12",
+            "224",
+            "11",
+        ],
+    );
+}
+
+#[test]
+fn ktp_local_backend_tunnel_matrix_script_marks_timed_out_client_run_on_linux() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("linux-only timeout summary test skipped");
+        return;
+    }
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping timeout summary check");
+        return;
+    };
+
+    let temp_dir = unique_temp_dir("ktp-local-backend-tunnel-matrix-timeout");
+    let log_dir = temp_dir.join("logs");
+    let summary_path = temp_dir.join("matrix-summary.tsv");
+    let slow_smoke = temp_dir.join("slow-smoke.sh");
+    std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+    std::fs::write(
+        &slow_smoke,
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${SMOKE_LOG_DIR}"
+sleep 5
+"#,
+    )
+    .expect("slow smoke should be written");
+
+    let output = Command::new(bash)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS", "1")
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS",
+            "1",
+        )
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR", &log_dir)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SUMMARY", &summary_path)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_SMOKE_SCRIPT", &slow_smoke)
+        .arg(script_path())
+        .output()
+        .expect("tunnel matrix timeout script should run");
+
+    assert!(
+        !output.status.success(),
+        "timeout run should fail:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
+    assert_summary_row(
+        &summary,
+        "1",
+        &[
+            "8",
+            "rdp-like",
+            "8192",
+            "timeout",
+            &log_dir.join("clients-1").display().to_string(),
+            "-",
+            "-",
+            "-",
+            "-",
+            "-",
+            "-",
+            "-",
+            "-",
+            "-",
+            "-",
+            "-",
+        ],
+    );
 }
 
 fn script_path() -> PathBuf {
@@ -166,6 +288,21 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .expect("system clock should be after Unix epoch")
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+}
+
+fn assert_summary_row(summary: &str, clients: &str, expected_after_elapsed: &[&str]) {
+    let row = summary
+        .lines()
+        .find(|line| line.starts_with(&format!("{clients}\t")))
+        .unwrap_or_else(|| panic!("summary row for clients={clients} should exist:\n{summary}"));
+    let columns = row.split('\t').collect::<Vec<_>>();
+    assert_eq!(columns[0], clients);
+    assert!(
+        columns[5].parse::<u64>().is_ok(),
+        "elapsed_millis should be an unsigned integer in row: {row}"
+    );
+    assert_eq!(&columns[1..5], &expected_after_elapsed[0..4]);
+    assert_eq!(&columns[6..], &expected_after_elapsed[4..]);
 }
 
 fn fake_smoke_script() -> &'static str {

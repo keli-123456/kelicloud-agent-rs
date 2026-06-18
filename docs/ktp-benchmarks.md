@@ -946,6 +946,7 @@ Tunnel concurrency matrix smoke:
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2 4 8" \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=8 \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=8192 \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS=900 \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR=/tmp/kelicloud-local-backend-tunnel-matrix/logs \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR=/tmp/kelicloud-local-backend-tunnel-matrix/work \
   bash scripts/ktp-local-backend-tunnel-matrix.sh
@@ -953,10 +954,13 @@ KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR=/tmp/kelicloud-local-backend-tunnel-mat
 
 The tunnel matrix wrapper runs KTP TCP local-backend smoke once per client
 count, always with `KELICLOUD_SMOKE_KTP_TCP=true`. It writes
-`matrix-summary.tsv` with each run's status, `tunnel-echo.evidence.md`,
-`ktp-live-canary.evidence.md`, RTT percentiles, client p95 spread, and socket
-batch-read counters. Use it after runtime scheduling changes to compare real
-backend tunnel forwarding across increasing concurrent session counts.
+`matrix-summary.tsv` with each run's status, elapsed milliseconds,
+`tunnel-echo.evidence.md`, `ktp-live-canary.evidence.md`, RTT percentiles,
+client p95 spread, and socket batch-read counters. Each client-count row is
+bounded by `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS` so full
+matrices fail with a `timeout` row instead of hanging without evidence. Use it
+after runtime scheduling changes to compare real backend tunnel forwarding
+across increasing concurrent session counts.
 
 Result:
 
@@ -1221,6 +1225,9 @@ Notes:
 - The `KTP Tunnel Matrix` workflow keeps `workflow_dispatch` for full manual
   `1 2 4 8` runs, but its `push` self-check uses the lighter `1 2` matrix and
   publishes `matrix-summary.tsv` to the Actions job summary plus artifact.
+- New matrix summaries include `elapsed_millis` and support per-client-count
+  hard timeouts. Older tables above were captured before that column existed,
+  so they intentionally preserve the original artifact shape.
 
 Latest active batch-read diagnostics:
 

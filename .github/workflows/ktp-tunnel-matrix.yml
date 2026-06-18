@@ -24,6 +24,10 @@ on:
         description: Minimum required max frame batch size in the KTP canary.
         required: true
         default: "2"
+      client_timeout_seconds:
+        description: Per-client-count smoke timeout. Use 0 to disable.
+        required: true
+        default: "900"
 
 permissions:
   contents: read
@@ -45,6 +49,7 @@ env:
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '4' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.payload_bytes || '4096' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.min_max_batch_frames || '2' }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.client_timeout_seconds || '900' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR: /tmp/kelicloud-tunnel-matrix-work
 
