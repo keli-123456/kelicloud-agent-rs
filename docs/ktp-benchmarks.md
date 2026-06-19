@@ -200,17 +200,17 @@ KTP TCP auth compatibility:
   `--tunnel-ktp-tcp-auth-version v2`. The install script emits this setting only
   when it is explicitly passed, so omitting it keeps existing nodes on `KTA1`.
 
-KTA2 local-backend tunnel matrix evidence, 2026-06-19:
+KTA2 full local-backend tunnel matrix evidence, 2026-06-19:
 
-- Agent commit: `0c20b0d`
+- Agent commit: `32409e9`
 - Backend commit: `6e334ed`
-- Shape: `relay_batch_policy=fixed`, `ktp_auth_version=v1 v2`,
-  `clients=1 2`, `rounds=8`, `profile=rdp-like`,
+- Shape: `relay_batch_policy=fixed adaptive`, `ktp_auth_version=v1 v2`,
+  `clients=1 2 4 8`, `rounds=8`, `profile=rdp-like`,
   `payload_bytes=8192`.
 - Gates: `--require-pass`, backend `session_limit=0`, backend
   `tunnel relay session not found=0`, expected matrix
-  `policies=fixed`, `auth_versions=v1,v2`, `clients=1,2`.
-- Result: 4 rows, all pass. KTA2 rows passed real local-backend tunnel echo,
+  `policies=fixed,adaptive`, `auth_versions=v1,v2`, `clients=1,2,4,8`.
+- Result: 16 rows, all pass. KTA2 rows passed real local-backend tunnel echo,
   KTP AEAD canary evidence, positive socket batch-read/write evidence, and the
   existing startup/basic-info/report/ping/exec/terminal/CN connectivity smoke
   checks.
@@ -223,36 +223,47 @@ KELICLOUD_PREPARE_FRONTEND=false \
 KELICLOUD_BACKEND_PATH=/tmp/kelicloud-backend-kta2-matrix \
 KOMARI_DB_USER=komari_smoke \
 KOMARI_DB_PASS=komari-smoke-pass \
-KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2" \
-KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="fixed" \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2 4 8" \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="fixed adaptive" \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS="v1 v2" \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=8 \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=8192 \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES=2 \
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES=2 \
-KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX=komari_kta2_matrix \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX=komari_kta2_full \
   bash scripts/ktp-local-backend-tunnel-matrix.sh
 
 ./target/release/ktp-tunnel-matrix-summary \
   --require-pass \
   --max-backend-session-limit-count 0 \
   --max-backend-session-not-found-count 0 \
-  --expect-policies fixed \
+  --expect-policies "fixed adaptive" \
   --expect-auth-versions "v1 v2" \
-  --expect-clients "1 2" \
-  /tmp/kelicloud-kta2-matrix/logs/matrix-summary.tsv
+  --expect-clients "1 2 4 8" \
+  /tmp/kelicloud-kta2-full/logs/matrix-summary.tsv
 ```
 
 Summary highlights:
 
 ```text
-ktp_tunnel_matrix_summary rows=4 pass=4 fail=0 timeout=0 status=pass
-policy=fixed clients=1 auth_version=v1 rtt_micros_p95=25780 socket_read_max_batch_frames=3 socket_write_max_batch_frames=2
-policy=fixed clients=2 auth_version=v1 rtt_micros_p95=27109 socket_read_max_batch_frames=5 socket_write_max_batch_frames=4
-policy=fixed clients=1 auth_version=v2 rtt_micros_p95=26712 socket_read_max_batch_frames=2 socket_write_max_batch_frames=2
-policy=fixed clients=2 auth_version=v2 rtt_micros_p95=25510 socket_read_max_batch_frames=4 socket_write_max_batch_frames=4
-expected_matrix policies=fixed auth_versions=v1,v2 clients=1,2 status=pass missing=0
+ktp_tunnel_matrix_summary rows=16 pass=16 fail=0 timeout=0 status=pass
+max_rtt_micros_p95=27884 policy=adaptive clients=2 auth_version=v2
+max_rtt_client_p95_spread_micros=18842 policy=adaptive clients=4 auth_version=v1
+max_socket_read_max_batch_frames=19 policy=adaptive clients=8 auth_version=v2
+max_socket_write_max_batch_frames=16 policy=fixed clients=8 auth_version=v1
+max_backend_session_limit_count=0 policy=fixed clients=1 auth_version=v1
+max_backend_session_not_found_count=0 policy=fixed clients=1 auth_version=v1
+expected_matrix policies=fixed,adaptive auth_versions=v1,v2 clients=1,2,4,8 status=pass missing=0
 ```
+
+Policy comparison notes:
+
+- KTA2 `fixed` rows passed all `1 2 4 8` client counts with RTT p95 from
+  15.268 ms to 25.778 ms and positive batch-read/write evidence at every size.
+- KTA2 `adaptive` rows also passed all client counts, but the summary reported
+  `fixed_better` for `clients=4` and `manual_review` for the other KTA2 client
+  counts. This is useful evidence for KTA2 compatibility, but not a reason to
+  make adaptive batching the unconditional production default.
 
 KTP codec cursor microbench:
 
@@ -2075,9 +2086,9 @@ Notes:
 
 Next evidence to collect:
 
-- Expand KTA2 from the 2026-06-19 fixed-policy `1 2` client local-backend
-  matrix to a manual workflow or release-host matrix that includes the full
-  default `1 2 4 8` client set before considering it as the production default.
+- Repeat KTA2 on a live canary or manual workflow artifact after the 2026-06-19
+  full local-backend matrix, so default-switch evidence is not limited to a
+  single release host.
 - Repeat the 4/8 client release-host matrix after the next relay scheduling
   change and compare it against the `59a0a1d` high-concurrency baseline, with
   `rtt_client_p95_spread_micros` included in the comparison.
