@@ -237,7 +237,7 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_THROUGHPUT_MIB_S: ${{ github.event_name == 'workflow_dispatch' && inputs.min_throughput_mib_s || '' }}"
     ));
     assert!(workflow.contains(
-        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_ECHO_THROUGHPUT_MIB_S: ${{ github.event_name == 'workflow_dispatch' && inputs.min_echo_throughput_mib_s || '0.0001' }}"
+        "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_ECHO_THROUGHPUT_MIB_S: ${{ github.event_name == 'workflow_dispatch' && inputs.min_echo_throughput_mib_s || '0.00005' }}"
     ));
     assert!(workflow.contains(
         "KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_LIMIT_COUNT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_backend_session_limit_count || '0' }}"

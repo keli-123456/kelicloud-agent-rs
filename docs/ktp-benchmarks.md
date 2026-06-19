@@ -1744,12 +1744,14 @@ without letting backend and agent startup time dominate the decision. Use `0`
 to disable either throughput floor when collecting exploratory evidence.
 The `KTP Tunnel Matrix` workflow now writes this output to
 `matrix-summary.report.txt` beside the raw TSV artifact. Push-triggered runs
-keep the light `fixed` policy self-check; manual workflow dispatch defaults to
-`fixed adaptive` so scheduling experiments can collect comparable real
-forwarding rows without editing the workflow. Push and manual workflow runs use
-a conservative default echo-only throughput floor of `0.0001 MiB/s`, so a row
-with missing, zero, or badly regressed data-plane echo throughput cannot pass by
-only satisfying connectivity and latency gates. The full-smoke
+run the light `1 2` client matrix across `fixed adaptive` and `v1 v2`, while
+manual workflow dispatch keeps the full `1 2 4 8` client default and exposes
+the policy/auth-version inputs for release-host comparisons. Push runs use a
+very broad default echo-only throughput floor of `0.00005 MiB/s` to avoid
+GitHub runner jitter turning compatibility evidence red; manual dispatch keeps
+the stricter `0.0001 MiB/s` default and can raise it for performance-focused
+runs. In both modes, a row with missing or zero data-plane echo throughput
+cannot pass by only satisfying connectivity and latency gates. The full-smoke
 `min_throughput_mib_s` floor remains opt-in because that metric includes
 backend and agent startup time. Manual dispatch exposes both
 `min_throughput_mib_s` and `min_echo_throughput_mib_s` to raise, lower, or
