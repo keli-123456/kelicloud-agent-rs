@@ -16,6 +16,7 @@ PANEL_USERNAME="${KELICLOUD_PANEL_USERNAME:-}"
 PANEL_PASSWORD="${KELICLOUD_PANEL_PASSWORD:-}"
 PING_TARGET="${KELICLOUD_PANEL_PING_TARGET:-1.1.1.1:443}"
 INSTALL_VERSION="${KELICLOUD_CANARY_INSTALL_VERSION:-}"
+DURATION_SECONDS="${KELICLOUD_CANARY_DURATION:-180}"
 TUNNEL_KTP_TCP_ADDRESS="${KELICLOUD_CANARY_TUNNEL_KTP_TCP_ADDRESS:-${AGENT_TUNNEL_KTP_TCP_ADDRESS:-}}"
 TUNNEL_KTP_TCP_AUTH_VERSION="${KELICLOUD_CANARY_TUNNEL_KTP_TCP_AUTH_VERSION:-${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION:-}}"
 TUNNEL_KTP_RELAY_BATCH_POLICY="${KELICLOUD_CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY:-${AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY:-}}"
@@ -48,6 +49,7 @@ Options:
   --password PASSWORD         admin password, also read from KELICLOUD_PANEL_PASSWORD
   --ping-target HOST:PORT     TCP ping target, default 1.1.1.1:443
   --install-version VERSION   release tag to install/pin, default latest
+  --duration SECONDS          KTP observation window before live evidence, default 180
   --service-wait SECONDS      wait time for Rust or rollback services, default 60
   --tunnel-ktp-tcp-address ADDRESS
                               enable KTP TCP tunnel data through this relay
@@ -137,6 +139,11 @@ parse_args() {
             --install-version)
                 need_value "$1" "${2:-}"
                 INSTALL_VERSION="$2"
+                shift 2
+                ;;
+            --duration)
+                need_value "$1" "${2:-}"
+                DURATION_SECONDS="$2"
                 shift 2
                 ;;
             --service-wait)
@@ -287,10 +294,15 @@ run_install_canary() {
     fi
     systemctl stop "${OLD_SERVICE_NAME}.service" >/dev/null 2>&1 || true
     systemctl disable "${OLD_SERVICE_NAME}.service" >/dev/null 2>&1 || true
+    local install_duration="1"
+    if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
+        install_duration="$DURATION_SECONDS"
+    fi
+
     local install_args=(
         --endpoint "$ENDPOINT" \
         --auto-discovery "$AUTO_DISCOVERY_KEY" \
-        --duration 1 \
+        --duration "$install_duration" \
         --service-wait "$SERVICE_WAIT_SECONDS" \
         --keep-installed \
         --evidence-file "${WORKDIR}/real-host-canary.evidence.md"

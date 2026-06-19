@@ -429,6 +429,12 @@ fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     assert!(workflow.contains("--workdir canary-logs"));
     assert!(workflow.contains("--old-service \"${CANARY_OLD_SERVICE_NAME}\""));
     assert!(workflow.contains("--ping-target \"${CANARY_PANEL_PING_TARGET}\""));
+    let control_step = workflow
+        .split("Run real host control canary")
+        .nth(1)
+        .and_then(|rest| rest.split("Capture service status").next())
+        .expect("control canary workflow step");
+    assert!(control_step.contains("--duration \"${CANARY_DURATION}\""));
     assert!(workflow.contains("--evidence-file canary-logs/real-host-canary.evidence.md"));
     assert!(workflow.contains("--rollback-command \"${CANARY_ROLLBACK_COMMAND}\""));
     assert!(workflow.contains("canary-logs/real-host-canary.log"));

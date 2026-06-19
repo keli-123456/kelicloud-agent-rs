@@ -208,8 +208,10 @@ KTP TCP auth compatibility:
   evidence. When a KTP TCP relay address is set, `scripts/canary-install.sh`
   now also collects `ktp-live-canary.evidence.md` after the observation window;
   trigger one tunnel forwarding flow during that window so the evidence includes
-  live socket read/write counters. Leaving these inputs empty keeps the existing
-  canary behavior.
+  live socket read/write counters. In `control_plane=true` workflow runs, the
+  same `duration` input is passed through to the install canary only when KTP TCP
+  is enabled; non-KTP control-plane canaries keep their fast install handoff.
+  Leaving these inputs empty keeps the existing canary behavior.
 
 KTA2 full local-backend tunnel matrix evidence, 2026-06-19:
 

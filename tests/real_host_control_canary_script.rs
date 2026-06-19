@@ -81,6 +81,34 @@ fn real_host_control_canary_accepts_service_wait_from_workflow() {
 }
 
 #[test]
+fn real_host_control_canary_uses_full_observation_window_for_ktp_evidence() {
+    let script = std::fs::read_to_string(real_host_control_canary_script_path()).unwrap();
+
+    for expected in [
+        "DURATION_SECONDS=\"${KELICLOUD_CANARY_DURATION:-180}\"",
+        "--duration SECONDS",
+        "--duration)",
+        "DURATION_SECONDS=\"$2\"",
+        "local install_duration=\"1\"",
+        "install_duration=\"$DURATION_SECONDS\"",
+        "--duration \"$install_duration\"",
+    ] {
+        assert!(script.contains(expected), "missing {expected}");
+    }
+
+    let ktp_guard = script
+        .find("if [[ -n \"$TUNNEL_KTP_TCP_ADDRESS\" ]]; then")
+        .expect("missing KTP address guard");
+    let duration_override = script
+        .find("install_duration=\"$DURATION_SECONDS\"")
+        .expect("missing KTP duration override");
+    assert!(
+        ktp_guard < duration_override,
+        "KTP canary should use the full observation window before live evidence collection"
+    );
+}
+
+#[test]
 fn real_host_control_canary_omits_empty_install_version_for_latest() {
     let script = std::fs::read_to_string(real_host_control_canary_script_path()).unwrap();
 

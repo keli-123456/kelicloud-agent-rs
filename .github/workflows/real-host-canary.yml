@@ -284,6 +284,7 @@ jobs:
             --endpoint "${CANARY_ENDPOINT}"
             --auto-discovery "${CANARY_AUTO_DISCOVERY_KEY}"
             --ping-target "${CANARY_PANEL_PING_TARGET}"
+            --duration "${CANARY_DURATION}"
             --service-wait "${CANARY_SERVICE_WAIT}"
             --workdir canary-logs
             --old-service "${CANARY_OLD_SERVICE_NAME}"
