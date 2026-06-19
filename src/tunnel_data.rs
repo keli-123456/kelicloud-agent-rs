@@ -1394,7 +1394,7 @@ pub fn tunnel_data_startup_line(url: &str, enabled: bool) -> String {
 fn tunnel_data_startup_transport_fields(url: &str) -> &'static str {
     let url = url.trim();
     if url.starts_with("ktp+tcp://") || url.starts_with("tcp://") {
-        " carrier=ktp_tcp crypto=ktp_aead"
+        " carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v1"
     } else {
         ""
     }

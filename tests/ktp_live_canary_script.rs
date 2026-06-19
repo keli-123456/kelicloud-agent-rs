@@ -1,8 +1,8 @@
 use std::process::Command;
 
-const STARTUP_POLICY_LOG: &str = "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead\nktp relay batch policy: adaptive\nadaptive high_sessions=8 elevated_dwell_us=50000 severe_dwell_us=250000 elevated_cap=16 severe_cap=8\n";
+const STARTUP_POLICY_LOG: &str = "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v1\nktp relay batch policy: adaptive\nadaptive high_sessions=8 elevated_dwell_us=50000 severe_dwell_us=250000 elevated_cap=16 severe_cap=8\n";
 const STARTUP_TUNNEL_DATA_LOG: &str =
-    "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead\n";
+    "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v1\n";
 const STARTUP_POLICY_LOG_WITHOUT_CARRIER: &str = "tunnel data: enabled\nktp relay batch policy: adaptive\nadaptive high_sessions=8 elevated_dwell_us=50000 severe_dwell_us=250000 elevated_cap=16 severe_cap=8\n";
 
 #[test]
@@ -41,6 +41,7 @@ fn ktp_live_canary_script_collects_tunnel_data_diagnostics() {
     assert!(script.contains("adaptive high_sessions="));
     assert!(script.contains("carrier=ktp_tcp"));
     assert!(script.contains("crypto=ktp_aead"));
+    assert!(script.contains("auth=ktp_token_preface_v1"));
     assert!(script.contains("missing startup evidence:"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
 }
@@ -99,6 +100,7 @@ fn ktp_live_canary_script_accepts_sample_log_file() {
     assert!(evidence.contains("tunnel data: enabled"));
     assert!(evidence.contains("carrier=ktp_tcp"));
     assert!(evidence.contains("crypto=ktp_aead"));
+    assert!(evidence.contains("auth=ktp_token_preface_v1"));
     assert!(evidence.contains("ktp relay batch policy: adaptive"));
     assert!(evidence.contains("adaptive high_sessions=8"));
     assert!(evidence.contains("runtime_wait_elapsed_p99_micros=100"));
