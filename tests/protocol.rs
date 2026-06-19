@@ -83,6 +83,10 @@ fn tunnel_data_ktp_tcp_url_accepts_address_or_url() {
         build_tunnel_data_ktp_tcp_url(" ktp+tcp://panel.example.com:25775 ").unwrap(),
         "ktp+tcp://panel.example.com:25775"
     );
+    assert_eq!(
+        build_tunnel_data_ktp_tcp_url(" ktp+tls://panel.example.com:25775 ").unwrap(),
+        "ktp+tls://panel.example.com:25775"
+    );
 }
 
 #[test]

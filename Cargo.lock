@@ -612,6 +612,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tungstenite",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]

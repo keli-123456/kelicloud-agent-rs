@@ -1,6 +1,7 @@
 use crate::ktp::{decode_frame, encode_frame, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN};
 use crate::ktp_transport::{
-    KtpCryptoDirection, KtpCryptoKey, KtpEncryptedTcpStream, KtpTcpTransportError,
+    KtpCryptoDirection, KtpCryptoKey, KtpEncryptedStream, KtpEncryptedTcpStream,
+    KtpEncryptedTlsClientStream, KtpTcpTransportError,
 };
 use crate::transport::{connect_websocket_request, HeaderPair, TransportError};
 use crate::tunnel_async_runtime::TunnelQueueDwellStatsSnapshot;
@@ -14,10 +15,13 @@ use std::net::TcpStream;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio::runtime::Runtime;
 use tokio::time::timeout;
+use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::TlsConnector;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::{HeaderName, HeaderValue};
 use tungstenite::stream::MaybeTlsStream;
@@ -689,6 +693,8 @@ pub struct KtpEncryptedTcpTunnelDataTransport {
     read_timeout: Duration,
     max_payload_len: usize,
     max_buffer_len: usize,
+    tls_client_config: Option<Arc<ClientConfig>>,
+    tls_server_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -707,6 +713,8 @@ impl KtpEncryptedTcpTunnelDataTransport {
             read_timeout: Duration::from_secs(2),
             max_payload_len: KTP_MAX_PAYLOAD_LEN,
             max_buffer_len: 1024 * 1024,
+            tls_client_config: None,
+            tls_server_name: None,
         }
     }
 
@@ -723,11 +731,23 @@ impl KtpEncryptedTcpTunnelDataTransport {
             read_timeout: Duration::from_secs(2),
             max_payload_len: KTP_MAX_PAYLOAD_LEN,
             max_buffer_len: 1024 * 1024,
+            tls_client_config: None,
+            tls_server_name: None,
         }
     }
 
     pub fn with_read_timeout(mut self, timeout: Duration) -> Self {
         self.read_timeout = timeout;
+        self
+    }
+
+    pub fn with_tls_client_config(mut self, config: ClientConfig) -> Self {
+        self.tls_client_config = Some(Arc::new(config));
+        self
+    }
+
+    pub fn with_tls_server_name(mut self, server_name: &str) -> Self {
+        self.tls_server_name = Some(server_name.trim().to_string());
         self
     }
 }
@@ -740,38 +760,65 @@ impl TunnelDataTransport for KtpEncryptedTcpTunnelDataTransport {
         url: &str,
         _headers: &[HeaderPair],
     ) -> Result<Self::Socket, TransportError> {
-        let address = parse_ktp_tcp_tunnel_data_address(url)?;
+        let endpoint = parse_ktp_tunnel_data_endpoint(url)?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .enable_time()
             .build()
             .map_err(|error| ktp_tcp_request_failed("ktp_tcp_runtime_init_failed", error))?;
         let stream = runtime
-            .block_on(TokioTcpStream::connect(&address))
+            .block_on(TokioTcpStream::connect(&endpoint.address))
             .map_err(|error| ktp_tcp_request_failed("ktp_tcp_connect_failed", error))?;
-        let (stream, key) = match &self.auth {
-            KtpEncryptedTcpTunnelDataAuth::StaticKey(key) => (stream, key.clone()),
-            KtpEncryptedTcpTunnelDataAuth::Token { token, version } => {
-                let nonce = random_ktp_tcp_auth_nonce()?;
-                let preface = build_ktp_tcp_auth_preface_with_version(token, nonce, *version)?;
-                let mut stream = stream;
-                runtime
-                    .block_on(stream.write_all(&preface))
-                    .map_err(|error| ktp_tcp_request_failed("ktp_tcp_auth_write_failed", error))?;
-                (
+        let _ = stream.set_nodelay(true);
+        let stream = match endpoint.carrier {
+            KtpTunnelDataCarrier::Tcp => {
+                let (stream, key) = runtime.block_on(apply_ktp_tunnel_data_auth(
                     stream,
-                    derive_ktp_tcp_crypto_key_with_version(token, nonce, *version),
-                )
+                    &self.auth,
+                    "ktp_tcp_auth_write_failed",
+                ))?;
+                KtpEncryptedTunnelDataStream::Tcp(KtpEncryptedTcpStream::from_stream(
+                    stream,
+                    key,
+                    KtpCryptoDirection::ClientToRelay,
+                    KtpCryptoDirection::RelayToClient,
+                    self.max_payload_len,
+                    self.max_buffer_len,
+                ))
+            }
+            KtpTunnelDataCarrier::Tls => {
+                let tls_server_name = self
+                    .tls_server_name
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(&endpoint.tls_server_name);
+                let domain =
+                    ServerName::try_from(tls_server_name.to_string()).map_err(|error| {
+                        ktp_tcp_request_failed("ktp_tls_server_name_invalid", error)
+                    })?;
+                let config = self
+                    .tls_client_config
+                    .clone()
+                    .unwrap_or_else(default_ktp_tls_client_config);
+                let connector = TlsConnector::from(config);
+                let tls_stream = runtime
+                    .block_on(connector.connect(domain, stream))
+                    .map_err(|error| ktp_tcp_request_failed("ktp_tls_connect_failed", error))?;
+                let (tls_stream, key) = runtime.block_on(apply_ktp_tunnel_data_auth(
+                    tls_stream,
+                    &self.auth,
+                    "ktp_tls_auth_write_failed",
+                ))?;
+                KtpEncryptedTunnelDataStream::Tls(KtpEncryptedStream::from_io(
+                    tls_stream,
+                    key,
+                    KtpCryptoDirection::ClientToRelay,
+                    KtpCryptoDirection::RelayToClient,
+                    self.max_payload_len,
+                    self.max_buffer_len,
+                ))
             }
         };
-        let stream = KtpEncryptedTcpStream::from_stream(
-            stream,
-            key,
-            KtpCryptoDirection::ClientToRelay,
-            KtpCryptoDirection::RelayToClient,
-            self.max_payload_len,
-            self.max_buffer_len,
-        );
         Ok(KtpEncryptedTcpTunnelDataSocket {
             runtime,
             stream,
@@ -902,9 +949,83 @@ fn random_ktp_tcp_auth_nonce() -> Result<[u8; 16], TransportError> {
     Ok(nonce)
 }
 
+async fn apply_ktp_tunnel_data_auth<S>(
+    mut stream: S,
+    auth: &KtpEncryptedTcpTunnelDataAuth,
+    write_error_code: &'static str,
+) -> Result<(S, KtpCryptoKey), TransportError>
+where
+    S: AsyncWrite + Unpin,
+{
+    match auth {
+        KtpEncryptedTcpTunnelDataAuth::StaticKey(key) => Ok((stream, key.clone())),
+        KtpEncryptedTcpTunnelDataAuth::Token { token, version } => {
+            let nonce = random_ktp_tcp_auth_nonce()?;
+            let preface = build_ktp_tcp_auth_preface_with_version(token, nonce, *version)?;
+            stream
+                .write_all(&preface)
+                .await
+                .map_err(|error| ktp_tcp_request_failed(write_error_code, error))?;
+            Ok((
+                stream,
+                derive_ktp_tcp_crypto_key_with_version(token, nonce, *version),
+            ))
+        }
+    }
+}
+
+fn default_ktp_tls_client_config() -> Arc<ClientConfig> {
+    let roots = RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    Arc::new(
+        ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    )
+}
+
+enum KtpEncryptedTunnelDataStream {
+    Tcp(KtpEncryptedTcpStream),
+    Tls(KtpEncryptedTlsClientStream<TokioTcpStream>),
+}
+
+impl KtpEncryptedTunnelDataStream {
+    async fn send_frame(&mut self, frame: &KtpFrame) -> Result<(), KtpTcpTransportError> {
+        match self {
+            Self::Tcp(stream) => stream.send_frame(frame).await,
+            Self::Tls(stream) => stream.send_frame(frame).await,
+        }
+    }
+
+    async fn send_frames(&mut self, frames: &[KtpFrame]) -> Result<(), KtpTcpTransportError> {
+        match self {
+            Self::Tcp(stream) => stream.send_frames(frames).await,
+            Self::Tls(stream) => stream.send_frames(frames).await,
+        }
+    }
+
+    async fn next_frame(&mut self) -> Result<KtpFrame, KtpTcpTransportError> {
+        match self {
+            Self::Tcp(stream) => stream.next_frame().await,
+            Self::Tls(stream) => stream.next_frame().await,
+        }
+    }
+
+    async fn next_frames(
+        &mut self,
+        max_frames: usize,
+    ) -> Result<Vec<KtpFrame>, KtpTcpTransportError> {
+        match self {
+            Self::Tcp(stream) => stream.next_frames(max_frames).await,
+            Self::Tls(stream) => stream.next_frames(max_frames).await,
+        }
+    }
+}
+
 pub struct KtpEncryptedTcpTunnelDataSocket {
     runtime: Runtime,
-    stream: KtpEncryptedTcpStream,
+    stream: KtpEncryptedTunnelDataStream,
     read_timeout: Duration,
     max_payload_len: usize,
 }
@@ -981,24 +1102,87 @@ impl TunnelDataSocket for KtpEncryptedTcpTunnelDataSocket {
     }
 }
 
-fn parse_ktp_tcp_tunnel_data_address(url: &str) -> Result<String, TransportError> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KtpTunnelDataCarrier {
+    Tcp,
+    Tls,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct KtpTunnelDataEndpoint {
+    carrier: KtpTunnelDataCarrier,
+    address: String,
+    tls_server_name: String,
+}
+
+fn parse_ktp_tunnel_data_endpoint(url: &str) -> Result<KtpTunnelDataEndpoint, TransportError> {
     let trimmed = url.trim();
-    let Some(rest) = trimmed
-        .strip_prefix("ktp+tcp://")
-        .or_else(|| trimmed.strip_prefix("tcp://"))
-    else {
+    let (carrier, rest) = if let Some(rest) = trimmed.strip_prefix("ktp+tcp://") {
+        (KtpTunnelDataCarrier::Tcp, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("tcp://") {
+        (KtpTunnelDataCarrier::Tcp, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("ktp+tls://") {
+        (KtpTunnelDataCarrier::Tls, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("tls://") {
+        (KtpTunnelDataCarrier::Tls, rest)
+    } else {
         return Err(TransportError::UnsupportedScheme(trimmed.to_string()));
     };
-    let address = rest
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let address = parse_ktp_tunnel_data_authority(rest)?;
+    let tls_server_name = if carrier == KtpTunnelDataCarrier::Tls {
+        ktp_tls_server_name(rest, &address)?
+    } else {
+        String::new()
+    };
+    Ok(KtpTunnelDataEndpoint {
+        carrier,
+        address,
+        tls_server_name,
+    })
+}
+
+fn parse_ktp_tunnel_data_authority(rest: &str) -> Result<String, TransportError> {
+    let address = rest.split(['/', '?', '#']).next().unwrap_or("").trim();
     if address.is_empty() {
         return Err(TransportError::EmptyEndpoint);
     }
-    Ok(address)
+    Ok(address.to_string())
+}
+
+fn ktp_tls_server_name(rest: &str, address: &str) -> Result<String, TransportError> {
+    let server_name = ktp_tunnel_data_query_value(rest, "server_name")
+        .or_else(|| ktp_tunnel_data_query_value(rest, "sni"))
+        .unwrap_or_else(|| ktp_tunnel_data_authority_host(address));
+    if server_name.trim().is_empty() {
+        return Err(TransportError::EmptyEndpoint);
+    }
+    Ok(server_name)
+}
+
+fn ktp_tunnel_data_query_value(rest: &str, key: &str) -> Option<String> {
+    let query = rest.split_once('?')?.1.split('#').next().unwrap_or("");
+    for item in query.split('&') {
+        let Some((name, value)) = item.split_once('=') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case(key) && !value.trim().is_empty() {
+            return Some(value.trim().to_string());
+        }
+    }
+    None
+}
+
+fn ktp_tunnel_data_authority_host(address: &str) -> String {
+    let address = address.trim();
+    if let Some(rest) = address.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or("").to_string();
+    }
+    if let Some((host, _port)) = address.rsplit_once(':') {
+        if !host.contains(':') {
+            return host.to_string();
+        }
+    }
+    address.to_string()
 }
 
 fn ktp_tcp_transport_error_to_transport(error: KtpTcpTransportError) -> TransportError {
@@ -1497,7 +1681,12 @@ pub fn tunnel_data_startup_line_with_ktp_auth_version(
 
 fn tunnel_data_startup_transport_fields(url: &str, ktp_auth_version: KtpTcpAuthVersion) -> String {
     let url = url.trim();
-    if url.starts_with("ktp+tcp://") || url.starts_with("tcp://") {
+    if url.starts_with("ktp+tls://") || url.starts_with("tls://") {
+        format!(
+            " carrier=ktp_tls crypto=ktp_aead auth=ktp_token_preface_{}",
+            ktp_tcp_auth_version_label(ktp_auth_version)
+        )
+    } else if url.starts_with("ktp+tcp://") || url.starts_with("tcp://") {
         format!(
             " carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_{}",
             ktp_tcp_auth_version_label(ktp_auth_version)

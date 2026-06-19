@@ -49,8 +49,14 @@ pub fn build_tunnel_data_ktp_tcp_url(address: &str) -> Result<String, ProtocolEr
     if address.starts_with("ktp+tcp://") {
         return Ok(address.to_string());
     }
+    if address.starts_with("ktp+tls://") {
+        return Ok(address.to_string());
+    }
     if address.starts_with("tcp://") {
         return Ok(format!("ktp+tcp://{}", &address["tcp://".len()..]));
+    }
+    if address.starts_with("tls://") {
+        return Ok(format!("ktp+tls://{}", &address["tls://".len()..]));
     }
     Ok(format!("ktp+tcp://{address}"))
 }

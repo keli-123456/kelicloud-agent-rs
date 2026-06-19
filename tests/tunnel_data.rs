@@ -1,14 +1,16 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
 use kelicloud_agent_rs::ktp::{
     decode_frame, encode_frame, FrameLeg, FrameType, KtpFrame, KTP_MAX_PAYLOAD_LEN,
 };
-use kelicloud_agent_rs::ktp_transport::{KtpCryptoDirection, KtpCryptoKey, KtpEncryptedTcpStream};
+use kelicloud_agent_rs::ktp_transport::{
+    ktp_tls_accept_stream, KtpCryptoDirection, KtpCryptoKey, KtpEncryptedTcpStream,
+};
 use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_async_runtime::TunnelQueueDwellStatsSnapshot;
 use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
@@ -27,6 +29,9 @@ use kelicloud_agent_rs::tunnel_data::{
     TunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::TunnelSessionRuntime;
+use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+use tokio_rustls::rustls::{ClientConfig, RootCertStore, ServerConfig};
+use tokio_rustls::TlsAcceptor;
 
 type OptionalReadHook = Rc<RefCell<dyn FnMut(usize)>>;
 
@@ -870,6 +875,81 @@ fn ktp_encrypted_tcp_tunnel_data_transport_runs_hello_ready_flow() {
     assert_eq!(hello_payload.revision, "rev-ktp");
     let ready_payload = parse_ready_payload(&ready.payload);
     assert_eq!(ready_payload.revision, "rev-ktp");
+    assert_eq!(ready_payload.ingress_rule_ids, [7]);
+    assert_eq!(ready_payload.egress_rule_ids, [9]);
+    server.join().expect("server thread should finish");
+}
+
+#[test]
+fn ktp_tls_tunnel_data_transport_runs_hello_ready_flow() {
+    let key = test_tunnel_data_crypto_key();
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ktp tls listener");
+    std_listener
+        .set_nonblocking(true)
+        .expect("set TLS listener nonblocking");
+    let addr = std_listener.local_addr().expect("TLS listener addr");
+    let (server_config, client_config) = ktp_tls_test_configs();
+    let acceptor = TlsAcceptor::from(Arc::new(server_config));
+    let (tx, rx) = mpsc::channel();
+    let server_key = key.clone();
+    let server = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("build ktp tls server runtime");
+        runtime.block_on(async move {
+            let listener = tokio::net::TcpListener::from_std(std_listener).expect("tokio listener");
+            let (stream, _) = listener.accept().await.expect("accept ktp tls client");
+            let mut server = ktp_tls_accept_stream(
+                &acceptor,
+                stream,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            )
+            .await
+            .expect("accept ktp tls stream");
+            let hello = server.next_frame().await.expect("read tunnel hello");
+            server
+                .send_frame(&KtpFrame::connection(FrameType::HelloAck, Vec::new()))
+                .await
+                .expect("send tunnel hello ack");
+            let ready = server.next_frame().await.expect("read tunnel ready");
+            tx.send((hello, ready)).expect("send captured TLS frames");
+        });
+    });
+
+    let mut ready = TunnelDataReadyState::empty("rev-ktp-tls");
+    ready.ingress_rule_ids.push(7);
+    ready.egress_rule_ids.push(9);
+    let mut transport = KtpEncryptedTcpTunnelDataTransport::new(key)
+        .with_tls_client_config(client_config)
+        .with_tls_server_name(KTP_TLS_TEST_DOMAIN);
+
+    run_tunnel_data_once(
+        &format!("ktp+tls://{addr}"),
+        &[],
+        "node-ktp-tls",
+        "0.2.3",
+        &ready,
+        &mut transport,
+    )
+    .expect("ktp tls tunnel data once should succeed");
+
+    let (hello, ready) = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("server should capture hello and ready frames");
+    assert_eq!(hello.frame_type, FrameType::Hello);
+    assert_eq!(ready.frame_type, FrameType::Ready);
+    let hello_payload = parse_hello_payload(&hello.payload);
+    assert_eq!(hello_payload.agent_id_hint, "node-ktp-tls");
+    assert_eq!(hello_payload.agent_version, "0.2.3");
+    assert_eq!(hello_payload.revision, "rev-ktp-tls");
+    let ready_payload = parse_ready_payload(&ready.payload);
+    assert_eq!(ready_payload.revision, "rev-ktp-tls");
     assert_eq!(ready_payload.ingress_rule_ids, [7]);
     assert_eq!(ready_payload.egress_rule_ids, [9]);
     server.join().expect("server thread should finish");
@@ -2182,6 +2262,74 @@ fn test_ktp_tcp_auth_nonce() -> [u8; 16] {
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 }
 
+const KTP_TLS_TEST_DOMAIN: &str = "foobar.com";
+
+fn ktp_tls_test_configs() -> (ServerConfig, ClientConfig) {
+    let cert = CertificateDer::pem_slice_iter(KTP_TLS_TEST_CHAIN.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("test TLS cert chain should parse");
+    let key = PrivateKeyDer::from_pem_slice(KTP_TLS_TEST_KEY.as_bytes())
+        .expect("test TLS private key should parse");
+    let server = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert, key)
+        .expect("test TLS server config");
+
+    let mut roots = RootCertStore::empty();
+    for root in CertificateDer::pem_slice_iter(KTP_TLS_TEST_ROOT.as_bytes()) {
+        roots
+            .add(root.expect("test TLS root should parse"))
+            .expect("test TLS root should be accepted");
+    }
+    let client = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+
+    (server, client)
+}
+
+const KTP_TLS_TEST_ROOT: &str = r#"-----BEGIN CERTIFICATE-----
+MIIBgDCCASegAwIBAgIUPHDUu9WL36yvTmFeNFZVe/qhClcwCgYIKoZIzj0EAwIw
+HTEbMBkGA1UEAwwSUnVzdGxzIFJvYnVzdCBSb290MCAXDTc1MDEwMTAwMDAwMFoY
+DzQwOTYwMTAxMDAwMDAwWjAdMRswGQYDVQQDDBJSdXN0bHMgUm9idXN0IFJvb3Qw
+WTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASW/VkDFs5iGDQvH8jaXYT4jMx66jo+
+5CWKyMt4OlTDdBfKfnmQ9LYeK/PsYfJ8wVizuSlPzXi9je8SnyYejGP3o0MwQTAP
+BgNVHQ8BAf8EBQMDB4QAMB0GA1UdDgQWBBRqY/oMENJbNo7y39iL6GW3tDs0rzAP
+BgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIEUbrmSUjANju9nNpFop
+PAl9Wh8tBxI5IY+BPh466+aUAiA1/9+prypt6s3Doo0GDsnoFGJi1UBivUg1qdik
+cy4eNw==
+-----END CERTIFICATE-----"#;
+
+const KTP_TLS_TEST_CHAIN: &str = r#"-----BEGIN CERTIFICATE-----
+MIIBszCCAVmgAwIBAgIUUg3keFcU1xXWK8BNVb1KynPulV8wCgYIKoZIzj0EAwIw
+JjEkMCIGA1UEAwwbUnVzdGxzIFJvYnVzdCBSb290IC0gUnVuZyAyMCAXDTc1MDEw
+MTAwMDAwMFoYDzQwOTYwMTAxMDAwMDAwWjAhMR8wHQYDVQQDDBZyY2dlbiBzZWxm
+IHNpZ25lZCBjZXJ0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEud6w4gtZ0xbw
+J3E69SSMy5TZfdIifl9L5ZY+hgEe4UiUsBWS32f6Y5NR5Jo8FO1f6o13b3+FvVHR
+EHCGdvppL6NoMGYwFQYDVR0RBA4wDIIKZm9vYmFyLmNvbTAdBgNVHSUEFjAUBggr
+BgEFBQcDAQYIKwYBBQUHAwIwHQYDVR0OBBYEFELvxbj5tD75n4pYFvJyr+c8qVEi
+MA8GA1UdEwEB/wQFMAMBAQAwCgYIKoZIzj0EAwIDSAAwRQIhALxSSdUsrRFnwNMu
+/doBqI8i8u5HdohVAheFTDwObkOMAiASSjULUtkWSD15u/7Sr01Wm9J1MpqW1pob
+BVqU3CNRlA==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIBiTCCATCgAwIBAgIUHWiVYIvMMWoZEFYvSz46COf2FqowCgYIKoZIzj0EAwIw
+HTEbMBkGA1UEAwwSUnVzdGxzIFJvYnVzdCBSb290MCAXDTc1MDEwMTAwMDAwMFoY
+DzQwOTYwMTAxMDAwMDAwWjAmMSQwIgYDVQQDDBtSdXN0bHMgUm9idXN0IFJvb3Qg
+LSBSdW5nIDIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATAOCcBD7dXjmAZ3te5
+D47cCJ9ec93PWv7BKYIL826CJsKfXQOGrBTthLm77hXLhHu6uv8E5QXNLZpfowLQ
+Do1ao0MwQTAPBgNVHQ8BAf8EBQMDB4QAMB0GA1UdDgQWBBRdza76r11Ok9vRmlg6
+Nn/wL/N+jTAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIFmZrXeK
+hnfkahocvkhhNT3cDv1LWf6WBoFaCiBwZXFPAiARaKRiSCMG7PCHmSqFe82TBVmL
+odHGogAVax1Dh/aYAA==
+-----END CERTIFICATE-----"#;
+
+const KTP_TLS_TEST_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgTbAQpfjAT46fgF4B
+mP15n37woNG5ZNJmwcqsred/7tmhRANCAAS53rDiC1nTFvAncTr1JIzLlNl90iJ+
+X0vllj6GAR7hSJSwFZLfZ/pjk1HkmjwU7V/qjXdvf4W9UdEQcIZ2+mkv
+-----END PRIVATE KEY-----"#;
+
 fn frame_type_from_event(event: &str) -> FrameType {
     decode_frame(
         &hex_to_bytes(event.strip_prefix("frame:").expect("frame prefix")),
@@ -2226,6 +2374,16 @@ fn tunnel_data_startup_line_reports_ktp_tcp_carrier_crypto_and_auth() {
     assert_eq!(
         line,
         "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v1"
+    );
+}
+
+#[test]
+fn tunnel_data_startup_line_reports_ktp_tls_carrier_crypto_and_auth() {
+    let line = tunnel_data_startup_line("ktp+tls://panel.example.com:25775", true);
+
+    assert_eq!(
+        line,
+        "tunnel data: enabled url=ktp+tls://panel.example.com:25775 carrier=ktp_tls crypto=ktp_aead auth=ktp_token_preface_v1"
     );
 }
 
