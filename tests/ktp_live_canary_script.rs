@@ -289,8 +289,8 @@ fn ktp_live_canary_script_requires_ktp_tcp_carrier_and_crypto_evidence() {
     );
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("missing startup evidence: ktp tcp carrier"),
-        "stderr should explain the missing KTP TCP carrier evidence: {}",
+            .contains("missing startup evidence: ktp carrier ktp_tcp"),
+        "stderr should explain the missing KTP carrier evidence: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
