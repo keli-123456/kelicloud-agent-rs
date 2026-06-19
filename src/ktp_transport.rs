@@ -5,7 +5,7 @@ use chacha20poly1305::aead::{Aead, AeadInPlace, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use std::error::Error;
 use std::fmt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub const KTP_CRYPTO_MAGIC: &[u8; 4] = b"KTE1";
@@ -561,6 +561,7 @@ impl KtpTcpTransportError {
                 "malformed_record" => "ktp_crypto_malformed_record",
                 "buffer_limit" => "ktp_crypto_buffer_limit",
                 "ktp_error" => "ktp_crypto_ktp_error",
+                "sequence_exhausted" => "ktp_crypto_sequence_exhausted",
                 "sequence_mismatch" => "ktp_crypto_sequence_mismatch",
                 _ => "ktp_crypto_error",
             },
@@ -581,24 +582,25 @@ impl fmt::Display for KtpTcpTransportError {
 
 impl Error for KtpTcpTransportError {}
 
-pub struct KtpEncryptedTcpStream {
-    stream: TcpStream,
+pub type KtpEncryptedTcpStream = KtpEncryptedStream<TcpStream>;
+
+pub struct KtpEncryptedStream<S> {
+    stream: S,
     seal: KtpCryptoSeal,
     codec: KtpCryptoRecordCodec,
     read_buffer: Vec<u8>,
     write_buffer: Vec<u8>,
 }
 
-impl KtpEncryptedTcpStream {
-    pub fn from_stream(
-        stream: TcpStream,
+impl<S> KtpEncryptedStream<S> {
+    pub fn from_io(
+        stream: S,
         key: KtpCryptoKey,
         seal_direction: KtpCryptoDirection,
         open_direction: KtpCryptoDirection,
         max_payload_len: usize,
         max_buffer_len: usize,
     ) -> Self {
-        let _ = stream.set_nodelay(true);
         Self {
             stream,
             seal: KtpCryptoSeal::new(key.clone(), seal_direction),
@@ -609,11 +611,37 @@ impl KtpEncryptedTcpStream {
             ),
         }
     }
+}
+
+impl KtpEncryptedStream<TcpStream> {
+    pub fn from_stream(
+        stream: TcpStream,
+        key: KtpCryptoKey,
+        seal_direction: KtpCryptoDirection,
+        open_direction: KtpCryptoDirection,
+        max_payload_len: usize,
+        max_buffer_len: usize,
+    ) -> Self {
+        let _ = stream.set_nodelay(true);
+        Self::from_io(
+            stream,
+            key,
+            seal_direction,
+            open_direction,
+            max_payload_len,
+            max_buffer_len,
+        )
+    }
 
     pub fn tcp_nodelay(&self) -> Result<bool, KtpTcpTransportError> {
         self.stream.nodelay().map_err(KtpTcpTransportError::Io)
     }
+}
 
+impl<S> KtpEncryptedStream<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     pub async fn send_frame(&mut self, frame: &KtpFrame) -> Result<(), KtpTcpTransportError> {
         self.seal
             .seal_frame_into(frame, &mut self.write_buffer)
@@ -900,6 +928,13 @@ mod tests {
             .expect_err("sequence exhaustion must stop opening before nonce reuse");
 
         assert_eq!(error.code(), "sequence_exhausted");
+    }
+
+    #[test]
+    fn tcp_transport_error_exposes_sequence_exhaustion_code() {
+        let error = KtpTcpTransportError::Crypto(KtpCryptoError::sequence_exhausted());
+
+        assert_eq!(error.code(), "ktp_crypto_sequence_exhausted");
     }
 
     fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {

@@ -4,8 +4,8 @@ use kelicloud_agent_rs::ktp::{
 };
 use kelicloud_agent_rs::ktp_transport::{
     KtpCryptoDirection, KtpCryptoKey, KtpCryptoOpen, KtpCryptoRecordCodec, KtpCryptoSeal,
-    KtpEncryptedTcpFrameRelay, KtpEncryptedTcpStream, KtpStreamCodec, KtpStreamCodecError,
-    KtpTcpTransportError,
+    KtpEncryptedStream, KtpEncryptedTcpFrameRelay, KtpEncryptedTcpStream, KtpStreamCodec,
+    KtpStreamCodecError, KtpTcpTransportError,
 };
 use std::io::ErrorKind;
 use std::time::Duration;
@@ -283,6 +283,42 @@ fn encrypted_tcp_stream_round_trips_frame_over_loopback() {
             session_data(802, b"hello client")
         );
         server.await.expect("server task");
+    });
+}
+
+#[test]
+fn encrypted_stream_round_trips_over_generic_duplex_io() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let mut client = KtpEncryptedStream::from_io(
+            client_io,
+            key.clone(),
+            KtpCryptoDirection::ClientToRelay,
+            KtpCryptoDirection::RelayToClient,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        );
+        let mut server = KtpEncryptedStream::from_io(
+            server_io,
+            key,
+            KtpCryptoDirection::RelayToClient,
+            KtpCryptoDirection::ClientToRelay,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        );
+
+        let send = session_data(6101, b"generic encrypted carrier");
+        client.send_frame(&send).await.expect("send over duplex");
+        let received = server.next_frame().await.expect("receive over duplex");
+
+        assert_eq!(received, send);
     });
 }
 
