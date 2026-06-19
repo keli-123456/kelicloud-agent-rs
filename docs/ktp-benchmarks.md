@@ -193,11 +193,66 @@ KTP TCP auth compatibility:
   HKDF-style HMAC-SHA256 extract/expand labels for auth tag and traffic-key
   derivation.
 - The Go backend accepts both `KTA1` and `KTA2`, while the Rust agent still
-  defaults to `KTA1`. That keeps rollback simple until live backend evidence is
-  collected for switching the default.
+  defaults to `KTA1`. That keeps rollback simple while KTA2 evidence expands
+  from small local-backend matrices to broader release-host and live-canary
+  coverage before any default switch.
 - Canary nodes can opt in with `AGENT_TUNNEL_KTP_TCP_AUTH_VERSION=v2` or
   `--tunnel-ktp-tcp-auth-version v2`. The install script emits this setting only
   when it is explicitly passed, so omitting it keeps existing nodes on `KTA1`.
+
+KTA2 local-backend tunnel matrix evidence, 2026-06-19:
+
+- Agent commit: `0c20b0d`
+- Backend commit: `6e334ed`
+- Shape: `relay_batch_policy=fixed`, `ktp_auth_version=v1 v2`,
+  `clients=1 2`, `rounds=8`, `profile=rdp-like`,
+  `payload_bytes=8192`.
+- Gates: `--require-pass`, backend `session_limit=0`, backend
+  `tunnel relay session not found=0`, expected matrix
+  `policies=fixed`, `auth_versions=v1,v2`, `clients=1,2`.
+- Result: 4 rows, all pass. KTA2 rows passed real local-backend tunnel echo,
+  KTP AEAD canary evidence, positive socket batch-read/write evidence, and the
+  existing startup/basic-info/report/ping/exec/terminal/CN connectivity smoke
+  checks.
+
+Command shape:
+
+```bash
+PATH=/usr/local/go1.24.11/bin:$PATH \
+KELICLOUD_PREPARE_FRONTEND=false \
+KELICLOUD_BACKEND_PATH=/tmp/kelicloud-backend-kta2-matrix \
+KOMARI_DB_USER=komari_smoke \
+KOMARI_DB_PASS=komari-smoke-pass \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="1 2" \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="fixed" \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS="v1 v2" \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=8 \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=8192 \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES=2 \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES=2 \
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX=komari_kta2_matrix \
+  bash scripts/ktp-local-backend-tunnel-matrix.sh
+
+./target/release/ktp-tunnel-matrix-summary \
+  --require-pass \
+  --max-backend-session-limit-count 0 \
+  --max-backend-session-not-found-count 0 \
+  --expect-policies fixed \
+  --expect-auth-versions "v1 v2" \
+  --expect-clients "1 2" \
+  /tmp/kelicloud-kta2-matrix/logs/matrix-summary.tsv
+```
+
+Summary highlights:
+
+```text
+ktp_tunnel_matrix_summary rows=4 pass=4 fail=0 timeout=0 status=pass
+policy=fixed clients=1 auth_version=v1 rtt_micros_p95=25780 socket_read_max_batch_frames=3 socket_write_max_batch_frames=2
+policy=fixed clients=2 auth_version=v1 rtt_micros_p95=27109 socket_read_max_batch_frames=5 socket_write_max_batch_frames=4
+policy=fixed clients=1 auth_version=v2 rtt_micros_p95=26712 socket_read_max_batch_frames=2 socket_write_max_batch_frames=2
+policy=fixed clients=2 auth_version=v2 rtt_micros_p95=25510 socket_read_max_batch_frames=4 socket_write_max_batch_frames=4
+expected_matrix policies=fixed auth_versions=v1,v2 clients=1,2 status=pass missing=0
+```
 
 KTP codec cursor microbench:
 
@@ -1681,11 +1736,11 @@ only satisfying connectivity and latency gates. The full-smoke
 backend and agent startup time. Manual dispatch exposes both
 `min_throughput_mib_s` and `min_echo_throughput_mib_s` to raise, lower, or
 disable those summary throughput gates.
-The workflow passes the requested policy list and client-count list to
-`ktp-tunnel-matrix-summary` with `--expect-policies` and `--expect-clients`.
-That makes the report fail when a policy/client combination is missing, even if
-every produced row is `pass`, so partial matrices cannot masquerade as complete
-release-host evidence.
+The workflow passes the requested policy list, auth-version list, and
+client-count list to `ktp-tunnel-matrix-summary` with `--expect-policies`,
+`--expect-auth-versions`, and `--expect-clients`. That makes the report fail
+when a policy/auth/client combination is missing, even if every produced row is
+`pass`, so partial matrices cannot masquerade as complete release-host evidence.
 
 Result:
 
@@ -2020,6 +2075,9 @@ Notes:
 
 Next evidence to collect:
 
+- Expand KTA2 from the 2026-06-19 fixed-policy `1 2` client local-backend
+  matrix to a manual workflow or release-host matrix that includes the full
+  default `1 2 4 8` client set before considering it as the production default.
 - Repeat the 4/8 client release-host matrix after the next relay scheduling
   change and compare it against the `59a0a1d` high-concurrency baseline, with
   `rtt_client_p95_spread_micros` included in the comparison.
