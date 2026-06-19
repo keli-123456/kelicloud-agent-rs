@@ -1,6 +1,8 @@
 use std::process::Command;
 
 const STARTUP_POLICY_LOG: &str = "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead\nktp relay batch policy: adaptive\nadaptive high_sessions=8 elevated_dwell_us=50000 severe_dwell_us=250000 elevated_cap=16 severe_cap=8\n";
+const STARTUP_TUNNEL_DATA_LOG: &str =
+    "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead\n";
 const STARTUP_POLICY_LOG_WITHOUT_CARRIER: &str = "tunnel data: enabled\nktp relay batch policy: adaptive\nadaptive high_sessions=8 elevated_dwell_us=50000 severe_dwell_us=250000 elevated_cap=16 severe_cap=8\n";
 
 #[test]
@@ -123,7 +125,7 @@ fn ktp_live_canary_script_requires_startup_policy_evidence() {
     let evidence_file = temp_dir.join("ktp-live-canary.evidence.md");
     std::fs::write(
         &log_file,
-        "tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7 socket_write_batches=3 socket_write_frames=11 socket_write_max_batch_frames=6 socket_write_batch_limit_max=16 socket_write_batch_limit_min=8 socket_write_batch_limit_last=8\n",
+        format!("{STARTUP_TUNNEL_DATA_LOG}tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7 socket_write_batches=3 socket_write_frames=11 socket_write_max_batch_frames=6 socket_write_batch_limit_max=16 socket_write_batch_limit_min=8 socket_write_batch_limit_last=8\n"),
     )
     .expect("sample log should be written");
 
