@@ -38,4 +38,5 @@ jobs:
         run: cargo check --locked --all-targets
 
       - name: Test all targets
-        run: cargo test --locked --all-targets
+        timeout-minutes: 15
+        run: cargo test --locked --all-targets -- --test-threads=1
