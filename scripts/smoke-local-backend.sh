@@ -184,6 +184,14 @@ ktp_tls_smoke_enabled() {
     [[ "${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME}" == "ktp+tls" ]]
 }
 
+ktp_live_canary_carrier() {
+    if ktp_tls_smoke_enabled; then
+        printf 'ktp_tls'
+    else
+        printf 'ktp_tcp'
+    fi
+}
+
 ktp_backend_bool() {
     if "$@"; then
         printf 'true'
@@ -1074,6 +1082,7 @@ collect_ktp_live_canary_evidence() {
     KTP_EVIDENCE_FILE="${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md"
     wait_for_log "${AGENT_LOG}" "tunnel data diagnostics" "${KTP_DIAGNOSTICS_TIMEOUT_SECONDS}"
     KTP_LIVE_CANARY_AUTH_VERSION="${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION}" \
+    KTP_LIVE_CANARY_CARRIER="$(ktp_live_canary_carrier)" \
         bash "${root}/scripts/ktp-live-canary-evidence.sh" \
         --log-file "${AGENT_LOG}" \
         --evidence-file "${KTP_EVIDENCE_FILE}" \

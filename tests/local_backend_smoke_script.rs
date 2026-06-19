@@ -140,6 +140,8 @@ fn local_backend_smoke_script_can_run_tunnel_relay_over_ktp_tcp() {
     assert!(script.contains("KOMARI_TUNNEL_KTP_TLS_KEY_FILE"));
     assert!(script.contains("AGENT_TUNNEL_KTP_TCP_AUTH_VERSION"));
     assert!(script.contains("KTP_LIVE_CANARY_AUTH_VERSION"));
+    assert!(script.contains("ktp_live_canary_carrier"));
+    assert!(script.contains("KTP_LIVE_CANARY_CARRIER=\"$(ktp_live_canary_carrier)\""));
     assert!(script.contains("--tunnel-ktp-tcp-address"));
     assert!(script.contains("--tunnel-ktp-tls-ca-cert"));
     assert!(script.contains("ktp-live-canary-evidence.sh"));

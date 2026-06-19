@@ -10,6 +10,7 @@ TUNNEL_ECHO_EVIDENCE_FILE=""
 MIN_MAX_BATCH_FRAMES="${KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES:-1}"
 MIN_MAX_WRITE_BATCH_FRAMES="${KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES:-1}"
 AUTH_VERSION="${KTP_LIVE_CANARY_AUTH_VERSION:-v1}"
+CARRIER="${KTP_LIVE_CANARY_CARRIER:-ktp_tcp}"
 
 usage() {
     cat <<'USAGE'
@@ -38,6 +39,8 @@ Environment:
                             value, default: 1
   KTP_LIVE_CANARY_AUTH_VERSION
                             require auth=ktp_token_preface_v1 or v2, default: v1
+  KTP_LIVE_CANARY_CARRIER
+                            require carrier=ktp_tcp or ktp_tls, default: ktp_tcp
 
 The script validates that live KTP startup output declares the dedicated
 carrier, self-managed crypto, token auth preface, and active relay batch
@@ -108,6 +111,10 @@ case "$AUTH_VERSION" in
     v1|v2) ;;
     *) die "KTP_LIVE_CANARY_AUTH_VERSION must be v1 or v2" ;;
 esac
+case "$CARRIER" in
+    ktp_tcp|ktp_tls) ;;
+    *) die "KTP_LIVE_CANARY_CARRIER must be ktp_tcp or ktp_tls" ;;
+esac
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -135,7 +142,7 @@ startup_evidence_line() {
 }
 
 require_startup_evidence "tunnel data: enabled" "tunnel data enabled"
-require_startup_evidence "carrier=ktp_tcp" "ktp tcp carrier"
+require_startup_evidence "carrier=${CARRIER}" "ktp carrier ${CARRIER}"
 require_startup_evidence "crypto=ktp_aead" "ktp tcp crypto"
 require_startup_evidence "auth=ktp_token_preface_${AUTH_VERSION}" "ktp tcp token auth preface"
 require_startup_evidence "ktp relay batch policy:" "ktp relay batch policy"

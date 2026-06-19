@@ -1,6 +1,7 @@
 use std::process::Command;
 
 const STARTUP_POLICY_LOG: &str = "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v1\nktp relay batch policy: adaptive\nadaptive high_sessions=8 elevated_dwell_us=50000 severe_dwell_us=250000 elevated_cap=16 severe_cap=8\n";
+const STARTUP_POLICY_LOG_TLS: &str = "tunnel data: enabled url=ktp+tls://127.0.0.1:25775?server_name=localhost carrier=ktp_tls crypto=ktp_aead auth=ktp_token_preface_v1\nktp relay batch policy: adaptive\nadaptive high_sessions=8 elevated_dwell_us=50000 severe_dwell_us=250000 elevated_cap=16 severe_cap=8\n";
 const STARTUP_TUNNEL_DATA_LOG: &str =
     "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v1\n";
 const STARTUP_POLICY_LOG_V2: &str = "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v2\nktp relay batch policy: adaptive\nadaptive high_sessions=8 elevated_dwell_us=50000 severe_dwell_us=250000 elevated_cap=16 severe_cap=8\n";
@@ -43,6 +44,8 @@ fn ktp_live_canary_script_collects_tunnel_data_diagnostics() {
     assert!(script.contains("carrier=ktp_tcp"));
     assert!(script.contains("crypto=ktp_aead"));
     assert!(script.contains("KTP_LIVE_CANARY_AUTH_VERSION"));
+    assert!(script.contains("KTP_LIVE_CANARY_CARRIER"));
+    assert!(script.contains("carrier=${CARRIER}"));
     assert!(script.contains("auth=ktp_token_preface_${AUTH_VERSION}"));
     assert!(script.contains("missing startup evidence:"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
@@ -112,6 +115,49 @@ fn ktp_live_canary_script_accepts_sample_log_file() {
     assert!(evidence.contains("socket_write_batch_limit_max=16"));
     assert!(evidence.contains("socket_write_batch_limit_min=8"));
     assert!(evidence.contains("socket_write_batch_limit_last=8"));
+}
+
+#[test]
+fn ktp_live_canary_script_accepts_ktp_tls_carrier_when_requested() {
+    if Command::new("bash").arg("--version").output().is_err() {
+        return;
+    }
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "kelicloud-ktp-canary-tls-carrier-test-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+    let log_file = temp_dir.join("agent.log");
+    let evidence_file = temp_dir.join("ktp-live-canary.evidence.md");
+    std::fs::write(
+        &log_file,
+        format!("{STARTUP_POLICY_LOG_TLS}tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=2 socket_read_frames=9 socket_read_max_batch_frames=7 socket_write_batches=3 socket_write_frames=11 socket_write_max_batch_frames=6 socket_write_batch_limit_max=16 socket_write_batch_limit_min=8 socket_write_batch_limit_last=8\n"),
+    )
+    .expect("sample log should be written");
+
+    let output = Command::new("bash")
+        .env("KTP_LIVE_CANARY_CARRIER", "ktp_tls")
+        .args([
+            "scripts/ktp-live-canary-evidence.sh",
+            "--log-file",
+            log_file.to_str().expect("log path should be utf-8"),
+            "--evidence-file",
+            evidence_file
+                .to_str()
+                .expect("evidence path should be utf-8"),
+        ])
+        .output()
+        .expect("ktp live canary script should run");
+
+    assert!(
+        output.status.success(),
+        "script failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence = std::fs::read_to_string(&evidence_file).expect("evidence should be written");
+    assert!(evidence.contains("carrier=ktp_tls"));
 }
 
 #[test]
