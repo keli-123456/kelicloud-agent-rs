@@ -7,11 +7,23 @@ KELICLOUD_BACKEND_PATH="${KELICLOUD_BACKEND_PATH:-}"
 KELICLOUD_PREPARE_FRONTEND="${KELICLOUD_PREPARE_FRONTEND:-true}"
 KOMARI_FRONTEND_REF="${KOMARI_FRONTEND_REF:-main}"
 KELICLOUD_SMOKE_KTP_TCP="${KELICLOUD_SMOKE_KTP_TCP:-false}"
+KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME="${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME:-}"
+if [[ -z "${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME}" ]]; then
+    if [[ "${KELICLOUD_SMOKE_KTP_TCP}" == "true" ]]; then
+        KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME="ktp+tcp"
+    else
+        KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME="websocket"
+    fi
+fi
 
 BACKEND_LISTEN="${BACKEND_LISTEN:-127.0.0.1:25775}"
 BACKEND_ENDPOINT="${BACKEND_ENDPOINT:-http://${BACKEND_LISTEN}}"
 BACKEND_START_TIMEOUT_SECONDS="${BACKEND_START_TIMEOUT_SECONDS:-240}"
 KTP_TCP_LISTEN="${KTP_TCP_LISTEN:-}"
+KTP_TLS_CERT_FILE="${KTP_TLS_CERT_FILE:-}"
+KTP_TLS_KEY_FILE="${KTP_TLS_KEY_FILE:-}"
+KTP_TLS_CA_CERT="${KTP_TLS_CA_CERT:-}"
+KTP_TLS_SERVER_NAME="${KTP_TLS_SERVER_NAME:-localhost}"
 AGENT_TUNNEL_KTP_TCP_AUTH_VERSION="${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION:-v1}"
 KTP_DIAGNOSTICS_TIMEOUT_SECONDS="${KTP_DIAGNOSTICS_TIMEOUT_SECONDS:-45}"
 KTP_LIVE_CANARY_MIN_LINES="${KTP_LIVE_CANARY_MIN_LINES:-1}"
@@ -161,7 +173,31 @@ require_tunnel_echo_profile() {
 }
 
 ktp_tcp_smoke_enabled() {
-    [[ "${KELICLOUD_SMOKE_KTP_TCP}" == "true" ]]
+    [[ "${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME}" == "ktp+tcp" || "${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME}" == "ktp+tls" ]]
+}
+
+ktp_plain_tcp_smoke_enabled() {
+    [[ "${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME}" == "ktp+tcp" ]]
+}
+
+ktp_tls_smoke_enabled() {
+    [[ "${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME}" == "ktp+tls" ]]
+}
+
+ktp_backend_bool() {
+    if "$@"; then
+        printf 'true'
+    else
+        printf 'false'
+    fi
+}
+
+ktp_agent_tunnel_address() {
+    if ktp_tls_smoke_enabled; then
+        printf 'ktp+tls://%s?server_name=%s' "${KTP_TCP_LISTEN}" "${KTP_TLS_SERVER_NAME}"
+    else
+        printf '%s' "${KTP_TCP_LISTEN}"
+    fi
 }
 
 json_value() {
@@ -267,13 +303,70 @@ sock.close()'
 }
 
 configure_ktp_tcp_smoke() {
+    case "${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME}" in
+        websocket | ktp+tcp | ktp+tls)
+            ;;
+        *)
+            die "KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME must be websocket, ktp+tcp, or ktp+tls"
+            ;;
+    esac
     if ! ktp_tcp_smoke_enabled; then
         return
     fi
     if [[ -z "${KTP_TCP_LISTEN}" ]]; then
         KTP_TCP_LISTEN="127.0.0.1:$(pick_free_tcp_port)"
     fi
-    log "KTP TCP tunnel data smoke enabled at ${KTP_TCP_LISTEN}"
+    if ktp_tls_smoke_enabled; then
+        configure_ktp_tls_certificates
+        log "KTP TLS tunnel data smoke enabled at ${KTP_TCP_LISTEN} server_name=${KTP_TLS_SERVER_NAME}"
+    else
+        log "KTP TCP tunnel data smoke enabled at ${KTP_TCP_LISTEN}"
+    fi
+}
+
+configure_ktp_tls_certificates() {
+    require_command openssl
+
+    local tls_dir="${WORK_DIR}/ktp-tls"
+    mkdir -p "${tls_dir}"
+
+    KTP_TLS_CA_CERT="${KTP_TLS_CA_CERT:-${tls_dir}/ktp-ca.pem}"
+    KTP_TLS_CERT_FILE="${KTP_TLS_CERT_FILE:-${tls_dir}/ktp-server.pem}"
+    KTP_TLS_KEY_FILE="${KTP_TLS_KEY_FILE:-${tls_dir}/ktp-server.key}"
+
+    if [[ -s "${KTP_TLS_CA_CERT}" && -s "${KTP_TLS_CERT_FILE}" && -s "${KTP_TLS_KEY_FILE}" ]]; then
+        return
+    fi
+
+    local ca_key="${tls_dir}/ktp-ca.key"
+    local csr_file="${tls_dir}/ktp-server.csr"
+    local ext_file="${tls_dir}/ktp-server.ext"
+    local serial_file="${tls_dir}/ktp-ca.srl"
+
+    cat >"${ext_file}" <<EOF
+subjectAltName=DNS:${KTP_TLS_SERVER_NAME},IP:127.0.0.1
+extendedKeyUsage=serverAuth
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+EOF
+
+    openssl genrsa -out "${ca_key}" 2048 >/dev/null 2>&1
+    openssl req -x509 -new -nodes -key "${ca_key}" -sha256 -days 1 \
+        -subj "/CN=kelicloud ktp smoke ca" \
+        -out "${KTP_TLS_CA_CERT}" >/dev/null 2>&1
+    openssl genrsa -out "${KTP_TLS_KEY_FILE}" 2048 >/dev/null 2>&1
+    openssl req -new -key "${KTP_TLS_KEY_FILE}" \
+        -subj "/CN=${KTP_TLS_SERVER_NAME}" \
+        -out "${csr_file}" >/dev/null 2>&1
+    rm -f "${serial_file}"
+    openssl x509 -req -in "${csr_file}" \
+        -CA "${KTP_TLS_CA_CERT}" \
+        -CAkey "${ca_key}" \
+        -CAcreateserial \
+        -out "${KTP_TLS_CERT_FILE}" \
+        -days 1 \
+        -sha256 \
+        -extfile "${ext_file}" >/dev/null 2>&1
 }
 
 wait_for_http() {
@@ -415,6 +508,9 @@ prepare_backend() {
 start_backend() {
     BACKEND_LOG="${SMOKE_LOG_DIR}/backend.log"
     log "Starting backend at ${BACKEND_ENDPOINT}"
+    local ktp_tcp_enabled ktp_tls_enabled
+    ktp_tcp_enabled="$(ktp_backend_bool ktp_plain_tcp_smoke_enabled)"
+    ktp_tls_enabled="$(ktp_backend_bool ktp_tls_smoke_enabled)"
     (
         cd "${BACKEND_DIR}"
         env \
@@ -426,9 +522,13 @@ start_backend() {
             KOMARI_DB_USER="${KOMARI_DB_USER}" \
             KOMARI_DB_PASS="${KOMARI_DB_PASS}" \
             KOMARI_DB_NAME="${KOMARI_DB_NAME}" \
-            KOMARI_TUNNEL_KTP_TCP_ENABLED="${KELICLOUD_SMOKE_KTP_TCP}" \
+            KOMARI_TUNNEL_KTP_TCP_ENABLED="${ktp_tcp_enabled}" \
             KOMARI_TUNNEL_KTP_TCP_LISTEN="${KTP_TCP_LISTEN}" \
-            KOMARI_TUNNEL_KTP_TCP_ADDRESS="${KTP_TCP_LISTEN}" \
+            KOMARI_TUNNEL_KTP_TCP_ADDRESS="$(ktp_agent_tunnel_address)" \
+            KOMARI_TUNNEL_KTP_TLS_ENABLED="${ktp_tls_enabled}" \
+            KOMARI_TUNNEL_KTP_TLS_LISTEN="${KTP_TCP_LISTEN}" \
+            KOMARI_TUNNEL_KTP_TLS_CERT_FILE="${KTP_TLS_CERT_FILE}" \
+            KOMARI_TUNNEL_KTP_TLS_KEY_FILE="${KTP_TLS_KEY_FILE}" \
             KOMARI_SECURITY_HSTS="false" \
             "${WORK_DIR}/kelicloud-backend" server
     ) >"${BACKEND_LOG}" 2>&1 &
@@ -525,8 +625,11 @@ start_agent() {
     AGENT_LOG="${SMOKE_LOG_DIR}/agent.log"
     : >"${AGENT_LOG}"
     if ktp_tcp_smoke_enabled; then
-        tunnel_args+=(--tunnel-ktp-tcp-address "${KTP_TCP_LISTEN}")
+        tunnel_args+=(--tunnel-ktp-tcp-address "$(ktp_agent_tunnel_address)")
         tunnel_args+=(--tunnel-ktp-tcp-auth-version "${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION}")
+        if ktp_tls_smoke_enabled; then
+            tunnel_args+=(--tunnel-ktp-tls-ca-cert "${KTP_TLS_CA_CERT}")
+        fi
     fi
 
     log "Building agent and smoke helpers"
@@ -578,8 +681,11 @@ restart_agent_after_token_recovery() {
     connected_count="$({ grep -F "smoke: report_websocket_connected" "${AGENT_LOG}" || true; } | wc -l | tr -d '[:space:]')"
     sent_count="$({ grep -F "smoke: report_sent" "${AGENT_LOG}" || true; } | wc -l | tr -d '[:space:]')"
     if ktp_tcp_smoke_enabled; then
-        tunnel_args+=(--tunnel-ktp-tcp-address "${KTP_TCP_LISTEN}")
+        tunnel_args+=(--tunnel-ktp-tcp-address "$(ktp_agent_tunnel_address)")
         tunnel_args+=(--tunnel-ktp-tcp-auth-version "${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION}")
+        if ktp_tls_smoke_enabled; then
+            tunnel_args+=(--tunnel-ktp-tls-ca-cert "${KTP_TLS_CA_CERT}")
+        fi
     fi
 
     stop_agent_process

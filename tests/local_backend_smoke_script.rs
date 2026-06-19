@@ -99,13 +99,26 @@ fn local_backend_smoke_script_can_run_tunnel_relay_over_ktp_tcp() {
 
     assert!(script.contains("KELICLOUD_SMOKE_KTP_TCP"));
     assert!(script.contains("KELICLOUD_SMOKE_KTP_TCP:-false"));
+    assert!(script.contains("KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME"));
+    assert!(script.contains("ktp+tls"));
     assert!(script.contains("KTP_TCP_LISTEN"));
+    assert!(script.contains("KTP_TLS_CA_CERT"));
+    assert!(script.contains("KTP_TLS_CERT_FILE"));
+    assert!(script.contains("KTP_TLS_KEY_FILE"));
+    assert!(script.contains("KTP_TLS_SERVER_NAME"));
+    assert!(script.contains("configure_ktp_tls_certificates"));
+    assert!(script.contains("openssl req -x509"));
     assert!(script.contains("KOMARI_TUNNEL_KTP_TCP_ENABLED"));
     assert!(script.contains("KOMARI_TUNNEL_KTP_TCP_LISTEN"));
     assert!(script.contains("KOMARI_TUNNEL_KTP_TCP_ADDRESS"));
+    assert!(script.contains("KOMARI_TUNNEL_KTP_TLS_ENABLED"));
+    assert!(script.contains("KOMARI_TUNNEL_KTP_TLS_LISTEN"));
+    assert!(script.contains("KOMARI_TUNNEL_KTP_TLS_CERT_FILE"));
+    assert!(script.contains("KOMARI_TUNNEL_KTP_TLS_KEY_FILE"));
     assert!(script.contains("AGENT_TUNNEL_KTP_TCP_AUTH_VERSION"));
     assert!(script.contains("KTP_LIVE_CANARY_AUTH_VERSION"));
     assert!(script.contains("--tunnel-ktp-tcp-address"));
+    assert!(script.contains("--tunnel-ktp-tls-ca-cert"));
     assert!(script.contains("ktp-live-canary-evidence.sh"));
     assert!(script.contains("ktp-live-canary.evidence.md"));
     assert!(script.contains("smoke: ktp_live_canary_evidence="));

@@ -137,6 +137,65 @@ fn config_reads_ktp_tcp_tunnel_data_address_from_environment_and_cli() {
 }
 
 #[test]
+fn config_reads_ktp_tls_ca_cert_from_cli_env_and_file() {
+    let from_cli = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--tunnel-ktp-tls-ca-cert",
+            "/tmp/kelicloud-ktp-ca.pem",
+        ],
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(from_cli.tunnel_ktp_tls_ca_cert, "/tmp/kelicloud-ktp-ca.pem");
+
+    let from_env = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_TUNNEL_KTP_TLS_CA_CERT" => Some("/etc/kelicloud/ktp-ca.pem".to_string()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(from_env.tunnel_ktp_tls_ca_cert, "/etc/kelicloud/ktp-ca.pem");
+
+    let path = std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-ktp-tls-ca-cert-{}.json",
+        std::process::id()
+    ));
+    fs::write(
+        &path,
+        r#"{
+            "endpoint": "https://file.example.com",
+            "token": "file-token",
+            "tunnel_ktp_tls_ca_cert": "/var/lib/kelicloud/ktp-ca.pem"
+        }"#,
+    )
+    .unwrap();
+    let from_file = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--config",
+            path.to_str().unwrap(),
+        ],
+        |_| None,
+    )
+    .unwrap();
+    fs::remove_file(path).unwrap();
+    assert_eq!(
+        from_file.tunnel_ktp_tls_ca_cert,
+        "/var/lib/kelicloud/ktp-ca.pem"
+    );
+}
+
+#[test]
 fn config_reads_ktp_tcp_auth_version_from_cli_env_and_file() {
     let from_cli = AgentConfig::from_args_and_env(
         [

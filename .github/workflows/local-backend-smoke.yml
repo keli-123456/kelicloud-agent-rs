@@ -27,13 +27,14 @@ jobs:
   linux:
     name: Linux Control Plane (${{ matrix.data_plane }})
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
           - data_plane: websocket
             ktp_tcp: "false"
+            tunnel_data_scheme: websocket
             tunnel_echo_rounds: "1"
             tunnel_echo_clients: "1"
             tunnel_echo_profile: fixed
@@ -42,6 +43,16 @@ jobs:
             ktp_min_max_write_batch_frames: "1"
           - data_plane: ktp_tcp
             ktp_tcp: "true"
+            tunnel_data_scheme: ktp+tcp
+            tunnel_echo_rounds: "8"
+            tunnel_echo_clients: "4"
+            tunnel_echo_profile: rdp-like
+            tunnel_echo_payload_bytes: "8192"
+            ktp_min_max_batch_frames: "2"
+            ktp_min_max_write_batch_frames: "2"
+          - data_plane: ktp_tls
+            ktp_tcp: "true"
+            tunnel_data_scheme: ktp+tls
             tunnel_echo_rounds: "8"
             tunnel_echo_clients: "4"
             tunnel_echo_profile: rdp-like
@@ -50,6 +61,7 @@ jobs:
             ktp_min_max_write_batch_frames: "2"
     env:
       KELICLOUD_SMOKE_KTP_TCP: ${{ matrix.ktp_tcp }}
+      KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME: ${{ matrix.tunnel_data_scheme }}
       KELICLOUD_TUNNEL_ECHO_ROUNDS: ${{ matrix.tunnel_echo_rounds }}
       KELICLOUD_TUNNEL_ECHO_CLIENTS: ${{ matrix.tunnel_echo_clients }}
       KELICLOUD_TUNNEL_ECHO_PROFILE: ${{ matrix.tunnel_echo_profile }}
@@ -166,10 +178,10 @@ jobs:
 
           printf 'carrier\tktp_tcp\tktp_crypto\tstatus\tlog_dir\tsummary_file\tktp_evidence_file\ttunnel_evidence_file\ttunnel_profile\ttunnel_clients\ttunnel_rounds\ttunnel_total_payload_bytes\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\n' >"${summary}"
 
-          for carrier in websocket ktp_tcp; do
+          for carrier in websocket ktp_tcp ktp_tls; do
             artifact="carrier-matrix-artifacts/kelicloud-agent-rs-local-backend-smoke-${carrier}"
             ktp_tcp="false"
-            if [[ "${carrier}" == "ktp_tcp" ]]; then
+            if [[ "${carrier}" == "ktp_tcp" || "${carrier}" == "ktp_tls" ]]; then
               ktp_tcp="true"
             fi
 

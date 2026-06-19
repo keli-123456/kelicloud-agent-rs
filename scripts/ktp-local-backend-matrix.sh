@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-KELICLOUD_LOCAL_BACKEND_MATRIX_CARRIERS="${KELICLOUD_LOCAL_BACKEND_MATRIX_CARRIERS:-websocket ktp_tcp}"
+KELICLOUD_LOCAL_BACKEND_MATRIX_CARRIERS="${KELICLOUD_LOCAL_BACKEND_MATRIX_CARRIERS:-websocket ktp_tcp ktp_tls}"
 KELICLOUD_LOCAL_BACKEND_MATRIX_LOG_DIR="${KELICLOUD_LOCAL_BACKEND_MATRIX_LOG_DIR:-smoke-logs/local-backend-matrix}"
 KELICLOUD_LOCAL_BACKEND_MATRIX_WORK_DIR="${KELICLOUD_LOCAL_BACKEND_MATRIX_WORK_DIR:-}"
 KELICLOUD_LOCAL_BACKEND_MATRIX_DRY_RUN="${KELICLOUD_LOCAL_BACKEND_MATRIX_DRY_RUN:-0}"
@@ -33,12 +33,34 @@ carrier_ktp_enabled() {
         ktp_tcp)
             KELICLOUD_SMOKE_KTP_TCP=true
             ;;
+        ktp_tls)
+            KELICLOUD_SMOKE_KTP_TCP=true
+            ;;
         *)
             echo "unknown carrier: ${carrier}" >&2
             return 2
             ;;
     esac
     printf '%s' "${KELICLOUD_SMOKE_KTP_TCP}"
+}
+
+carrier_tunnel_data_scheme() {
+    local carrier="$1"
+    case "${carrier}" in
+        websocket)
+            printf 'websocket'
+            ;;
+        ktp_tcp)
+            printf 'ktp+tcp'
+            ;;
+        ktp_tls)
+            printf 'ktp+tls'
+            ;;
+        *)
+            echo "unknown carrier: ${carrier}" >&2
+            return 2
+            ;;
+    esac
 }
 
 init_matrix_paths() {
@@ -96,21 +118,35 @@ write_summary_row() {
 
 run_carrier() {
     local carrier="$1"
-    local ktp_enabled log_dir work_dir smoke_status status
+    local ktp_enabled tunnel_data_scheme log_dir work_dir tls_ca_cert tls_cert_file tls_key_file smoke_status status
 
     ktp_enabled="$(carrier_ktp_enabled "${carrier}")"
+    tunnel_data_scheme="$(carrier_tunnel_data_scheme "${carrier}")"
     log_dir="${MATRIX_LOG_ROOT}/${carrier}"
     work_dir=""
     if [[ -n "${MATRIX_WORK_ROOT}" ]]; then
         work_dir="${MATRIX_WORK_ROOT}/${carrier}"
     fi
+    tls_ca_cert=""
+    tls_cert_file=""
+    tls_key_file=""
+    if [[ "${carrier}" == "ktp_tls" ]]; then
+        local tls_dir="${work_dir:-${log_dir}}"
+        tls_ca_cert="${tls_dir}/ktp-ca.pem"
+        tls_cert_file="${tls_dir}/ktp-server.pem"
+        tls_key_file="${tls_dir}/ktp-server.key"
+    fi
 
     echo "== local backend smoke carrier=${carrier} =="
     if [[ "${KELICLOUD_LOCAL_BACKEND_MATRIX_DRY_RUN}" == "1" ]]; then
-        printf 'dry_run: carrier=%s KELICLOUD_SMOKE_KTP_TCP=%s SMOKE_LOG_DIR=%s' \
-            "${carrier}" "${ktp_enabled}" "${log_dir}"
+        printf 'dry_run: carrier=%s KELICLOUD_SMOKE_KTP_TCP=%s KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME=%s SMOKE_LOG_DIR=%s' \
+            "${carrier}" "${ktp_enabled}" "${tunnel_data_scheme}" "${log_dir}"
         if [[ -n "${work_dir}" ]]; then
             printf ' SMOKE_WORK_DIR=%s' "${work_dir}"
+        fi
+        if [[ -n "${tls_ca_cert}" ]]; then
+            printf ' KTP_TLS_CA_CERT=%s KTP_TLS_CERT_FILE=%s KTP_TLS_KEY_FILE=%s' \
+                "${tls_ca_cert}" "${tls_cert_file}" "${tls_key_file}"
         fi
         printf ' bash %s\n' "${SMOKE_SCRIPT_REL}"
         return 0
@@ -123,9 +159,15 @@ run_carrier() {
 
     (
         export KELICLOUD_SMOKE_KTP_TCP="${ktp_enabled}"
+        export KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME="${tunnel_data_scheme}"
         export SMOKE_LOG_DIR="${log_dir}"
         if [[ -n "${work_dir}" ]]; then
             export SMOKE_WORK_DIR="${work_dir}"
+        fi
+        if [[ -n "${tls_ca_cert}" ]]; then
+            export KTP_TLS_CA_CERT="${tls_ca_cert}"
+            export KTP_TLS_CERT_FILE="${tls_cert_file}"
+            export KTP_TLS_KEY_FILE="${tls_key_file}"
         fi
         bash "${SMOKE_SCRIPT}"
     ) || smoke_status=$?

@@ -19,6 +19,7 @@ pub struct AgentConfig {
     pub tunnel_control_enabled: bool,
     pub tunnel_data_enabled: bool,
     pub tunnel_ktp_tcp_address: String,
+    pub tunnel_ktp_tls_ca_cert: String,
     pub tunnel_ktp_tcp_auth_version: KtpTcpAuthVersion,
     pub tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy,
     pub tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning,
@@ -100,6 +101,8 @@ impl AgentConfig {
         let mut tunnel_data_enabled = false;
         let mut tunnel_ktp_tcp_address =
             clean_optional(env_lookup("AGENT_TUNNEL_KTP_TCP_ADDRESS")).unwrap_or_default();
+        let mut tunnel_ktp_tls_ca_cert =
+            clean_optional(env_lookup("AGENT_TUNNEL_KTP_TLS_CA_CERT")).unwrap_or_default();
         let mut tunnel_ktp_tcp_auth_version = KtpTcpAuthVersion::V1;
         let mut tunnel_ktp_relay_batch_policy = TunnelRelayBatchPolicy::Fixed;
         let mut tunnel_ktp_relay_batch_policy_explicit = false;
@@ -182,6 +185,9 @@ impl AgentConfig {
                 }
                 "--tunnel-ktp-tcp-address" | "--ktp-tcp-address" => {
                     tunnel_ktp_tcp_address = next_value(&mut iter, "--tunnel-ktp-tcp-address")?;
+                }
+                "--tunnel-ktp-tls-ca-cert" | "--ktp-tls-ca-cert" => {
+                    tunnel_ktp_tls_ca_cert = next_value(&mut iter, "--tunnel-ktp-tls-ca-cert")?;
                 }
                 "--tunnel-ktp-tcp-auth-version" | "--ktp-tcp-auth-version" => {
                     tunnel_ktp_tcp_auth_version = parse_ktp_tcp_auth_version(
@@ -419,6 +425,18 @@ impl AgentConfig {
                         clean_required(&arg["--ktp-tcp-address=".len()..], "--ktp-tcp-address")?
                             .unwrap();
                 }
+                _ if arg.starts_with("--tunnel-ktp-tls-ca-cert=") => {
+                    tunnel_ktp_tls_ca_cert = clean_required(
+                        &arg["--tunnel-ktp-tls-ca-cert=".len()..],
+                        "--tunnel-ktp-tls-ca-cert",
+                    )?
+                    .unwrap();
+                }
+                _ if arg.starts_with("--ktp-tls-ca-cert=") => {
+                    tunnel_ktp_tls_ca_cert =
+                        clean_required(&arg["--ktp-tls-ca-cert=".len()..], "--ktp-tls-ca-cert")?
+                            .unwrap();
+                }
                 _ if arg.starts_with("--tunnel-ktp-tcp-auth-version=") => {
                     tunnel_ktp_tcp_auth_version = parse_ktp_tcp_auth_version(
                         "--tunnel-ktp-tcp-auth-version",
@@ -530,6 +548,11 @@ impl AgentConfig {
             "AGENT_TUNNEL_KTP_TCP_ADDRESS",
             &mut tunnel_ktp_tcp_address,
         );
+        apply_string_env(
+            &env_lookup,
+            "AGENT_TUNNEL_KTP_TLS_CA_CERT",
+            &mut tunnel_ktp_tls_ca_cert,
+        );
         apply_ktp_tcp_auth_version_env(&env_lookup, &mut tunnel_ktp_tcp_auth_version)?;
         tunnel_ktp_relay_batch_policy_explicit |=
             apply_tunnel_relay_batch_policy_env(&env_lookup, &mut tunnel_ktp_relay_batch_policy)?;
@@ -612,6 +635,9 @@ impl AgentConfig {
             }
             if let Some(value) = file_config.tunnel_ktp_tcp_address {
                 tunnel_ktp_tcp_address = clean_config_string(value);
+            }
+            if let Some(value) = file_config.tunnel_ktp_tls_ca_cert {
+                tunnel_ktp_tls_ca_cert = clean_config_string(value);
             }
             if let Some(value) = file_config.tunnel_ktp_tcp_auth_version {
                 tunnel_ktp_tcp_auth_version =
@@ -720,6 +746,7 @@ impl AgentConfig {
             tunnel_control_enabled,
             tunnel_data_enabled,
             tunnel_ktp_tcp_address,
+            tunnel_ktp_tls_ca_cert,
             tunnel_ktp_tcp_auth_version,
             tunnel_ktp_relay_batch_policy,
             tunnel_ktp_relay_batch_tuning,
@@ -763,6 +790,7 @@ struct FileConfig {
     tunnel_control_enabled: Option<bool>,
     tunnel_data_enabled: Option<bool>,
     tunnel_ktp_tcp_address: Option<String>,
+    tunnel_ktp_tls_ca_cert: Option<String>,
     tunnel_ktp_tcp_auth_version: Option<String>,
     tunnel_ktp_relay_batch_policy: Option<String>,
     tunnel_ktp_relay_adaptive_high_sessions: Option<usize>,

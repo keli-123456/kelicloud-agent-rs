@@ -242,6 +242,7 @@ fn auto_config() -> AgentConfig {
         tunnel_control_enabled: true,
         tunnel_data_enabled: false,
         tunnel_ktp_tcp_address: String::new(),
+        tunnel_ktp_tls_ca_cert: String::new(),
         tunnel_ktp_tcp_auth_version: kelicloud_agent_rs::tunnel_data::KtpTcpAuthVersion::V1,
         tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
         tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning::default(),

@@ -8,9 +8,12 @@ fn ktp_local_backend_matrix_script_declares_carrier_matrix_contract() {
         .expect("local backend carrier matrix script should be readable");
 
     assert!(script.contains("KELICLOUD_LOCAL_BACKEND_MATRIX_CARRIERS"));
-    assert!(script.contains("websocket ktp_tcp"));
+    assert!(script.contains("websocket ktp_tcp ktp_tls"));
     assert!(script.contains("KELICLOUD_SMOKE_KTP_TCP=false"));
     assert!(script.contains("KELICLOUD_SMOKE_KTP_TCP=true"));
+    assert!(script.contains("carrier_tunnel_data_scheme"));
+    assert!(script.contains("ktp+tls"));
+    assert!(script.contains("KTP_TLS_CA_CERT="));
     assert!(script.contains("SMOKE_LOG_DIR="));
     assert!(script.contains("SMOKE_WORK_DIR="));
     assert!(script.contains("scripts/smoke-local-backend.sh"));
@@ -51,7 +54,7 @@ fn ktp_local_backend_matrix_script_has_valid_bash_syntax_when_bash_is_available(
 }
 
 #[test]
-fn ktp_local_backend_matrix_script_dry_run_expands_websocket_and_ktp_tcp() {
+fn ktp_local_backend_matrix_script_dry_run_expands_websocket_ktp_tcp_and_ktp_tls() {
     let Some(bash) = find_bash() else {
         eprintln!("bash not available; skipping dry-run check");
         return;
@@ -61,7 +64,7 @@ fn ktp_local_backend_matrix_script_dry_run_expands_websocket_and_ktp_tcp() {
         .env("KELICLOUD_LOCAL_BACKEND_MATRIX_DRY_RUN", "1")
         .env(
             "KELICLOUD_LOCAL_BACKEND_MATRIX_CARRIERS",
-            "websocket ktp_tcp",
+            "websocket ktp_tcp ktp_tls",
         )
         .env(
             "KELICLOUD_LOCAL_BACKEND_MATRIX_LOG_DIR",
@@ -82,15 +85,22 @@ fn ktp_local_backend_matrix_script_dry_run_expands_websocket_and_ktp_tcp() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.matches("dry_run:").count(), 2);
+    assert_eq!(stdout.matches("dry_run:").count(), 3);
     assert!(stdout.contains("carrier=websocket"));
     assert!(stdout.contains("KELICLOUD_SMOKE_KTP_TCP=false"));
+    assert!(stdout.contains("KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME=websocket"));
     assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/kelicloud-matrix-logs/websocket"));
     assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/kelicloud-matrix-work/websocket"));
     assert!(stdout.contains("carrier=ktp_tcp"));
     assert!(stdout.contains("KELICLOUD_SMOKE_KTP_TCP=true"));
+    assert!(stdout.contains("KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME=ktp+tcp"));
     assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/kelicloud-matrix-logs/ktp_tcp"));
     assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/kelicloud-matrix-work/ktp_tcp"));
+    assert!(stdout.contains("carrier=ktp_tls"));
+    assert!(stdout.contains("KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME=ktp+tls"));
+    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/kelicloud-matrix-logs/ktp_tls"));
+    assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/kelicloud-matrix-work/ktp_tls"));
+    assert!(stdout.contains("KTP_TLS_CA_CERT=/tmp/kelicloud-matrix-work/ktp_tls/ktp-ca.pem"));
 }
 
 #[test]
@@ -138,7 +148,7 @@ fn ktp_local_backend_matrix_script_writes_summary_with_fake_smoke_on_linux() {
     let output = Command::new(bash)
         .env(
             "KELICLOUD_LOCAL_BACKEND_MATRIX_CARRIERS",
-            "websocket ktp_tcp",
+            "websocket ktp_tcp ktp_tls",
         )
         .env("KELICLOUD_LOCAL_BACKEND_MATRIX_LOG_DIR", &log_dir)
         .env("KELICLOUD_LOCAL_BACKEND_MATRIX_WORK_DIR", &work_dir)
@@ -169,6 +179,12 @@ fn ktp_local_backend_matrix_script_writes_summary_with_fake_smoke_on_linux() {
         log_dir.join("ktp_tcp").display(),
         log_dir.join("ktp_tcp").display()
     )));
+    assert!(summary.contains(&format!(
+        "ktp_tls\ttrue\tktp_aead\tpass\t{}\t{}/agent.summary.md\t{}/ktp-live-canary.evidence.md",
+        log_dir.join("ktp_tls").display(),
+        log_dir.join("ktp_tls").display(),
+        log_dir.join("ktp_tls").display()
+    )));
 }
 
 fn script_path() -> PathBuf {
@@ -191,7 +207,7 @@ set -euo pipefail
 mkdir -p "${SMOKE_LOG_DIR}"
 printf '# fake summary\ncarrier=%s\n' "${KELICLOUD_SMOKE_KTP_TCP}" >"${SMOKE_LOG_DIR}/agent.summary.md"
 if [[ "${KELICLOUD_SMOKE_KTP_TCP}" == "true" ]]; then
-    printf '# fake ktp evidence\ncarrier=ktp_tcp crypto=ktp_aead\n' >"${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md"
+    printf '# fake ktp evidence\ncarrier=%s crypto=ktp_aead\n' "${KELICLOUD_SMOKE_TUNNEL_DATA_SCHEME:-ktp+tcp}" >"${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md"
 fi
 "#
 }

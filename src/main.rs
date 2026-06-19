@@ -28,7 +28,7 @@ use kelicloud_agent_rs::tunnel_control::{
     TungsteniteTunnelControlTransport, TUNNEL_DATA_TRANSPORT_KTP_TCP,
 };
 use kelicloud_agent_rs::tunnel_data::{
-    run_tunnel_data_session_with_ready_source_and_runtime,
+    ktp_tls_client_config_from_ca_pem_file, run_tunnel_data_session_with_ready_source_and_runtime,
     run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter,
     tunnel_data_diagnostics_line, tunnel_data_reconnect_delay_after_attempt,
     tunnel_data_startup_line, tunnel_data_startup_line_with_ktp_auth_version,
@@ -208,6 +208,7 @@ fn main() {
         let tunnel_data_endpoint = config.endpoint.clone();
         let tunnel_data_custom_dns = config.custom_dns.clone();
         let tunnel_ktp_tcp_address = config.tunnel_ktp_tcp_address.clone();
+        let tunnel_ktp_tls_ca_cert = config.tunnel_ktp_tls_ca_cert.clone();
         let tunnel_ktp_tcp_auth_version = config.tunnel_ktp_tcp_auth_version;
         let tunnel_data_agent_version = env!("CARGO_PKG_VERSION").to_string();
         let tunnel_data_shared_token = shared_token.clone();
@@ -247,21 +248,47 @@ fn main() {
                                     &tunnel_data_shared_token.get(),
                                     tunnel_ktp_tcp_auth_version,
                                 );
-                            let result =
-                                run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
-                                    &url,
-                                    &[],
-                                    "",
-                                    &tunnel_data_agent_version,
-                                    &ktp_ready_source,
-                                    &mut transport,
-                                    &mut tunnel_runtime,
-                                    &tunnel_data_diagnostics,
-                                    std::time::Duration::from_secs(30),
-                                    |diagnostics| {
-                                        eprintln!("{}", tunnel_data_diagnostics_line(diagnostics));
-                                    },
-                                );
+                            let custom_ca_result = if tunnel_ktp_tls_ca_cert.trim().is_empty() {
+                                Ok(None)
+                            } else {
+                                ktp_tls_client_config_from_ca_pem_file(&tunnel_ktp_tls_ca_cert)
+                                    .map(Some)
+                            };
+                            let result = match custom_ca_result {
+                                Ok(Some(tls_config)) => {
+                                    transport = transport.with_tls_client_config(tls_config);
+                                    run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
+                                        &url,
+                                        &[],
+                                        "",
+                                        &tunnel_data_agent_version,
+                                        &ktp_ready_source,
+                                        &mut transport,
+                                        &mut tunnel_runtime,
+                                        &tunnel_data_diagnostics,
+                                        std::time::Duration::from_secs(30),
+                                        |diagnostics| {
+                                            eprintln!("{}", tunnel_data_diagnostics_line(diagnostics));
+                                        },
+                                    )
+                                }
+                                Ok(None) =>
+                                    run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
+                                        &url,
+                                        &[],
+                                        "",
+                                        &tunnel_data_agent_version,
+                                        &ktp_ready_source,
+                                        &mut transport,
+                                        &mut tunnel_runtime,
+                                        &tunnel_data_diagnostics,
+                                        std::time::Duration::from_secs(30),
+                                        |diagnostics| {
+                                            eprintln!("{}", tunnel_data_diagnostics_line(diagnostics));
+                                        },
+                                    ),
+                                Err(error) => Err(error),
+                            };
                             let diagnostics = tunnel_data_diagnostics.snapshot();
                             if diagnostics.has_activity() {
                                 eprintln!("{}", tunnel_data_diagnostics_line(&diagnostics));

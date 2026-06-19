@@ -19,7 +19,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio::runtime::Runtime;
 use tokio::time::timeout;
-use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
 use tungstenite::client::IntoClientRequest;
@@ -983,6 +983,34 @@ fn default_ktp_tls_client_config() -> Arc<ClientConfig> {
             .with_root_certificates(roots)
             .with_no_client_auth(),
     )
+}
+
+pub fn ktp_tls_client_config_from_ca_pem_file(path: &str) -> Result<ClientConfig, TransportError> {
+    let pem = std::fs::read(path)
+        .map_err(|error| ktp_tcp_request_failed("ktp_tls_ca_cert_read_failed", error))?;
+    ktp_tls_client_config_from_ca_pem(&pem)
+}
+
+pub fn ktp_tls_client_config_from_ca_pem(pem: &[u8]) -> Result<ClientConfig, TransportError> {
+    let mut roots = RootCertStore::empty();
+    let mut cert_count = 0usize;
+    for cert in CertificateDer::pem_slice_iter(pem) {
+        let cert =
+            cert.map_err(|error| ktp_tcp_request_failed("ktp_tls_ca_cert_parse_failed", error))?;
+        roots
+            .add(cert)
+            .map_err(|error| ktp_tcp_request_failed("ktp_tls_ca_cert_invalid", error))?;
+        cert_count += 1;
+    }
+    if cert_count == 0 {
+        return Err(ktp_tcp_request_failed(
+            "ktp_tls_ca_cert_empty",
+            "no PEM certificates found",
+        ));
+    }
+    Ok(ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth())
 }
 
 enum KtpEncryptedTunnelDataStream {
