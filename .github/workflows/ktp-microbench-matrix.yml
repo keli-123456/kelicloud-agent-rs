@@ -10,12 +10,19 @@ on:
       - src/ktp_transport.rs
       - src/bin/ktp-codec-bench.rs
       - src/bin/ktp-tunnel-bench.rs
+      - src/bin/ktp-e2e-bench.rs
+      - src/bin/ktp-policy-summary.rs
       - src/bin/ktp-carrier-matrix-summary.rs
+      - src/tunnel_async_runtime.rs
       - scripts/ktp-codec-matrix.sh
       - scripts/ktp-carrier-matrix.sh
+      - scripts/ktp-relay-batch-matrix.sh
       - tests/ktp_codec_bench_cli.rs
       - tests/ktp_codec_matrix_script.rs
       - tests/ktp_bench_cli.rs
+      - tests/ktp_e2e_bench_cli.rs
+      - tests/ktp_batch_matrix_script.rs
+      - tests/ktp_policy_summary_cli.rs
       - tests/ktp_carrier_matrix_script.rs
       - tests/ktp_carrier_matrix_summary_cli.rs
   workflow_dispatch:
@@ -28,6 +35,30 @@ on:
         description: Space-separated carrier frame counts to run.
         required: true
         default: "512 4096"
+      runtime_clients:
+        description: Space-separated runtime relay client counts to run.
+        required: true
+        default: "4 8"
+      runtime_batches:
+        description: Space-separated runtime relay batch sizes to run.
+        required: true
+        default: "64"
+      runtime_batch_policies:
+        description: Space-separated runtime relay batch policies to compare.
+        required: true
+        default: "fixed adaptive"
+      runtime_frames:
+        description: Frames per runtime relay benchmark client.
+        required: true
+        default: "64"
+      runtime_payload_bytes:
+        description: Payload byte size for runtime relay benchmark rows.
+        required: true
+        default: "8192"
+      runtime_fail_on_fixed_better:
+        description: Set to 1 to fail if adaptive is clearly worse than fixed.
+        required: true
+        default: "1"
       payload_bytes:
         description: Space-separated payload byte sizes for both matrices.
         required: true
@@ -55,6 +86,14 @@ env:
   KTP_CARRIER_MATRIX_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.carrier_frames || '256' }}
   KTP_CARRIER_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.payload_bytes || '1024' }}
   KTP_CARRIER_MATRIX_CSV: microbench-logs/ktp-carrier-matrix.csv
+  KTP_BATCH_MATRIX_RUNS: ${{ github.event_name == 'workflow_dispatch' && inputs.runs || '1' }}
+  KTP_BATCH_MATRIX_CLIENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_clients || '4' }}
+  KTP_BATCH_MATRIX_BATCHES: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_batches || '64' }}
+  KTP_BATCH_MATRIX_BATCH_POLICIES: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_batch_policies || 'fixed adaptive' }}
+  KTP_BATCH_MATRIX_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_frames || '16' }}
+  KTP_BATCH_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_payload_bytes || '1024' }}
+  KTP_BATCH_MATRIX_CSV: microbench-logs/ktp-relay-batch-matrix.csv
+  KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_fail_on_fixed_better || '1' }}
 
 jobs:
   linux:
@@ -72,7 +111,7 @@ jobs:
           rustup default stable
 
       - name: Build microbench binaries
-        run: cargo build --locked --release --bin ktp-codec-bench --bin ktp-tunnel-bench --bin ktp-carrier-matrix-summary
+        run: cargo build --locked --release --bin ktp-codec-bench --bin ktp-tunnel-bench --bin ktp-e2e-bench --bin ktp-policy-summary --bin ktp-carrier-matrix-summary
 
       - name: Prepare log directory
         run: mkdir -p microbench-logs
@@ -82,6 +121,11 @@ jobs:
 
       - name: Run KTP carrier matrix
         run: bash scripts/ktp-carrier-matrix.sh
+
+      - name: Run KTP runtime relay batch policy matrix
+        run: |
+          set -o pipefail
+          bash scripts/ktp-relay-batch-matrix.sh | tee microbench-logs/ktp-relay-batch-matrix.report.txt
 
       - name: Gate KTP carrier matrix
         run: |
@@ -105,7 +149,15 @@ jobs:
               echo '```'
               echo
             fi
-            for csv in ktp-codec-matrix.csv ktp-carrier-matrix.csv; do
+            if [[ -f "microbench-logs/ktp-relay-batch-matrix.report.txt" ]]; then
+              echo "### ktp-relay-batch-matrix.report.txt"
+              echo
+              echo '```text'
+              cat "microbench-logs/ktp-relay-batch-matrix.report.txt"
+              echo '```'
+              echo
+            fi
+            for csv in ktp-codec-matrix.csv ktp-carrier-matrix.csv ktp-relay-batch-matrix.csv; do
               path="microbench-logs/${csv}"
               echo "### ${csv}"
               echo

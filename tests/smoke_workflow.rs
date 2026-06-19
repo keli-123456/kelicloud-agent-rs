@@ -298,7 +298,7 @@ fn ktp_tunnel_matrix_workflow_path() -> PathBuf {
 }
 
 #[test]
-fn ktp_microbench_matrix_workflow_publishes_codec_and_carrier_csv() {
+fn ktp_microbench_matrix_workflow_publishes_codec_carrier_and_runtime_policy_csv() {
     let workflow = std::fs::read_to_string(ktp_microbench_matrix_workflow_path()).unwrap();
 
     assert!(workflow.contains("name: KTP Microbench Matrix"));
@@ -311,23 +311,40 @@ fn ktp_microbench_matrix_workflow_publishes_codec_and_carrier_csv() {
     assert!(workflow.contains("- src/ktp_transport.rs"));
     assert!(workflow.contains("- src/bin/ktp-codec-bench.rs"));
     assert!(workflow.contains("- src/bin/ktp-tunnel-bench.rs"));
+    assert!(workflow.contains("- src/bin/ktp-e2e-bench.rs"));
+    assert!(workflow.contains("- src/bin/ktp-policy-summary.rs"));
     assert!(workflow.contains("- src/bin/ktp-carrier-matrix-summary.rs"));
+    assert!(workflow.contains("- src/tunnel_async_runtime.rs"));
     assert!(workflow.contains("- scripts/ktp-codec-matrix.sh"));
     assert!(workflow.contains("- scripts/ktp-carrier-matrix.sh"));
+    assert!(workflow.contains("- scripts/ktp-relay-batch-matrix.sh"));
     assert!(workflow.contains("- tests/ktp_carrier_matrix_summary_cli.rs"));
+    assert!(workflow.contains("- tests/ktp_batch_matrix_script.rs"));
+    assert!(workflow.contains("- tests/ktp_policy_summary_cli.rs"));
     assert!(workflow.contains("workflow_dispatch:"));
     assert!(workflow.contains("codec_frames:"));
     assert!(workflow.contains("carrier_frames:"));
+    assert!(workflow.contains("runtime_clients:"));
+    assert!(workflow.contains("runtime_batches:"));
     assert!(workflow.contains("payload_bytes:"));
     assert!(workflow.contains("runs:"));
     assert!(workflow.contains("KTP_CODEC_MATRIX_CSV: microbench-logs/ktp-codec-matrix.csv"));
     assert!(workflow.contains("KTP_CARRIER_MATRIX_CSV: microbench-logs/ktp-carrier-matrix.csv"));
+    assert!(workflow.contains("KTP_BATCH_MATRIX_CSV: microbench-logs/ktp-relay-batch-matrix.csv"));
     assert!(workflow.contains(
-        "cargo build --locked --release --bin ktp-codec-bench --bin ktp-tunnel-bench --bin ktp-carrier-matrix-summary"
+        "KTP_BATCH_MATRIX_BATCH_POLICIES: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_batch_policies || 'fixed adaptive' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_fail_on_fixed_better || '1' }}"
+    ));
+    assert!(workflow.contains(
+        "cargo build --locked --release --bin ktp-codec-bench --bin ktp-tunnel-bench --bin ktp-e2e-bench --bin ktp-policy-summary --bin ktp-carrier-matrix-summary"
     ));
     assert!(workflow.contains("bash scripts/ktp-codec-matrix.sh"));
     assert!(workflow.contains("bash scripts/ktp-carrier-matrix.sh"));
+    assert!(workflow.contains("bash scripts/ktp-relay-batch-matrix.sh"));
     assert!(workflow.contains("ktp-carrier-matrix-summary"));
+    assert!(workflow.contains("ktp-relay-batch-matrix.report.txt"));
     assert!(workflow.contains("--require-ktp-aead"));
     assert!(workflow.contains("--require-batch-reuse"));
     assert!(workflow.contains("--require-positive-throughput"));
@@ -335,6 +352,7 @@ fn ktp_microbench_matrix_workflow_publishes_codec_and_carrier_csv() {
     assert!(workflow.contains("KTP microbench matrix summary"));
     assert!(workflow.contains("ktp-codec-matrix.csv"));
     assert!(workflow.contains("ktp-carrier-matrix.csv"));
+    assert!(workflow.contains("ktp-relay-batch-matrix.csv"));
     assert!(workflow.contains("GITHUB_STEP_SUMMARY"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(workflow.contains("kelicloud-agent-rs-ktp-microbench-matrix"));

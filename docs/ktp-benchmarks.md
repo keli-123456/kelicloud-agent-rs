@@ -232,6 +232,14 @@ The summary reports the minimum median throughput across all rows per direction,
 so a later high-throughput shape cannot hide a broken earlier shape. Use the
 workflow's manual inputs to raise `runs`, frame counts, or payload sizes when
 collecting fuller release evidence.
+The same workflow also runs a light runtime relay batch policy matrix and
+uploads `ktp-relay-batch-matrix.csv` plus `ktp-relay-batch-matrix.report.txt`.
+Push self-checks keep this path small and conservative, while manual dispatch
+can raise `runtime_clients`, `runtime_batches`, `runtime_frames`,
+`runtime_payload_bytes`, and `runs` for fuller fixed/adaptive scheduling
+evidence. The runtime policy matrix enables `KTP_BATCH_MATRIX_FAIL_ON_FIXED_BETTER`
+by default so an adaptive candidate cannot silently become clearly worse than
+the fixed rollback policy on throughput, RTT p95, and client p95 spread.
 
 Local backend KTP smoke:
 
