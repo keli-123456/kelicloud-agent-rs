@@ -36,6 +36,7 @@ ROLLBACK_SERVICE_STATUS="not checked"
 INSTALL_RESULT="not run"
 RESTART_RESULT="not run"
 PIN_OR_UPGRADE_RESULT="not run"
+INSTALLED_VERSION_RESULT="not checked"
 KTP_LIVE_CANARY_RESULT="skipped: KTP TCP not enabled"
 UNINSTALL_RESULT="not run"
 ROLLBACK_RESULT="not run"
@@ -370,6 +371,25 @@ verify_service() {
     print_config_preview
 }
 
+verify_installed_version() {
+    stage "verify_installed_version"
+    local version_output actual_version
+    version_output="$("$BIN_PATH" --version 2>&1)" ||
+        die "installed binary version command failed: ${version_output}"
+    actual_version="$(printf '%s\n' "$version_output" | awk 'NF {print $NF}' | tail -n 1)"
+    if [[ -n "$INSTALL_VERSION" ]]; then
+        local expected_version
+        expected_version="${INSTALL_VERSION#v}"
+        if [[ "$actual_version" != "$expected_version" ]]; then
+            die "installed version mismatch: expected ${expected_version}, got ${actual_version:-unknown}; output: ${version_output}"
+        fi
+        INSTALLED_VERSION_RESULT="passed: ${version_output}"
+    else
+        INSTALLED_VERSION_RESULT="observed: ${version_output}"
+    fi
+    log "Installed binary version: ${version_output}"
+}
+
 restart_agent() {
     stage "restart_agent"
     KTP_EVIDENCE_SINCE_EPOCH="$(date -u '+%s' 2>/dev/null || true)"
@@ -391,6 +411,7 @@ pin_or_upgrade_agent() {
     installer_args
     bash "$INSTALLER_PATH" "${INSTALL_ARGS[@]}"
     wait_for_service
+    verify_installed_version
     PIN_OR_UPGRADE_RESULT="passed: ${INSTALL_VERSION}"
     log "Pinned or upgraded to requested release: ${INSTALL_VERSION}"
 }
@@ -556,6 +577,7 @@ write_evidence() {
         printf '%s\n' "- Rust install result: \`${INSTALL_RESULT}\`"
         printf '%s\n' "- Rust service status: \`${RUST_SERVICE_STATUS}\`"
         printf '%s\n' "- Rust restart result: \`${RESTART_RESULT}\`"
+        printf '%s\n' "- Installed binary version result: \`${INSTALLED_VERSION_RESULT}\`"
         printf '%s\n' "- Explicit install-version pin/upgrade result: \`${PIN_OR_UPGRADE_RESULT}\`"
         printf '%s\n' "- Rust uninstall result: \`${UNINSTALL_RESULT}\`"
         printf '%s\n' "- Go-agent rollback command result: \`${ROLLBACK_RESULT}\`"
@@ -611,6 +633,7 @@ main() {
     download_installer
     install_agent
     verify_service
+    verify_installed_version
     restart_agent
     pin_or_upgrade_agent
     observe_panel_window

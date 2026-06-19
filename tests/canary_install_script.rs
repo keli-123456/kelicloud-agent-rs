@@ -20,6 +20,7 @@ fn canary_install_script_documents_real_host_stages() {
         "verify_service",
         "restart_agent",
         "pin_or_upgrade_agent",
+        "verify_installed_version",
         "uninstall_agent",
         "run_rollback_command",
         "verify_rollback_service",
@@ -43,6 +44,10 @@ fn canary_install_script_documents_real_host_stages() {
         "KTP TCP auth version",
         "KTP relay batch policy",
         "kelicloud-agent-rs-linux",
+        "\"$BIN_PATH\" --version",
+        "expected_version=\"${INSTALL_VERSION#v}\"",
+        "installed version mismatch",
+        "- Installed binary version result:",
     ] {
         assert!(script.contains(expected), "missing {expected}");
     }

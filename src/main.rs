@@ -39,6 +39,11 @@ use kelicloud_agent_rs::tunnel_runtime::{SharedTunnelRuleState, TunnelTcpRuntime
 use std::sync::Arc;
 
 fn main() {
+    if version_requested() {
+        println!("kelicloud-agent-rs {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     if !kelicloud_agent_rs::linux_proc::linux_supported() {
         eprintln!("kelicloud-agent-rs supports Linux only");
         std::process::exit(2);
@@ -358,4 +363,10 @@ fn main() {
     }
 
     println!("agent loop: completed");
+}
+
+fn version_requested() -> bool {
+    std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
 }
