@@ -87,6 +87,16 @@ fn local_backend_smoke_script_records_tunnel_echo_latency_evidence() {
 }
 
 #[test]
+fn local_backend_smoke_script_reads_tunnel_echo_until_expected_length() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+
+    assert!(script.contains("def recv_expected_response(sock, expected_len):"));
+    assert!(script.contains("while len(response) < expected_len:"));
+    assert!(script.contains("response = recv_expected_response(sock, len(expected))"));
+    assert!(!script.contains("data = sock.recv(65536)"));
+}
+
+#[test]
 fn local_backend_smoke_script_prints_agent_logs_before_backend_logs() {
     let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
 

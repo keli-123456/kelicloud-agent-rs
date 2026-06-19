@@ -905,6 +905,15 @@ def percentile(sorted_values, percent):
     index = max(0, math.ceil((percent / 100.0) * len(sorted_values)) - 1)
     return sorted_values[min(index, len(sorted_values) - 1)]
 
+def recv_expected_response(sock, expected_len):
+    response = b""
+    while len(response) < expected_len:
+        chunk = sock.recv(min(65536, expected_len - len(response)))
+        if not chunk:
+            break
+        response += chunk
+    return response
+
 def client_worker(client_id):
     for round in range(1, rounds + 1):
         payload = payload_for_round(client_id, round)
@@ -917,8 +926,8 @@ def client_worker(client_id):
                     sock.settimeout(5)
                     started = time.perf_counter()
                     sock.sendall(payload)
-                    data = sock.recv(65536)
-                    if data == expected:
+                    response = recv_expected_response(sock, len(expected))
+                    if response == expected:
                         with samples_lock:
                             samples.append({
                                 "client": client_id,
@@ -927,7 +936,7 @@ def client_worker(client_id):
                                 "rtt_micros": int((time.perf_counter() - started) * 1_000_000),
                             })
                         break
-                    last_error = f"client {client_id} round {round}: unexpected echo response: {data!r}"
+                    last_error = f"client {client_id} round {round}: unexpected echo response: {response!r}"
             except Exception as exc:
                 last_error = f"client {client_id} round {round}: {exc}"
             time.sleep(1)
