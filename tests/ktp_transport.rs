@@ -3,14 +3,18 @@ use kelicloud_agent_rs::ktp::{
     KTP_VERSION,
 };
 use kelicloud_agent_rs::ktp_transport::{
-    KtpCryptoDirection, KtpCryptoKey, KtpCryptoOpen, KtpCryptoRecordCodec, KtpCryptoSeal,
-    KtpEncryptedStream, KtpEncryptedTcpFrameRelay, KtpEncryptedTcpStream, KtpStreamCodec,
-    KtpStreamCodecError, KtpTcpTransportError,
+    ktp_tls_accept_stream, ktp_tls_connect_stream, KtpCryptoDirection, KtpCryptoKey, KtpCryptoOpen,
+    KtpCryptoRecordCodec, KtpCryptoSeal, KtpEncryptedStream, KtpEncryptedTcpFrameRelay,
+    KtpEncryptedTcpStream, KtpStreamCodec, KtpStreamCodecError, KtpTcpTransportError,
 };
 use std::io::ErrorKind;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
+use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName};
+use tokio_rustls::rustls::{ClientConfig, RootCertStore, ServerConfig};
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 #[test]
 fn stream_codec_decodes_frame_split_across_tcp_chunks() {
@@ -319,6 +323,76 @@ fn encrypted_stream_round_trips_over_generic_duplex_io() {
         let received = server.next_frame().await.expect("receive over duplex");
 
         assert_eq!(received, send);
+    });
+}
+
+#[test]
+fn encrypted_stream_round_trips_over_tls_carrier() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let key = test_crypto_key();
+        let (server_config, client_config) = ktp_tls_test_configs();
+        let acceptor = TlsAcceptor::from(Arc::new(server_config));
+        let connector = TlsConnector::from(Arc::new(client_config));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind TLS listener");
+        let addr = listener.local_addr().expect("TLS listener addr");
+        let server_key = key.clone();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.expect("accept TLS tcp");
+            let mut server = ktp_tls_accept_stream(
+                &acceptor,
+                tcp,
+                server_key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            )
+            .await
+            .expect("accept KTP TLS stream");
+            let request = server.next_frame().await.expect("read TLS KTP request");
+            assert_eq!(request, session_data(6201, b"hello ktp tls"));
+            server
+                .send_frame(&session_data(6202, b"hello ktp tls client"))
+                .await
+                .expect("send TLS KTP response");
+        });
+
+        let tcp = TcpStream::connect(addr)
+            .await
+            .expect("connect TLS client tcp");
+        let domain = ServerName::try_from(KTP_TLS_TEST_DOMAIN)
+            .expect("test TLS domain")
+            .to_owned();
+        let mut client = ktp_tls_connect_stream(
+            &connector,
+            domain,
+            tcp,
+            key,
+            KtpCryptoDirection::ClientToRelay,
+            KtpCryptoDirection::RelayToClient,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        )
+        .await
+        .expect("connect KTP TLS stream");
+        client
+            .send_frame(&session_data(6201, b"hello ktp tls"))
+            .await
+            .expect("send TLS KTP request");
+        assert_eq!(
+            client.next_frame().await.expect("read TLS KTP response"),
+            session_data(6202, b"hello ktp tls client")
+        );
+        server.await.expect("TLS server task");
     });
 }
 
@@ -787,6 +861,74 @@ fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
 fn test_crypto_key() -> KtpCryptoKey {
     KtpCryptoKey::from_bytes([7u8; 32])
 }
+
+const KTP_TLS_TEST_DOMAIN: &str = "foobar.com";
+
+fn ktp_tls_test_configs() -> (ServerConfig, ClientConfig) {
+    let cert = CertificateDer::pem_slice_iter(KTP_TLS_TEST_CHAIN.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("test TLS cert chain should parse");
+    let key = PrivateKeyDer::from_pem_slice(KTP_TLS_TEST_KEY.as_bytes())
+        .expect("test TLS private key should parse");
+    let server = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert, key)
+        .expect("test TLS server config");
+
+    let mut roots = RootCertStore::empty();
+    for root in CertificateDer::pem_slice_iter(KTP_TLS_TEST_ROOT.as_bytes()) {
+        roots
+            .add(root.expect("test TLS root should parse"))
+            .expect("test TLS root should be accepted");
+    }
+    let client = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+
+    (server, client)
+}
+
+const KTP_TLS_TEST_ROOT: &str = r#"-----BEGIN CERTIFICATE-----
+MIIBgDCCASegAwIBAgIUPHDUu9WL36yvTmFeNFZVe/qhClcwCgYIKoZIzj0EAwIw
+HTEbMBkGA1UEAwwSUnVzdGxzIFJvYnVzdCBSb290MCAXDTc1MDEwMTAwMDAwMFoY
+DzQwOTYwMTAxMDAwMDAwWjAdMRswGQYDVQQDDBJSdXN0bHMgUm9idXN0IFJvb3Qw
+WTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASW/VkDFs5iGDQvH8jaXYT4jMx66jo+
+5CWKyMt4OlTDdBfKfnmQ9LYeK/PsYfJ8wVizuSlPzXi9je8SnyYejGP3o0MwQTAP
+BgNVHQ8BAf8EBQMDB4QAMB0GA1UdDgQWBBRqY/oMENJbNo7y39iL6GW3tDs0rzAP
+BgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIEUbrmSUjANju9nNpFop
+PAl9Wh8tBxI5IY+BPh466+aUAiA1/9+prypt6s3Doo0GDsnoFGJi1UBivUg1qdik
+cy4eNw==
+-----END CERTIFICATE-----"#;
+
+const KTP_TLS_TEST_CHAIN: &str = r#"-----BEGIN CERTIFICATE-----
+MIIBszCCAVmgAwIBAgIUUg3keFcU1xXWK8BNVb1KynPulV8wCgYIKoZIzj0EAwIw
+JjEkMCIGA1UEAwwbUnVzdGxzIFJvYnVzdCBSb290IC0gUnVuZyAyMCAXDTc1MDEw
+MTAwMDAwMFoYDzQwOTYwMTAxMDAwMDAwWjAhMR8wHQYDVQQDDBZyY2dlbiBzZWxm
+IHNpZ25lZCBjZXJ0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEud6w4gtZ0xbw
+J3E69SSMy5TZfdIifl9L5ZY+hgEe4UiUsBWS32f6Y5NR5Jo8FO1f6o13b3+FvVHR
+EHCGdvppL6NoMGYwFQYDVR0RBA4wDIIKZm9vYmFyLmNvbTAdBgNVHSUEFjAUBggr
+BgEFBQcDAQYIKwYBBQUHAwIwHQYDVR0OBBYEFELvxbj5tD75n4pYFvJyr+c8qVEi
+MA8GA1UdEwEB/wQFMAMBAQAwCgYIKoZIzj0EAwIDSAAwRQIhALxSSdUsrRFnwNMu
+/doBqI8i8u5HdohVAheFTDwObkOMAiASSjULUtkWSD15u/7Sr01Wm9J1MpqW1pob
+BVqU3CNRlA==
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+MIIBiTCCATCgAwIBAgIUHWiVYIvMMWoZEFYvSz46COf2FqowCgYIKoZIzj0EAwIw
+HTEbMBkGA1UEAwwSUnVzdGxzIFJvYnVzdCBSb290MCAXDTc1MDEwMTAwMDAwMFoY
+DzQwOTYwMTAxMDAwMDAwWjAmMSQwIgYDVQQDDBtSdXN0bHMgUm9idXN0IFJvb3Qg
+LSBSdW5nIDIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAATAOCcBD7dXjmAZ3te5
+D47cCJ9ec93PWv7BKYIL826CJsKfXQOGrBTthLm77hXLhHu6uv8E5QXNLZpfowLQ
+Do1ao0MwQTAPBgNVHQ8BAf8EBQMDB4QAMB0GA1UdDgQWBBRdza76r11Ok9vRmlg6
+Nn/wL/N+jTAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIFmZrXeK
+hnfkahocvkhhNT3cDv1LWf6WBoFaCiBwZXFPAiARaKRiSCMG7PCHmSqFe82TBVmL
+odHGogAVax1Dh/aYAA==
+-----END CERTIFICATE-----"#;
+
+const KTP_TLS_TEST_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgTbAQpfjAT46fgF4B
+mP15n37woNG5ZNJmwcqsred/7tmhRANCAAS53rDiC1nTFvAncTr1JIzLlNl90iJ+
+X0vllj6GAR7hSJSwFZLfZ/pjk1HkmjwU7V/qjXdvf4W9UdEQcIZ2+mkv
+-----END PRIVATE KEY-----"#;
 
 fn relay_side_stream(stream: TcpStream, key: KtpCryptoKey) -> KtpEncryptedTcpStream {
     KtpEncryptedTcpStream::from_stream(

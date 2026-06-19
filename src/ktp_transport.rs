@@ -7,6 +7,8 @@ use std::error::Error;
 use std::fmt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 pub const KTP_CRYPTO_MAGIC: &[u8; 4] = b"KTE1";
 pub const KTP_CRYPTO_VERSION: u8 = 1;
@@ -583,6 +585,8 @@ impl fmt::Display for KtpTcpTransportError {
 impl Error for KtpTcpTransportError {}
 
 pub type KtpEncryptedTcpStream = KtpEncryptedStream<TcpStream>;
+pub type KtpEncryptedTlsClientStream<S> = KtpEncryptedStream<tokio_rustls::client::TlsStream<S>>;
+pub type KtpEncryptedTlsServerStream<S> = KtpEncryptedStream<tokio_rustls::server::TlsStream<S>>;
 
 pub struct KtpEncryptedStream<S> {
     stream: S,
@@ -732,6 +736,59 @@ where
                 .map_err(KtpTcpTransportError::Crypto)?;
         }
     }
+}
+
+pub async fn ktp_tls_connect_stream<S>(
+    connector: &TlsConnector,
+    domain: ServerName<'static>,
+    stream: S,
+    key: KtpCryptoKey,
+    seal_direction: KtpCryptoDirection,
+    open_direction: KtpCryptoDirection,
+    max_payload_len: usize,
+    max_buffer_len: usize,
+) -> Result<KtpEncryptedTlsClientStream<S>, KtpTcpTransportError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let stream = connector
+        .connect(domain, stream)
+        .await
+        .map_err(KtpTcpTransportError::Io)?;
+    Ok(KtpEncryptedStream::from_io(
+        stream,
+        key,
+        seal_direction,
+        open_direction,
+        max_payload_len,
+        max_buffer_len,
+    ))
+}
+
+pub async fn ktp_tls_accept_stream<S>(
+    acceptor: &TlsAcceptor,
+    stream: S,
+    key: KtpCryptoKey,
+    seal_direction: KtpCryptoDirection,
+    open_direction: KtpCryptoDirection,
+    max_payload_len: usize,
+    max_buffer_len: usize,
+) -> Result<KtpEncryptedTlsServerStream<S>, KtpTcpTransportError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let stream = acceptor
+        .accept(stream)
+        .await
+        .map_err(KtpTcpTransportError::Io)?;
+    Ok(KtpEncryptedStream::from_io(
+        stream,
+        key,
+        seal_direction,
+        open_direction,
+        max_payload_len,
+        max_buffer_len,
+    ))
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
