@@ -20,6 +20,9 @@ cargo test --test tunnel_runtime tcp_runtime_two_agent_relay_simulation_forwards
 echo "== async tunnel runtime performance gate =="
 cargo test --test tunnel_async_runtime async_runtime_handles_100_concurrent_loopback_sessions -- --nocapture
 
+echo "== async tunnel runtime close-boundary gate =="
+cargo test --test tunnel_async_runtime async_runtime_close_session_drops_queued_outbound_frames_for_that_session -- --nocapture
+
 echo "== encrypted ktp tcp carrier performance gate =="
 cargo test --test ktp_transport encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips -- --nocapture
 cargo test --test ktp_transport encrypted_tcp_frame_relay_handles_100_bidirectional_rounds -- --nocapture

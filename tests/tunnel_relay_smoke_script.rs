@@ -8,6 +8,8 @@ fn tunnel_relay_smoke_script_runs_runtime_relay_test() {
     assert!(script.contains("cargo test --test tunnel_runtime"));
     assert!(script.contains("cargo test --test tunnel_async_runtime"));
     assert!(script.contains("async_runtime_handles_100_concurrent_loopback_sessions"));
+    assert!(script
+        .contains("async_runtime_close_session_drops_queued_outbound_frames_for_that_session"));
     assert!(script.contains("cargo test --test ktp_transport"));
     assert!(script.contains("encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips"));
     assert!(script.contains("encrypted_tcp_frame_relay_handles_100_bidirectional_rounds"));
