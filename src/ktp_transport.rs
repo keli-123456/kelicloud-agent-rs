@@ -224,6 +224,13 @@ impl KtpCryptoError {
         }
     }
 
+    fn sequence_exhausted() -> Self {
+        Self {
+            code: "sequence_exhausted",
+            message: "KTP crypto sequence exhausted before nonce reuse".to_string(),
+        }
+    }
+
     fn sequence_mismatch(expected: u64, actual: u64) -> Self {
         Self {
             code: "sequence_mismatch",
@@ -277,6 +284,9 @@ impl KtpCryptoSeal {
         record: &mut Vec<u8>,
     ) -> Result<(), KtpCryptoError> {
         let sequence = self.sequence;
+        if sequence == u64::MAX {
+            return Err(KtpCryptoError::sequence_exhausted());
+        }
         let record_start = record.len();
         let payload_start = record_start + KTP_CRYPTO_HEADER_LEN;
         record.resize(payload_start, 0);
@@ -317,6 +327,9 @@ impl KtpCryptoOpen {
     }
 
     pub fn open_record(&mut self, record: &[u8]) -> Result<KtpFrame, KtpCryptoError> {
+        if self.next_sequence == u64::MAX {
+            return Err(KtpCryptoError::sequence_exhausted());
+        }
         let header = parse_crypto_header(record, self.direction)?;
         if header.sequence != self.next_sequence {
             return Err(KtpCryptoError::sequence_mismatch(
@@ -854,6 +867,39 @@ mod tests {
         assert_eq!(codec.next_frame().expect("decode second"), Some(second));
         assert_eq!(codec.read_offset, 0);
         assert_eq!(codec.buffer.len(), 0);
+    }
+
+    #[test]
+    fn crypto_seal_rejects_sequence_exhaustion_before_nonce_reuse() {
+        let key = KtpCryptoKey::from_bytes([7u8; 32]);
+        let frame = session_data(21, b"after a very long tunnel session");
+        let mut seal = KtpCryptoSeal::new(key, KtpCryptoDirection::ClientToRelay);
+        seal.sequence = u64::MAX;
+        let mut record = b"already buffered".to_vec();
+
+        let error = seal
+            .append_sealed_frame(&frame, &mut record)
+            .expect_err("sequence exhaustion must stop sealing before nonce reuse");
+
+        assert_eq!(error.code(), "sequence_exhausted");
+        assert_eq!(record, b"already buffered");
+    }
+
+    #[test]
+    fn crypto_open_rejects_sequence_exhaustion_before_nonce_reuse() {
+        let key = KtpCryptoKey::from_bytes([8u8; 32]);
+        let mut open =
+            KtpCryptoOpen::new(key, KtpCryptoDirection::ClientToRelay, KTP_MAX_PAYLOAD_LEN);
+        open.next_sequence = u64::MAX;
+        let mut record =
+            crypto_header_bytes(KtpCryptoDirection::ClientToRelay, u64::MAX, 16).to_vec();
+        record.extend_from_slice(&[0u8; 16]);
+
+        let error = open
+            .open_record(&record)
+            .expect_err("sequence exhaustion must stop opening before nonce reuse");
+
+        assert_eq!(error.code(), "sequence_exhausted");
     }
 
     fn session_data(session_id: u64, payload: &[u8]) -> KtpFrame {
