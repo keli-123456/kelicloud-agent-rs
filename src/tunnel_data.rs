@@ -8,6 +8,7 @@ use crate::tunnel_control::SelectedTunnelRule;
 use crate::tunnel_runtime::{NoopTunnelSessionRuntime, TunnelSessionRuntime};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
+use std::fmt;
 use std::io::ErrorKind;
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -734,10 +735,10 @@ impl TunnelDataTransport for KtpEncryptedTcpTunnelDataTransport {
             .enable_io()
             .enable_time()
             .build()
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            .map_err(|error| ktp_tcp_request_failed("ktp_tcp_runtime_init_failed", error))?;
         let stream = runtime
             .block_on(TokioTcpStream::connect(&address))
-            .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            .map_err(|error| ktp_tcp_request_failed("ktp_tcp_connect_failed", error))?;
         let (stream, key) = match &self.auth {
             KtpEncryptedTcpTunnelDataAuth::StaticKey(key) => (stream, key.clone()),
             KtpEncryptedTcpTunnelDataAuth::Token(token) => {
@@ -746,7 +747,7 @@ impl TunnelDataTransport for KtpEncryptedTcpTunnelDataTransport {
                 let mut stream = stream;
                 runtime
                     .block_on(stream.write_all(&preface))
-                    .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+                    .map_err(|error| ktp_tcp_request_failed("ktp_tcp_auth_write_failed", error))?;
                 (stream, derive_ktp_tcp_crypto_key(token, nonce))
             }
         };
@@ -907,8 +908,12 @@ fn parse_ktp_tcp_tunnel_data_address(url: &str) -> Result<String, TransportError
 fn ktp_tcp_transport_error_to_transport(error: KtpTcpTransportError) -> TransportError {
     match error {
         KtpTcpTransportError::Closed => TransportError::SocketClosed,
-        other => TransportError::RequestFailed(format!("ktp tcp tunnel data error: {other}")),
+        other => ktp_tcp_request_failed(other.code(), other),
     }
+}
+
+fn ktp_tcp_request_failed(code: &'static str, detail: impl fmt::Display) -> TransportError {
+    TransportError::RequestFailed(format!("ktp_tcp_error code={code} detail={detail}"))
 }
 
 #[derive(Debug, Default, Clone)]

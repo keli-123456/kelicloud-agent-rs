@@ -539,6 +539,23 @@ pub enum KtpTcpTransportError {
     Closed,
 }
 
+impl KtpTcpTransportError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "ktp_tcp_io_error",
+            Self::Crypto(error) => match error.code() {
+                "auth_failed" => "ktp_crypto_auth_failed",
+                "malformed_record" => "ktp_crypto_malformed_record",
+                "buffer_limit" => "ktp_crypto_buffer_limit",
+                "ktp_error" => "ktp_crypto_ktp_error",
+                "sequence_mismatch" => "ktp_crypto_sequence_mismatch",
+                _ => "ktp_crypto_error",
+            },
+            Self::Closed => "ktp_tcp_closed",
+        }
+    }
+}
+
 impl fmt::Display for KtpTcpTransportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

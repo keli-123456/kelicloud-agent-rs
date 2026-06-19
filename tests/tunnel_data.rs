@@ -1120,6 +1120,27 @@ fn ktp_tcp_tunnel_data_optional_read_timeout_does_not_require_outer_tokio_runtim
 }
 
 #[test]
+fn ktp_tcp_tunnel_data_connect_failure_has_stable_code() {
+    let port = closed_tcp_port();
+    let mut transport = KtpEncryptedTcpTunnelDataTransport::new(test_tunnel_data_crypto_key());
+
+    let error = match transport.connect_tunnel_data(&format!("ktp+tcp://127.0.0.1:{port}"), &[]) {
+        Ok(_) => panic!("closed KTP TCP relay port should fail"),
+        Err(error) => error,
+    };
+
+    match error {
+        TransportError::RequestFailed(message) => {
+            assert!(
+                message.contains("code=ktp_tcp_connect_failed"),
+                "message should contain stable KTP connect code: {message}"
+            );
+        }
+        other => panic!("expected request failed error, got {other:?}"),
+    }
+}
+
+#[test]
 fn tunnel_data_ready_state_derives_rule_ids_from_selected_roles() {
     let rules = vec![
         selected_rule(7, "ingress"),
@@ -2189,6 +2210,11 @@ fn assert_request_failed_too_long(error: TransportError) {
         }
         other => panic!("expected request failed error, got {other:?}"),
     }
+}
+
+fn closed_tcp_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind free TCP port");
+    listener.local_addr().expect("read free TCP port").port()
 }
 
 struct PayloadCursor<'a> {

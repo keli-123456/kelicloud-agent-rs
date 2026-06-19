@@ -5,7 +5,9 @@ use kelicloud_agent_rs::ktp::{
 use kelicloud_agent_rs::ktp_transport::{
     KtpCryptoDirection, KtpCryptoKey, KtpCryptoOpen, KtpCryptoRecordCodec, KtpCryptoSeal,
     KtpEncryptedTcpFrameRelay, KtpEncryptedTcpStream, KtpStreamCodec, KtpStreamCodecError,
+    KtpTcpTransportError,
 };
+use std::io::ErrorKind;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
@@ -180,6 +182,32 @@ fn crypto_record_rejects_out_of_order_sequence() {
     assert_eq!(err.code(), "sequence_mismatch");
 
     assert_eq!(open.open_record(&first_record).expect("open first"), first);
+}
+
+#[test]
+fn ktp_tcp_transport_error_exposes_stable_codes() {
+    let io_error = KtpTcpTransportError::Io(std::io::Error::new(
+        ErrorKind::ConnectionReset,
+        "connection reset",
+    ));
+    assert_eq!(io_error.code(), "ktp_tcp_io_error");
+    assert_eq!(KtpTcpTransportError::Closed.code(), "ktp_tcp_closed");
+
+    let key = test_crypto_key();
+    let frame = session_data(715, b"secret");
+    let mut seal = KtpCryptoSeal::new(key.clone(), KtpCryptoDirection::ClientToRelay);
+    let mut open = KtpCryptoOpen::new(key, KtpCryptoDirection::ClientToRelay, KTP_MAX_PAYLOAD_LEN);
+    let mut record = seal.seal_frame(&frame).expect("seal frame");
+    let last = record.len() - 1;
+    record[last] ^= 0x55;
+    let crypto_error = open
+        .open_record(&record)
+        .expect_err("tampered record should fail auth");
+
+    assert_eq!(
+        KtpTcpTransportError::Crypto(crypto_error).code(),
+        "ktp_crypto_auth_failed"
+    );
 }
 
 #[test]

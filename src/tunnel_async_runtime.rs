@@ -347,7 +347,11 @@ impl AsyncTunnelFrameQueue {
                 return Vec::new();
             };
             if inner.is_empty() && !timeout.is_zero() {
-                let Ok((waited_inner, _)) = self.inner.ready.wait_timeout(inner, timeout) else {
+                let Ok((waited_inner, _)) =
+                    self.inner
+                        .ready
+                        .wait_timeout_while(inner, timeout, |inner| inner.is_empty())
+                else {
                     return Vec::new();
                 };
                 inner = waited_inner;
