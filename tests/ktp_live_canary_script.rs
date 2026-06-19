@@ -434,3 +434,77 @@ fn ktp_live_canary_script_can_require_multi_frame_socket_batch_writes() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn ktp_live_canary_script_can_bind_tunnel_echo_evidence() {
+    let Some(mut command) = bash_command() else {
+        return;
+    };
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "kelicloud-ktp-canary-tunnel-echo-evidence-test-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+    let log_file = temp_dir.join("agent.log");
+    let tunnel_echo_file = temp_dir.join("tunnel-echo.evidence.md");
+    let evidence_file = temp_dir.join("ktp-live-canary.evidence.md");
+    std::fs::write(
+        &log_file,
+        format!("{STARTUP_POLICY_LOG}tunnel data diagnostics: runtime_wait_attempts=3 runtime_wait_hits=2 runtime_wait_elapsed_micros_total=120 runtime_wait_elapsed_micros_max=70 runtime_wait_elapsed_p50_micros=50 runtime_wait_elapsed_p95_micros=100 runtime_wait_elapsed_p99_micros=100 outbound_runtime_frames=9 outbound_queue_dwell_frames=9 outbound_queue_dwell_micros_total=240 outbound_queue_dwell_micros_max=90 outbound_queue_dwell_p50_micros=50 outbound_queue_dwell_p95_micros=100 outbound_queue_dwell_p99_micros=100 recent_outbound_queue_dwell_frames=4 recent_outbound_queue_dwell_micros_total=120 recent_outbound_queue_dwell_micros_max=40 recent_outbound_queue_dwell_p50_micros=25 recent_outbound_queue_dwell_p95_micros=50 recent_outbound_queue_dwell_p99_micros=50 socket_idle_reads=4 socket_idle_empty_reads=1 socket_read_batches=3 socket_read_frames=8 socket_read_max_batch_frames=2 socket_write_batches=4 socket_write_frames=11 socket_write_max_batch_frames=3 socket_write_batch_limit_max=16 socket_write_batch_limit_min=8 socket_write_batch_limit_last=8\n"),
+    )
+    .expect("sample log should be written");
+    std::fs::write(
+        &tunnel_echo_file,
+        "# Tunnel Echo Evidence\n\n- profile: rdp-like\n- rounds: 8\n- clients: 4\n- total_payload_bytes: 39680\n- echo_elapsed_micros: 200000\n- echo_throughput_mib_s: 0.189\n- rtt_micros_p50: 500\n- rtt_micros_p95: 600\n- rtt_micros_p99: 700\n- rtt_micros_max: 800\n- rtt_client_p95_spread_micros: 90\n",
+    )
+    .expect("tunnel echo evidence should be written");
+
+    let output = command
+        .args([
+            "scripts/ktp-live-canary-evidence.sh",
+            "--log-file",
+            log_file.to_str().expect("log path should be utf-8"),
+            "--tunnel-echo-evidence-file",
+            tunnel_echo_file
+                .to_str()
+                .expect("tunnel echo path should be utf-8"),
+            "--evidence-file",
+            evidence_file
+                .to_str()
+                .expect("evidence path should be utf-8"),
+        ])
+        .output()
+        .expect("ktp live canary script should run");
+
+    assert!(
+        output.status.success(),
+        "script failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence = std::fs::read_to_string(&evidence_file).expect("evidence should be written");
+    assert!(evidence.contains("Tunnel Echo Evidence"));
+    assert!(evidence.contains("tunnel-echo.evidence.md"));
+    assert!(evidence.contains("profile: rdp-like"));
+    assert!(evidence.contains("clients: 4"));
+    assert!(evidence.contains("total_payload_bytes: 39680"));
+    assert!(evidence.contains("echo_throughput_mib_s: 0.189"));
+    assert!(evidence.contains("rtt_micros_p95: 600"));
+    assert!(evidence.contains("rtt_client_p95_spread_micros: 90"));
+}
+
+fn bash_command() -> Option<Command> {
+    if Command::new("bash").arg("--version").output().is_ok() {
+        return Some(Command::new("bash"));
+    }
+    for candidate in [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+    ] {
+        if std::path::Path::new(candidate).exists() {
+            return Some(Command::new(candidate));
+        }
+    }
+    None
+}

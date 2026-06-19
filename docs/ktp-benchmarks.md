@@ -163,6 +163,7 @@ Live KTP tunnel diagnostics evidence:
 scripts/ktp-live-canary-evidence.sh \
   --service-name kelicloud-agent-rs \
   --since "30 minutes ago" \
+  --tunnel-echo-evidence-file tunnel-echo.evidence.md \
   --evidence-file ktp-live-canary.evidence.md
 ```
 
@@ -183,6 +184,12 @@ observed, `min` as the lowest pressure-reduced cap, and `last` as the most
 recent cap in the diagnostics window.
 Treat the generated Markdown file as the live-log companion to
 `ktp-e2e-bench --latency` output.
+When a live tunnel echo probe writes `tunnel-echo.evidence.md`, pass it with
+`--tunnel-echo-evidence-file` so the KTP canary evidence is paired with the same
+window's forwarding profile, client count, total payload, echo throughput, and
+RTT percentiles. For the real-host install canary wrapper, set
+`KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE` to that file path before the KTP
+evidence collection step.
 
 KTP TCP auth compatibility:
 
@@ -2106,7 +2113,10 @@ Next evidence to collect:
 
 - Repeat KTA2 on a production live canary after the 2026-06-19 full
   local-backend matrix and continuous `KTP Tunnel Matrix` push self-check, so
-  default-switch evidence includes a real relay observation window.
+  default-switch evidence includes a real relay observation window. Pair that
+  run with `--tunnel-echo-evidence-file` or
+  `KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE` so KTP diagnostics and live
+  forwarding RTT evidence are collected in one artifact.
 - Repeat the 4/8 client release-host matrix after the next relay scheduling
   change and compare it against the `59a0a1d` high-concurrency baseline, with
   `rtt_client_p95_spread_micros` included in the comparison.

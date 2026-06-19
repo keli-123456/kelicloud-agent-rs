@@ -6,6 +6,7 @@ SINCE="30 minutes ago"
 LOG_FILE=""
 EVIDENCE_FILE="ktp-live-canary.evidence.md"
 MIN_LINES=1
+TUNNEL_ECHO_EVIDENCE_FILE=""
 MIN_MAX_BATCH_FRAMES="${KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES:-1}"
 MIN_MAX_WRITE_BATCH_FRAMES="${KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES:-1}"
 AUTH_VERSION="${KTP_LIVE_CANARY_AUTH_VERSION:-v1}"
@@ -23,6 +24,9 @@ Options:
   --log-file PATH           read an existing agent log instead of journalctl
   --evidence-file PATH      Markdown output, default: ktp-live-canary.evidence.md
   --min-lines N             minimum tunnel data diagnostics lines, default: 1
+  --tunnel-echo-evidence-file PATH
+                            include and validate tunnel-echo.evidence.md from
+                            the same canary observation window
   -h, --help                show this help
 
 Environment:
@@ -80,6 +84,11 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || die "--min-lines requires a value"
             MIN_LINES="$2"
             require_positive_integer "--min-lines" "$MIN_LINES"
+            shift 2
+            ;;
+        --tunnel-echo-evidence-file)
+            [[ $# -ge 2 ]] || die "--tunnel-echo-evidence-file requires a value"
+            TUNNEL_ECHO_EVIDENCE_FILE="$2"
             shift 2
             ;;
         -h|--help)
@@ -237,6 +246,92 @@ evidence_metric_value() {
     esac
 }
 
+markdown_field_value() {
+    local file="$1"
+    local field="$2"
+    awk -v field="${field}" '
+        {
+            line = $0
+            sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+            if (index(line, field ":") == 1) {
+                sub("^[^:]*:[[:space:]]*", "", line)
+                print line
+                exit
+            }
+        }
+    ' "$file"
+}
+
+require_markdown_field() {
+    local file="$1"
+    local field="$2"
+    local value
+    value="$(markdown_field_value "$file" "$field")"
+    [[ -n "$value" ]] || die "missing tunnel echo evidence field: ${field}"
+}
+
+require_markdown_positive_integer() {
+    local file="$1"
+    local field="$2"
+    local value
+    value="$(markdown_field_value "$file" "$field")"
+    [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "tunnel echo evidence field ${field} must be a positive integer"
+}
+
+require_markdown_non_negative_integer() {
+    local file="$1"
+    local field="$2"
+    local value
+    value="$(markdown_field_value "$file" "$field")"
+    [[ "$value" =~ ^[0-9]+$ ]] || die "tunnel echo evidence field ${field} must be a non-negative integer"
+}
+
+require_markdown_positive_decimal() {
+    local file="$1"
+    local field="$2"
+    local value
+    value="$(markdown_field_value "$file" "$field")"
+    [[ "$value" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "tunnel echo evidence field ${field} must be numeric"
+    awk -v value="$value" 'BEGIN { exit(value + 0 > 0 ? 0 : 1) }' ||
+        die "tunnel echo evidence field ${field} must be positive"
+}
+
+TUNNEL_ECHO_REQUIRED_FIELDS=(
+    "profile"
+    "rounds"
+    "clients"
+    "total_payload_bytes"
+    "echo_elapsed_micros"
+    "echo_throughput_mib_s"
+    "rtt_micros_p50"
+    "rtt_micros_p95"
+    "rtt_micros_p99"
+    "rtt_micros_max"
+    "rtt_client_p95_spread_micros"
+)
+
+validate_tunnel_echo_evidence() {
+    [[ -n "$TUNNEL_ECHO_EVIDENCE_FILE" ]] || return 0
+    [[ -f "$TUNNEL_ECHO_EVIDENCE_FILE" ]] ||
+        die "tunnel echo evidence file not found: ${TUNNEL_ECHO_EVIDENCE_FILE}"
+    grep -F "# Tunnel Echo Evidence" "$TUNNEL_ECHO_EVIDENCE_FILE" >/dev/null ||
+        die "tunnel echo evidence file is not a Tunnel Echo Evidence report"
+
+    for field in "${TUNNEL_ECHO_REQUIRED_FIELDS[@]}"; do
+        require_markdown_field "$TUNNEL_ECHO_EVIDENCE_FILE" "$field"
+    done
+    require_markdown_positive_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "rounds"
+    require_markdown_positive_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "clients"
+    require_markdown_positive_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "total_payload_bytes"
+    require_markdown_positive_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "echo_elapsed_micros"
+    require_markdown_positive_decimal "$TUNNEL_ECHO_EVIDENCE_FILE" "echo_throughput_mib_s"
+    require_markdown_positive_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "rtt_micros_p50"
+    require_markdown_positive_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "rtt_micros_p95"
+    require_markdown_positive_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "rtt_micros_p99"
+    require_markdown_positive_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "rtt_micros_max"
+    require_markdown_non_negative_integer "$TUNNEL_ECHO_EVIDENCE_FILE" "rtt_client_p95_spread_micros"
+}
+
 for field in "${REQUIRED_FIELDS[@]}"; do
     grep -F "${field}=" "$DIAGNOSTICS_LOG" >/dev/null || die "missing diagnostics field: ${field}"
 done
@@ -255,6 +350,8 @@ max_write_batch_frames="$(max_metric_value "socket_write_max_batch_frames")"
 if (( max_write_batch_frames < MIN_MAX_WRITE_BATCH_FRAMES )); then
     die "expected socket_write_max_batch_frames >= ${MIN_MAX_WRITE_BATCH_FRAMES}, found ${max_write_batch_frames}"
 fi
+
+validate_tunnel_echo_evidence
 
 mkdir -p "$(dirname "$EVIDENCE_FILE")"
 {
@@ -287,6 +384,13 @@ mkdir -p "$(dirname "$EVIDENCE_FILE")"
     printf -- '- `KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES`: `%s`\n' "$MIN_MAX_BATCH_FRAMES"
     printf -- '- `socket_write_max_batch_frames`: `%s`\n' "$max_write_batch_frames"
     printf -- '- `KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES`: `%s`\n' "$MIN_MAX_WRITE_BATCH_FRAMES"
+    if [[ -n "$TUNNEL_ECHO_EVIDENCE_FILE" ]]; then
+        printf '\n## Tunnel Echo Evidence\n\n'
+        printf -- '- Source: `%s`\n' "$TUNNEL_ECHO_EVIDENCE_FILE"
+        for field in "${TUNNEL_ECHO_REQUIRED_FIELDS[@]}"; do
+            printf -- '- %s: %s\n' "$field" "$(markdown_field_value "$TUNNEL_ECHO_EVIDENCE_FILE" "$field")"
+        done
+    fi
     printf '\n## Latest Diagnostics\n\n'
     printf '```text\n'
     tail -n 5 "$DIAGNOSTICS_LOG"

@@ -88,14 +88,17 @@ fn canary_install_script_collects_ktp_live_evidence_when_tunnel_enabled() {
     for expected in [
         "KTP_EVIDENCE_SCRIPT_URL",
         "KTP_LIVE_CANARY_EVIDENCE_FILE",
+        "KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE",
         "download_ktp_evidence_script",
         "collect_ktp_live_canary_evidence",
         "ktp-live-canary-evidence.sh",
         "KTP_LIVE_CANARY_AUTH_VERSION=\"${TUNNEL_KTP_TCP_AUTH_VERSION:-v1}\"",
+        "--tunnel-echo-evidence-file \"$KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE\"",
         "--since \"@${KTP_EVIDENCE_SINCE_EPOCH}\"",
         "if [[ -z \"$TUNNEL_KTP_TCP_ADDRESS\" ]]",
         "smoke: ktp_live_canary_evidence=",
         "- KTP live canary evidence:",
+        "- KTP tunnel echo evidence:",
         "- KTP live canary result:",
     ] {
         assert!(script.contains(expected), "missing {expected}");

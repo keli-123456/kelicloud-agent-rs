@@ -24,6 +24,7 @@ ROLLBACK_SERVICE_NAME="${KELICLOUD_ROLLBACK_SERVICE_NAME:-kelicloud-agent}"
 SKIP_ROLLBACK_SERVICE_CHECK="false"
 EVIDENCE_FILE="${KELICLOUD_CANARY_EVIDENCE_FILE:-}"
 KTP_LIVE_CANARY_EVIDENCE_FILE="${KTP_LIVE_CANARY_EVIDENCE_FILE:-}"
+KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE="${KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE:-}"
 INSTALLER_PATH=""
 KTP_EVIDENCE_SCRIPT_PATH=""
 KTP_EVIDENCE_SINCE_EPOCH=""
@@ -75,6 +76,8 @@ This script verifies the release asset name pattern kelicloud-agent-rs-linux-*,
 the installed systemd service, AGENT_ENDPOINT / AGENT_AUTO_DISCOVERY_KEY config,
 optional KTP tunnel config, restart behavior, optional version pin/upgrade,
 uninstall, and optional rollback.
+Set KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE to include a tunnel-echo.evidence.md
+file in the collected KTP live canary evidence.
 EOF
 }
 
@@ -436,12 +439,17 @@ collect_ktp_live_canary_evidence() {
     mkdir -p "$(dirname "$KTP_LIVE_CANARY_EVIDENCE_FILE")"
 
     download_ktp_evidence_script
+    local ktp_evidence_args=(
+        --service-name "$SERVICE_NAME"
+        --since "@${KTP_EVIDENCE_SINCE_EPOCH}"
+        --evidence-file "$KTP_LIVE_CANARY_EVIDENCE_FILE"
+        --min-lines 1
+    )
+    if [[ -n "$KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE" ]]; then
+        ktp_evidence_args+=(--tunnel-echo-evidence-file "$KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE")
+    fi
     KTP_LIVE_CANARY_AUTH_VERSION="${TUNNEL_KTP_TCP_AUTH_VERSION:-v1}" \
-        bash "$KTP_EVIDENCE_SCRIPT_PATH" \
-            --service-name "$SERVICE_NAME" \
-            --since "@${KTP_EVIDENCE_SINCE_EPOCH}" \
-            --evidence-file "$KTP_LIVE_CANARY_EVIDENCE_FILE" \
-            --min-lines 1
+        bash "$KTP_EVIDENCE_SCRIPT_PATH" "${ktp_evidence_args[@]}"
     KTP_LIVE_CANARY_RESULT="passed"
     log "smoke: ktp_live_canary_evidence=${KTP_LIVE_CANARY_EVIDENCE_FILE}"
 }
@@ -541,6 +549,7 @@ write_evidence() {
         printf '%s\n' "- KTP TCP auth version: \`${TUNNEL_KTP_TCP_AUTH_VERSION:-default}\`"
         printf '%s\n' "- KTP relay batch policy: \`${TUNNEL_KTP_RELAY_BATCH_POLICY:-default}\`"
         printf '%s\n' "- KTP live canary evidence: \`${KTP_LIVE_CANARY_EVIDENCE_FILE:-not collected}\`"
+        printf '%s\n' "- KTP tunnel echo evidence: \`${KTP_LIVE_CANARY_TUNNEL_ECHO_EVIDENCE_FILE:-not provided}\`"
         printf '%s\n' "- KTP live canary result: \`${KTP_LIVE_CANARY_RESULT}\`"
         printf '%s\n' "- Release asset: \`${RELEASE_ASSET:-not checked}\`"
         printf '%s\n' "- Release asset URL: \`${RELEASE_ASSET_URL:-not checked}\`"
