@@ -340,11 +340,13 @@ git push origin v0.1.0
 ```
 
 The release workflow builds static musl binaries with `cross` and uploads assets
-that match the installer download names:
+that match the installer download names, plus a `SHA256SUMS` manifest covering
+the published binaries:
 
 - `kelicloud-agent-rs-linux-amd64`
 - `kelicloud-agent-rs-linux-arm64`
 - `kelicloud-agent-rs-linux-armv7`
+- `SHA256SUMS`
 
 ## Verification
 
@@ -359,5 +361,5 @@ GitHub Actions runs the same checks on Linux for pushes to `main` and pull reque
 ## Next Milestones
 
 1. Run the live smoke test against a real kelicloud backend and record the first compatibility gaps.
-2. Add signed checksum files for release assets.
+2. Add signed release attestations for the checksum manifest and Linux assets.
 3. Expand installer support after systemd deployment is stable.

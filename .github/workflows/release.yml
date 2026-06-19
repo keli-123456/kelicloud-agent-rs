@@ -76,10 +76,13 @@ jobs:
         run: |
           mkdir -p release-assets
           find dist -type f -name 'kelicloud-agent-rs-linux-*' -exec cp {} release-assets/ \;
+          (cd release-assets && sha256sum * > SHA256SUMS && sha256sum -c SHA256SUMS)
           ls -l release-assets
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: |
+            release-assets/kelicloud-agent-rs-linux-*
+            release-assets/SHA256SUMS
           generate_release_notes: true
