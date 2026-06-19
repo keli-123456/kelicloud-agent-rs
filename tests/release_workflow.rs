@@ -19,7 +19,8 @@ fn release_workflow_builds_linux_assets_used_by_installer() {
     assert!(workflow.contains("KTP_SMOKE_POLICY_GATE: \"1\""));
     assert!(workflow.contains("needs: verify"));
     assert!(workflow.contains("cross build --locked --release --target"));
-    assert!(workflow.contains("sha256sum * > SHA256SUMS"));
+    assert!(workflow.contains("sha256sum ./* > SHA256SUMS"));
+    assert!(!workflow.contains("sha256sum * > SHA256SUMS"));
     assert!(workflow.contains("sha256sum -c SHA256SUMS"));
     assert!(workflow.contains("release-assets/SHA256SUMS"));
     assert!(workflow.contains("softprops/action-gh-release@v2"));
