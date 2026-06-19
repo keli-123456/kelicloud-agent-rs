@@ -10,7 +10,11 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS"));
     assert!(script.contains("1 2 4 8"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES"));
+    assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS"));
     assert!(script.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY"));
+    assert!(script.contains("AGENT_TUNNEL_KTP_TCP_AUTH_VERSION"));
+    assert!(script.contains("KTP_LIVE_CANARY_AUTH_VERSION"));
+    assert!(script.contains("ktp_auth_version"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US"));
@@ -160,6 +164,53 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_clients() {
 }
 
 #[test]
+fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_auth_versions() {
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping auth version dry-run check");
+        return;
+    };
+
+    let output = Command::new(bash)
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN", "1")
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS", "v1 v2")
+        .env("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS", "1")
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR",
+            "/tmp/ktp-tunnel-logs",
+        )
+        .env(
+            "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_WORK_DIR",
+            "/tmp/ktp-tunnel-work",
+        )
+        .arg(script_path())
+        .output()
+        .expect("tunnel matrix auth version dry-run should run");
+
+    assert!(
+        output.status.success(),
+        "tunnel matrix auth version dry-run failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("dry_run:").count(), 2);
+    assert!(stdout.contains("relay_batch_policy=fixed ktp_auth_version=v1 clients=1"));
+    assert!(stdout.contains("relay_batch_policy=fixed ktp_auth_version=v2 clients=1"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_TCP_AUTH_VERSION=v1"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_TCP_AUTH_VERSION=v2"));
+    assert!(stdout.contains("KTP_LIVE_CANARY_AUTH_VERSION=v1"));
+    assert!(stdout.contains("KTP_LIVE_CANARY_AUTH_VERSION=v2"));
+    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/fixed/clients-1"));
+    assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/fixed/v2/clients-1"));
+    assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/ktp-tunnel-work/fixed/clients-1"));
+    assert!(stdout.contains("SMOKE_WORK_DIR=/tmp/ktp-tunnel-work/fixed/v2/clients-1"));
+    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_fixed_clients_1"));
+    assert!(stdout.contains("KOMARI_DB_NAME=komari_tunnel_matrix_fixed_v2_clients_1"));
+    assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-fixed-c1"));
+    assert!(stdout.contains("SMOKE_AGENT_HOSTNAME=agent-rs-tunnel-matrix-fixed-v2-c1"));
+}
+
+#[test]
 fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_policies_and_clients() {
     let Some(bash) = find_bash() else {
         eprintln!("bash not available; skipping policy dry-run check");
@@ -189,10 +240,10 @@ fn ktp_local_backend_tunnel_matrix_script_dry_run_expands_policies_and_clients()
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.matches("dry_run:").count(), 4);
-    assert!(stdout.contains("relay_batch_policy=fixed clients=1"));
-    assert!(stdout.contains("relay_batch_policy=fixed clients=4"));
-    assert!(stdout.contains("relay_batch_policy=adaptive clients=1"));
-    assert!(stdout.contains("relay_batch_policy=adaptive clients=4"));
+    assert!(stdout.contains("relay_batch_policy=fixed ktp_auth_version=v1 clients=1"));
+    assert!(stdout.contains("relay_batch_policy=fixed ktp_auth_version=v1 clients=4"));
+    assert!(stdout.contains("relay_batch_policy=adaptive ktp_auth_version=v1 clients=1"));
+    assert!(stdout.contains("relay_batch_policy=adaptive ktp_auth_version=v1 clients=4"));
     assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=fixed"));
     assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=adaptive"));
     assert!(stdout.contains("SMOKE_LOG_DIR=/tmp/ktp-tunnel-logs/fixed/clients-1"));
@@ -302,7 +353,7 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
     );
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert!(summary.contains(
-        "relay_batch_policy\tclients\trelay_adaptive_high_sessions\trelay_adaptive_elevated_dwell_us\trelay_adaptive_severe_dwell_us\trelay_adaptive_elevated_cap\trelay_adaptive_severe_cap\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\techo_elapsed_micros\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last\tbackend_session_limit_count\tbackend_session_not_found_count"
+        "relay_batch_policy\tktp_auth_version\tclients\trelay_adaptive_high_sessions\trelay_adaptive_elevated_dwell_us\trelay_adaptive_severe_dwell_us\trelay_adaptive_elevated_cap\trelay_adaptive_severe_cap\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\techo_elapsed_micros\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last\tbackend_session_limit_count\tbackend_session_not_found_count"
     ));
     assert_summary_row_with_adaptive(
         &summary,
@@ -644,7 +695,7 @@ fn assert_summary_row_with_adaptive(
 ) {
     let row = summary
         .lines()
-        .find(|line| line.starts_with(&format!("{relay_batch_policy}\t{clients}\t")))
+        .find(|line| line.starts_with(&format!("{relay_batch_policy}\tv1\t{clients}\t")))
         .unwrap_or_else(|| {
             panic!(
                 "summary row for policy={relay_batch_policy} clients={clients} should exist:\n{summary}"
@@ -652,14 +703,15 @@ fn assert_summary_row_with_adaptive(
         });
     let columns = row.split('\t').collect::<Vec<_>>();
     assert_eq!(columns[0], relay_batch_policy);
-    assert_eq!(columns[1], clients);
-    assert_eq!(&columns[2..7], expected_adaptive);
+    assert_eq!(columns[1], "v1");
+    assert_eq!(columns[2], clients);
+    assert_eq!(&columns[3..8], expected_adaptive);
     assert!(
-        columns[11].parse::<u64>().is_ok(),
+        columns[12].parse::<u64>().is_ok(),
         "elapsed_millis should be an unsigned integer in row: {row}"
     );
-    assert_eq!(&columns[7..11], &expected_after_elapsed[0..4]);
-    assert_eq!(&columns[12..], &expected_after_elapsed[4..]);
+    assert_eq!(&columns[8..12], &expected_after_elapsed[0..4]);
+    assert_eq!(&columns[13..], &expected_after_elapsed[4..]);
 }
 
 fn fake_smoke_script() -> &'static str {

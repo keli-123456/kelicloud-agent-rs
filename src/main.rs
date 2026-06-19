@@ -31,7 +31,8 @@ use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_session_with_ready_source_and_runtime,
     run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter,
     tunnel_data_diagnostics_line, tunnel_data_reconnect_delay_after_attempt,
-    tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport, SharedTunnelDataDiagnostics,
+    tunnel_data_startup_line, tunnel_data_startup_line_with_ktp_auth_version,
+    KtpEncryptedTcpTunnelDataTransport, SharedTunnelDataDiagnostics,
     TungsteniteTunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::{SharedTunnelRuleState, TunnelTcpRuntime};
@@ -81,10 +82,21 @@ fn main() {
         build_tunnel_data_ws_url(&config.endpoint, &shared_token.get()).ok()
     };
     if let Some(url) = tunnel_data_url.as_deref() {
-        println!(
-            "{}",
-            tunnel_data_startup_line(url, config.tunnel_data_enabled)
-        );
+        if ktp_tcp_enabled {
+            println!(
+                "{}",
+                tunnel_data_startup_line_with_ktp_auth_version(
+                    url,
+                    config.tunnel_data_enabled,
+                    config.tunnel_ktp_tcp_auth_version,
+                )
+            );
+        } else {
+            println!(
+                "{}",
+                tunnel_data_startup_line(url, config.tunnel_data_enabled)
+            );
+        }
     } else if config.tunnel_data_enabled {
         println!("tunnel data: enabled url=invalid");
     } else {

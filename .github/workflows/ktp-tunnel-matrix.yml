@@ -35,6 +35,10 @@ on:
         description: Space-separated relay batch policies to run.
         required: true
         default: "fixed adaptive"
+      auth_versions:
+        description: Space-separated KTP TCP auth versions to run.
+        required: true
+        default: "v1"
       rounds:
         description: Echo rounds per client.
         required: true
@@ -126,6 +130,7 @@ env:
   KOMARI_FRONTEND_REF: main
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.clients || '1 2' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES: ${{ github.event_name == 'workflow_dispatch' && inputs.relay_batch_policies || 'fixed adaptive' }}
+  KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.auth_versions || 'v1' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS: ${{ github.event_name == 'workflow_dispatch' && inputs.rounds || '4' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.payload_bytes || '4096' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES: ${{ github.event_name == 'workflow_dispatch' && inputs.min_max_batch_frames || '2' }}
@@ -224,6 +229,7 @@ jobs:
             summary_args+=(--max-backend-session-limit-count "${KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_LIMIT_COUNT}")
             summary_args+=(--max-backend-session-not-found-count "${KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_NOT_FOUND_COUNT}")
             summary_args+=(--expect-policies "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}")
+            summary_args+=(--expect-auth-versions "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS}")
             summary_args+=(--expect-clients "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}")
             cargo run --locked --bin ktp-tunnel-matrix-summary -- "${summary_args[@]}" "${summary}" | tee "${report}"
           else

@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS:-1 2 4 8}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES:-fixed}"
+KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS:-v1}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS:-8}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE:-rdp-like}"
 KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES:-8192}"
@@ -95,9 +96,22 @@ validate_relay_batch_policy() {
     fi
 }
 
+validate_ktp_auth_version() {
+    local version="$1"
+    if [[ "${version}" != "v1" && "${version}" != "v2" ]]; then
+        echo "invalid ktp auth version: ${version}" >&2
+        return 2
+    fi
+}
+
 policy_path_component() {
     local policy="$1"
     printf '%s' "${policy//[^a-zA-Z0-9_]/_}"
+}
+
+auth_path_component() {
+    local version="$1"
+    printf '%s' "${version//[^a-zA-Z0-9_]/_}"
 }
 
 timestamp_millis() {
@@ -107,14 +121,21 @@ print(int(time.time() * 1000))'
 
 matrix_db_name() {
     local policy="$1"
-    local clients="$2"
+    local auth_version="$2"
+    local clients="$3"
     local prefix="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DB_PREFIX}"
     local policy_component
+    local auth_component
     local suffix
     local max_prefix_len
     policy_component="$(policy_path_component "${policy}")"
+    auth_component="$(auth_path_component "${auth_version}")"
     prefix="${prefix//[^a-zA-Z0-9_]/_}"
-    suffix="_${policy_component}_clients_${clients}"
+    if [[ "${auth_version}" == "v1" ]]; then
+        suffix="_${policy_component}_clients_${clients}"
+    else
+        suffix="_${policy_component}_${auth_component}_clients_${clients}"
+    fi
     max_prefix_len=$((64 - ${#suffix}))
     if ((${#prefix} > max_prefix_len)); then
         prefix="${prefix:0:max_prefix_len}"
@@ -124,10 +145,17 @@ matrix_db_name() {
 
 matrix_identity_name() {
     local policy="$1"
-    local clients="$2"
+    local auth_version="$2"
+    local clients="$3"
     local policy_component
+    local auth_component
     policy_component="$(policy_path_component "${policy}")"
-    printf '%s-%s-c%s' "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX}" "${policy_component}" "${clients}"
+    auth_component="$(auth_path_component "${auth_version}")"
+    if [[ "${auth_version}" == "v1" ]]; then
+        printf '%s-%s-c%s' "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX}" "${policy_component}" "${clients}"
+    else
+        printf '%s-%s-%s-c%s' "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_IDENTITY_PREFIX}" "${policy_component}" "${auth_component}" "${clients}"
+    fi
 }
 
 pick_free_tcp_port() {
@@ -153,7 +181,7 @@ init_summary() {
         return
     fi
     mkdir -p "$(dirname "${MATRIX_SUMMARY_PATH}")"
-    printf '%s\n' "relay_batch_policy	clients	relay_adaptive_high_sessions	relay_adaptive_elevated_dwell_us	relay_adaptive_severe_dwell_us	relay_adaptive_elevated_cap	relay_adaptive_severe_cap	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	echo_elapsed_micros	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max	socket_write_batch_limit_min	socket_write_batch_limit_last	backend_session_limit_count	backend_session_not_found_count" >"${MATRIX_SUMMARY_PATH}"
+    printf '%s\n' "relay_batch_policy	ktp_auth_version	clients	relay_adaptive_high_sessions	relay_adaptive_elevated_dwell_us	relay_adaptive_severe_dwell_us	relay_adaptive_elevated_cap	relay_adaptive_severe_cap	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	echo_elapsed_micros	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max	socket_write_batch_limit_min	socket_write_batch_limit_last	backend_session_limit_count	backend_session_not_found_count" >"${MATRIX_SUMMARY_PATH}"
 }
 
 plain_markdown_value() {
@@ -201,10 +229,11 @@ count_backend_log_occurrences() {
 
 write_summary_row() {
     local policy="$1"
-    local clients="$2"
-    local status="$3"
-    local log_dir="$4"
-    local elapsed_millis="$5"
+    local auth_version="$2"
+    local clients="$3"
+    local status="$4"
+    local log_dir="$5"
+    local elapsed_millis="$6"
     local tunnel_evidence_file="${log_dir}/tunnel-echo.evidence.md"
     local ktp_evidence_file="${log_dir}/ktp-live-canary.evidence.md"
     local tunnel_evidence_summary="-"
@@ -241,8 +270,9 @@ write_summary_row() {
     backend_session_limit_count="$(count_backend_log_occurrences "${log_dir}" "session_limit")"
     backend_session_not_found_count="$(count_backend_log_occurrences "${log_dir}" "tunnel relay session not found")"
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${policy}" \
+        "${auth_version}" \
         "${clients}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US}" \
@@ -284,10 +314,16 @@ write_summary_row() {
 
 run_clients() {
     local policy="$1"
-    local clients="$2"
+    local auth_version="$2"
+    local clients="$3"
     local policy_component
+    local auth_component
     policy_component="$(policy_path_component "${policy}")"
+    auth_component="$(auth_path_component "${auth_version}")"
     local log_dir="${MATRIX_LOG_ROOT}/${policy_component}/clients-${clients}"
+    if [[ "${auth_version}" != "v1" ]]; then
+        log_dir="${MATRIX_LOG_ROOT}/${policy_component}/${auth_component}/clients-${clients}"
+    fi
     local work_dir=""
     local db_name
     local identity_name
@@ -301,20 +337,26 @@ run_clients() {
 
     require_positive_integer "client count" "${clients}"
     log_dir="$(trim_trailing_slash "${log_dir}")"
-    db_name="$(matrix_db_name "${policy}" "${clients}")"
-    identity_name="$(matrix_identity_name "${policy}" "${clients}")"
+    db_name="$(matrix_db_name "${policy}" "${auth_version}" "${clients}")"
+    identity_name="$(matrix_identity_name "${policy}" "${auth_version}" "${clients}")"
     backend_listen="auto"
     backend_endpoint="auto"
     if [[ -n "${MATRIX_WORK_ROOT}" ]]; then
         work_dir="${MATRIX_WORK_ROOT}/${policy_component}/clients-${clients}"
+        if [[ "${auth_version}" != "v1" ]]; then
+            work_dir="${MATRIX_WORK_ROOT}/${policy_component}/${auth_component}/clients-${clients}"
+        fi
     fi
 
-    echo "== ktp local backend tunnel relay_batch_policy=${policy} clients=${clients} =="
+    echo "== ktp local backend tunnel relay_batch_policy=${policy} ktp_auth_version=${auth_version} clients=${clients} =="
     if [[ "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_DRY_RUN}" == "1" ]]; then
-        printf 'dry_run: relay_batch_policy=%s clients=%s KELICLOUD_SMOKE_KTP_TCP=true AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP=%s BACKEND_LISTEN=%s BACKEND_ENDPOINT=%s KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES=%s CLIENT_TIMEOUT_SECONDS=%s SMOKE_LOG_DIR=%s' \
+        printf 'dry_run: relay_batch_policy=%s ktp_auth_version=%s clients=%s KELICLOUD_SMOKE_KTP_TCP=true AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY=%s AGENT_TUNNEL_KTP_TCP_AUTH_VERSION=%s KTP_LIVE_CANARY_AUTH_VERSION=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_CAP=%s AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_CAP=%s BACKEND_LISTEN=%s BACKEND_ENDPOINT=%s KOMARI_DB_NAME=%s SMOKE_AGENT_HOSTNAME=%s SMOKE_TUNNEL_GROUP=%s KELICLOUD_TUNNEL_ECHO_CLIENTS=%s KELICLOUD_TUNNEL_ECHO_ROUNDS=%s KELICLOUD_TUNNEL_ECHO_PROFILE=%s KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES=%s KTP_LIVE_CANARY_MIN_MAX_BATCH_FRAMES=%s KTP_LIVE_CANARY_MIN_MAX_WRITE_BATCH_FRAMES=%s CLIENT_TIMEOUT_SECONDS=%s SMOKE_LOG_DIR=%s' \
             "${policy}" \
+            "${auth_version}" \
             "${clients}" \
             "${policy}" \
+            "${auth_version}" \
+            "${auth_version}" \
             "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}" \
             "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US}" \
             "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US}" \
@@ -351,6 +393,8 @@ run_clients() {
     (
         export KELICLOUD_SMOKE_KTP_TCP=true
         export AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY="${policy}"
+        export AGENT_TUNNEL_KTP_TCP_AUTH_VERSION="${auth_version}"
+        export KTP_LIVE_CANARY_AUTH_VERSION="${auth_version}"
         export AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}"
         export AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US}"
         export AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_SEVERE_DWELL_US="${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US}"
@@ -388,7 +432,7 @@ run_clients() {
         status="fail"
     fi
     echo "clients=${clients} status=${status} elapsed_millis=${elapsed_millis}"
-    write_summary_row "${policy}" "${clients}" "${status}" "${log_dir}" "${elapsed_millis}"
+    write_summary_row "${policy}" "${auth_version}" "${clients}" "${status}" "${log_dir}" "${elapsed_millis}"
     return "${smoke_status}"
 }
 
@@ -413,6 +457,7 @@ main() {
 
     echo "== ktp local backend tunnel matrix =="
     echo "relay_batch_policies=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}"
+    echo "ktp_auth_versions=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS}"
     echo "clients=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}"
     echo "rounds=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS} profile=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE} payload_bytes=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES}"
     echo "adaptive_high_sessions=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS} adaptive_elevated_dwell_us=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_DWELL_US} adaptive_severe_dwell_us=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_DWELL_US} adaptive_elevated_cap=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_ELEVATED_CAP} adaptive_severe_cap=${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_SEVERE_CAP}"
@@ -424,11 +469,14 @@ main() {
     echo "summary=${MATRIX_SUMMARY_PATH}"
     init_summary
 
-    local policy clients
+    local policy auth_version clients
     for policy in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}; do
         validate_relay_batch_policy "${policy}"
-        for clients in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}; do
-            run_clients "${policy}" "${clients}"
+        for auth_version in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_AUTH_VERSIONS}; do
+            validate_ktp_auth_version "${auth_version}"
+            for clients in ${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}; do
+                run_clients "${policy}" "${auth_version}" "${clients}"
+            done
         done
     done
     if ((MATRIX_GATE_FAILURES > 0)); then

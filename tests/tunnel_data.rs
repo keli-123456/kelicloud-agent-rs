@@ -20,10 +20,11 @@ use kelicloud_agent_rs::tunnel_data::{
     run_tunnel_data_session_with_ready_source_runtime_and_diagnostics,
     run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter,
     tunnel_data_diagnostics_line, tunnel_data_reconnect_delay_after_attempt,
-    tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport, KtpTcpAuthVersion,
-    SharedTunnelDataDiagnostics, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
-    TunnelDataDiagnosticsSnapshot, TunnelDataReadySource, TunnelDataReadyState,
-    TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
+    tunnel_data_startup_line, tunnel_data_startup_line_with_ktp_auth_version,
+    KtpEncryptedTcpTunnelDataTransport, KtpTcpAuthVersion, SharedTunnelDataDiagnostics,
+    SharedTunnelDataReadyState, TungsteniteTunnelDataTransport, TunnelDataDiagnosticsSnapshot,
+    TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket,
+    TunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::TunnelSessionRuntime;
 
@@ -2225,6 +2226,20 @@ fn tunnel_data_startup_line_reports_ktp_tcp_carrier_crypto_and_auth() {
     assert_eq!(
         line,
         "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v1"
+    );
+}
+
+#[test]
+fn tunnel_data_startup_line_reports_configured_ktp_tcp_auth_version() {
+    let line = tunnel_data_startup_line_with_ktp_auth_version(
+        "ktp+tcp://127.0.0.1:25775",
+        true,
+        KtpTcpAuthVersion::V2,
+    );
+
+    assert_eq!(
+        line,
+        "tunnel data: enabled url=ktp+tcp://127.0.0.1:25775 carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v2"
     );
 }
 

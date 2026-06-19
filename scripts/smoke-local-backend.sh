@@ -12,6 +12,7 @@ BACKEND_LISTEN="${BACKEND_LISTEN:-127.0.0.1:25775}"
 BACKEND_ENDPOINT="${BACKEND_ENDPOINT:-http://${BACKEND_LISTEN}}"
 BACKEND_START_TIMEOUT_SECONDS="${BACKEND_START_TIMEOUT_SECONDS:-240}"
 KTP_TCP_LISTEN="${KTP_TCP_LISTEN:-}"
+AGENT_TUNNEL_KTP_TCP_AUTH_VERSION="${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION:-v1}"
 KTP_DIAGNOSTICS_TIMEOUT_SECONDS="${KTP_DIAGNOSTICS_TIMEOUT_SECONDS:-45}"
 KTP_LIVE_CANARY_MIN_LINES="${KTP_LIVE_CANARY_MIN_LINES:-1}"
 KELICLOUD_TUNNEL_ECHO_ROUNDS="${KELICLOUD_TUNNEL_ECHO_ROUNDS:-1}"
@@ -525,6 +526,7 @@ start_agent() {
     : >"${AGENT_LOG}"
     if ktp_tcp_smoke_enabled; then
         tunnel_args+=(--tunnel-ktp-tcp-address "${KTP_TCP_LISTEN}")
+        tunnel_args+=(--tunnel-ktp-tcp-auth-version "${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION}")
     fi
 
     log "Building agent and smoke helpers"
@@ -577,6 +579,7 @@ restart_agent_after_token_recovery() {
     sent_count="$({ grep -F "smoke: report_sent" "${AGENT_LOG}" || true; } | wc -l | tr -d '[:space:]')"
     if ktp_tcp_smoke_enabled; then
         tunnel_args+=(--tunnel-ktp-tcp-address "${KTP_TCP_LISTEN}")
+        tunnel_args+=(--tunnel-ktp-tcp-auth-version "${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION}")
     fi
 
     stop_agent_process
@@ -917,7 +920,8 @@ collect_ktp_live_canary_evidence() {
 
     KTP_EVIDENCE_FILE="${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md"
     wait_for_log "${AGENT_LOG}" "tunnel data diagnostics" "${KTP_DIAGNOSTICS_TIMEOUT_SECONDS}"
-    bash "${root}/scripts/ktp-live-canary-evidence.sh" \
+    KTP_LIVE_CANARY_AUTH_VERSION="${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION}" \
+        bash "${root}/scripts/ktp-live-canary-evidence.sh" \
         --log-file "${AGENT_LOG}" \
         --evidence-file "${KTP_EVIDENCE_FILE}" \
         --min-lines "${KTP_LIVE_CANARY_MIN_LINES}"

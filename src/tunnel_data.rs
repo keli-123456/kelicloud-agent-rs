@@ -1476,6 +1476,14 @@ where
 }
 
 pub fn tunnel_data_startup_line(url: &str, enabled: bool) -> String {
+    tunnel_data_startup_line_with_ktp_auth_version(url, enabled, KtpTcpAuthVersion::V1)
+}
+
+pub fn tunnel_data_startup_line_with_ktp_auth_version(
+    url: &str,
+    enabled: bool,
+    ktp_auth_version: KtpTcpAuthVersion,
+) -> String {
     if !enabled {
         return "tunnel data: disabled".to_string();
     }
@@ -1483,16 +1491,26 @@ pub fn tunnel_data_startup_line(url: &str, enabled: bool) -> String {
     format!(
         "tunnel data: enabled url={}{}",
         redact_token_in_url(url),
-        tunnel_data_startup_transport_fields(url)
+        tunnel_data_startup_transport_fields(url, ktp_auth_version)
     )
 }
 
-fn tunnel_data_startup_transport_fields(url: &str) -> &'static str {
+fn tunnel_data_startup_transport_fields(url: &str, ktp_auth_version: KtpTcpAuthVersion) -> String {
     let url = url.trim();
     if url.starts_with("ktp+tcp://") || url.starts_with("tcp://") {
-        " carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_v1"
+        format!(
+            " carrier=ktp_tcp crypto=ktp_aead auth=ktp_token_preface_{}",
+            ktp_tcp_auth_version_label(ktp_auth_version)
+        )
     } else {
-        ""
+        String::new()
+    }
+}
+
+fn ktp_tcp_auth_version_label(version: KtpTcpAuthVersion) -> &'static str {
+    match version {
+        KtpTcpAuthVersion::V1 => "v1",
+        KtpTcpAuthVersion::V2 => "v2",
     }
 }
 

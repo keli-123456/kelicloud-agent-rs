@@ -129,6 +129,57 @@ adaptive	4	8	rdp-like	8192	pass	450	logs/adaptive/clients-4	logs/adaptive/client
 }
 
 #[test]
+fn ktp_tunnel_matrix_summary_separates_policy_comparisons_by_auth_version() {
+    let summary_path = write_temp_summary(
+        "ktp-tunnel-matrix-summary-auth-version",
+        r#"relay_batch_policy	ktp_auth_version	clients	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames
+fixed	v1	2	8	rdp-like	8192	pass	500	logs/fixed/clients-2	logs/fixed/clients-2/tunnel-echo.evidence.md	logs/fixed/clients-2/ktp-live-canary.evidence.md	19840	700	1000	1200	1500	200	12	112	6
+adaptive	v1	2	8	rdp-like	8192	pass	450	logs/adaptive/clients-2	logs/adaptive/clients-2/tunnel-echo.evidence.md	logs/adaptive/clients-2/ktp-live-canary.evidence.md	19840	500	800	900	1000	100	14	112	8
+fixed	v2	2	8	rdp-like	8192	pass	480	logs/fixed/v2/clients-2	logs/fixed/v2/clients-2/tunnel-echo.evidence.md	logs/fixed/v2/clients-2/ktp-live-canary.evidence.md	19840	700	900	1200	1500	120	12	112	6
+adaptive	v2	2	8	rdp-like	8192	pass	510	logs/adaptive/v2/clients-2	logs/adaptive/v2/clients-2/tunnel-echo.evidence.md	logs/adaptive/v2/clients-2/ktp-live-canary.evidence.md	19840	500	850	1000	1200	110	14	112	8
+"#,
+    );
+
+    let output = Command::new(summary_exe())
+        .arg("--expect-policies")
+        .arg("fixed adaptive")
+        .arg("--expect-auth-versions")
+        .arg("v1 v2")
+        .arg("--expect-clients")
+        .arg("2")
+        .arg(&summary_path)
+        .output()
+        .expect("ktp-tunnel-matrix-summary should run");
+
+    assert!(
+        output.status.success(),
+        "summary failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("policy=fixed clients=2 status=pass elapsed_millis=480"));
+    assert!(stdout.contains("auth_version=v2"));
+    assert!(stdout
+        .contains("policy_compare clients=2 fixed_elapsed_millis=500 adaptive_elapsed_millis=450"));
+    assert!(stdout
+        .contains("policy_compare clients=2 fixed_elapsed_millis=500 adaptive_elapsed_millis=450"));
+    assert!(stdout.contains("verdict=adaptive_better auth_version=v1"));
+    assert!(stdout.contains(
+        "policy_recommend clients=2 recommended=adaptive verdict=adaptive_better reason=adaptive_not_worse auth_version=v1"
+    ));
+    assert!(stdout
+        .contains("policy_compare clients=2 fixed_elapsed_millis=480 adaptive_elapsed_millis=510"));
+    assert!(stdout.contains("verdict=mixed auth_version=v2"));
+    assert!(stdout.contains(
+        "policy_recommend clients=2 recommended=manual_review verdict=mixed reason=metric_tradeoff auth_version=v2"
+    ));
+    assert!(stdout.contains(
+        "expected_matrix policies=fixed,adaptive auth_versions=v1,v2 clients=2 status=pass missing=0"
+    ));
+}
+
+#[test]
 fn ktp_tunnel_matrix_summary_fail_gate_rejects_fixed_better_verdict() {
     let summary_path = write_temp_summary(
         "ktp-tunnel-matrix-summary-fixed-better",

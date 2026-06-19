@@ -7,6 +7,7 @@ type SummaryResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 #[derive(Clone, Debug)]
 struct MatrixRow {
     relay_batch_policy: String,
+    ktp_auth_version: String,
     clients: String,
     relay_adaptive_high_sessions: Option<String>,
     relay_adaptive_elevated_dwell_us: Option<String>,
@@ -43,6 +44,7 @@ struct GateConfig {
     max_backend_session_limit_count: Option<u64>,
     max_backend_session_not_found_count: Option<u64>,
     expected_policies: Vec<String>,
+    expected_auth_versions: Vec<String>,
     expected_clients: Vec<String>,
 }
 
@@ -112,6 +114,10 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
             "--expect-policies" => {
                 gate_config.expected_policies = next_list_arg(&mut args, "--expect-policies")?;
             }
+            "--expect-auth-versions" => {
+                gate_config.expected_auth_versions =
+                    next_list_arg(&mut args, "--expect-auth-versions")?;
+            }
             "--expect-clients" => {
                 gate_config.expected_clients = next_list_arg(&mut args, "--expect-clients")?;
             }
@@ -123,6 +129,13 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
 
     if gate_config.expected_policies.is_empty() != gate_config.expected_clients.is_empty() {
         return Err("--expect-policies and --expect-clients must be provided together".into());
+    }
+    if !gate_config.expected_auth_versions.is_empty()
+        && (gate_config.expected_policies.is_empty() || gate_config.expected_clients.is_empty())
+    {
+        return Err(
+            "--expect-auth-versions requires --expect-policies and --expect-clients".into(),
+        );
     }
 
     let path = path.ok_or("matrix-summary.tsv path is required")?;
@@ -249,8 +262,8 @@ fn summarize_tsv(
     for row in &rows {
         if require_pass && row.status != "pass" {
             gate_failures.push(format!(
-                "tunnel matrix row policy={} clients={} status={} failed require-pass gate",
-                row.relay_batch_policy, row.clients, row.status
+                "tunnel matrix row policy={} clients={} status={} failed require-pass gate auth_version={}",
+                row.relay_batch_policy, row.clients, row.status, row.ktp_auth_version
             ));
         }
 
@@ -274,7 +287,7 @@ fn summarize_tsv(
         let relay_adaptive_severe_cap = text_value(row.relay_adaptive_severe_cap.as_deref());
         output.push('\n');
         output.push_str(&format!(
-            "policy={} clients={} status={} elapsed_millis={} total_payload_bytes={} throughput_mib_s={} echo_elapsed_micros={} echo_throughput_mib_s={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={} backend_session_limit_count={} backend_session_not_found_count={} relay_adaptive_high_sessions={} relay_adaptive_elevated_dwell_us={} relay_adaptive_severe_dwell_us={} relay_adaptive_elevated_cap={} relay_adaptive_severe_cap={}",
+            "policy={} clients={} status={} elapsed_millis={} total_payload_bytes={} throughput_mib_s={} echo_elapsed_micros={} echo_throughput_mib_s={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={} backend_session_limit_count={} backend_session_not_found_count={} relay_adaptive_high_sessions={} relay_adaptive_elevated_dwell_us={} relay_adaptive_severe_dwell_us={} relay_adaptive_elevated_cap={} relay_adaptive_severe_cap={} auth_version={}",
             row.relay_batch_policy,
             row.clients,
             row.status,
@@ -296,7 +309,8 @@ fn summarize_tsv(
             relay_adaptive_elevated_dwell_us,
             relay_adaptive_severe_dwell_us,
             relay_adaptive_elevated_cap,
-            relay_adaptive_severe_cap
+            relay_adaptive_severe_cap,
+            row.ktp_auth_version
         ));
 
         if row.status == "pass" {
@@ -342,46 +356,64 @@ fn summarize_tsv(
                 row.backend_session_not_found_count,
                 gate_config.max_backend_session_not_found_count,
             );
-            max_rtt.record(&row.relay_batch_policy, &row.clients, row.rtt_micros_p95);
+            max_rtt.record(
+                &row.relay_batch_policy,
+                &row.clients,
+                &row.ktp_auth_version,
+                row.rtt_micros_p95,
+            );
             max_spread.record(
                 &row.relay_batch_policy,
                 &row.clients,
+                &row.ktp_auth_version,
                 row.client_p95_spread_micros,
             );
             max_socket_batch.record(
                 &row.relay_batch_policy,
                 &row.clients,
+                &row.ktp_auth_version,
                 row.socket_read_max_batch_frames,
             );
             max_socket_write_batch.record(
                 &row.relay_batch_policy,
                 &row.clients,
+                &row.ktp_auth_version,
                 row.socket_write_max_batch_frames,
             );
             max_socket_write_batch_limit.record(
                 &row.relay_batch_policy,
                 &row.clients,
+                &row.ktp_auth_version,
                 row.socket_write_batch_limit_max,
             );
             min_socket_write_batch_limit.record(
                 &row.relay_batch_policy,
                 &row.clients,
+                &row.ktp_auth_version,
                 row.socket_write_batch_limit_min,
             );
-            min_throughput.record(&row.relay_batch_policy, &row.clients, throughput_mib_s);
+            min_throughput.record(
+                &row.relay_batch_policy,
+                &row.clients,
+                &row.ktp_auth_version,
+                throughput_mib_s,
+            );
             min_echo_throughput.record(
                 &row.relay_batch_policy,
                 &row.clients,
+                &row.ktp_auth_version,
                 echo_throughput_mib_s,
             );
             max_backend_session_limit_count.record(
                 &row.relay_batch_policy,
                 &row.clients,
+                &row.ktp_auth_version,
                 row.backend_session_limit_count,
             );
             max_backend_session_not_found_count.record(
                 &row.relay_batch_policy,
                 &row.clients,
+                &row.ktp_auth_version,
                 row.backend_session_not_found_count,
             );
         }
@@ -389,35 +421,42 @@ fn summarize_tsv(
 
     output.push('\n');
     output.push_str(&format!(
-        "max_rtt_micros_p95={} policy={} clients={}",
+        "max_rtt_micros_p95={} policy={} clients={} auth_version={}",
         metric_text(max_rtt.value),
         max_rtt.policy.as_deref().unwrap_or("-"),
-        max_rtt.clients.as_deref().unwrap_or("-")
+        max_rtt.clients.as_deref().unwrap_or("-"),
+        max_rtt.auth_version.as_deref().unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "max_rtt_client_p95_spread_micros={} policy={} clients={}",
+        "max_rtt_client_p95_spread_micros={} policy={} clients={} auth_version={}",
         metric_text(max_spread.value),
         max_spread.policy.as_deref().unwrap_or("-"),
-        max_spread.clients.as_deref().unwrap_or("-")
+        max_spread.clients.as_deref().unwrap_or("-"),
+        max_spread.auth_version.as_deref().unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "max_socket_read_max_batch_frames={} policy={} clients={}",
+        "max_socket_read_max_batch_frames={} policy={} clients={} auth_version={}",
         metric_text(max_socket_batch.value),
         max_socket_batch.policy.as_deref().unwrap_or("-"),
-        max_socket_batch.clients.as_deref().unwrap_or("-")
+        max_socket_batch.clients.as_deref().unwrap_or("-"),
+        max_socket_batch.auth_version.as_deref().unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "max_socket_write_max_batch_frames={} policy={} clients={}",
+        "max_socket_write_max_batch_frames={} policy={} clients={} auth_version={}",
         metric_text(max_socket_write_batch.value),
         max_socket_write_batch.policy.as_deref().unwrap_or("-"),
-        max_socket_write_batch.clients.as_deref().unwrap_or("-")
+        max_socket_write_batch.clients.as_deref().unwrap_or("-"),
+        max_socket_write_batch
+            .auth_version
+            .as_deref()
+            .unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "max_socket_write_batch_limit_max={} policy={} clients={}",
+        "max_socket_write_batch_limit_max={} policy={} clients={} auth_version={}",
         metric_text(max_socket_write_batch_limit.value),
         max_socket_write_batch_limit
             .policy
@@ -426,11 +465,15 @@ fn summarize_tsv(
         max_socket_write_batch_limit
             .clients
             .as_deref()
+            .unwrap_or("-"),
+        max_socket_write_batch_limit
+            .auth_version
+            .as_deref()
             .unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "min_socket_write_batch_limit_min={} policy={} clients={}",
+        "min_socket_write_batch_limit_min={} policy={} clients={} auth_version={}",
         metric_text(min_socket_write_batch_limit.value),
         min_socket_write_batch_limit
             .policy
@@ -439,25 +482,31 @@ fn summarize_tsv(
         min_socket_write_batch_limit
             .clients
             .as_deref()
+            .unwrap_or("-"),
+        min_socket_write_batch_limit
+            .auth_version
+            .as_deref()
             .unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "min_throughput_mib_s={} policy={} clients={}",
+        "min_throughput_mib_s={} policy={} clients={} auth_version={}",
         float_metric_text(min_throughput.value),
         min_throughput.policy.as_deref().unwrap_or("-"),
-        min_throughput.clients.as_deref().unwrap_or("-")
+        min_throughput.clients.as_deref().unwrap_or("-"),
+        min_throughput.auth_version.as_deref().unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "min_echo_throughput_mib_s={} policy={} clients={}",
+        "min_echo_throughput_mib_s={} policy={} clients={} auth_version={}",
         float_metric_text(min_echo_throughput.value),
         min_echo_throughput.policy.as_deref().unwrap_or("-"),
-        min_echo_throughput.clients.as_deref().unwrap_or("-")
+        min_echo_throughput.clients.as_deref().unwrap_or("-"),
+        min_echo_throughput.auth_version.as_deref().unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "max_backend_session_limit_count={} policy={} clients={}",
+        "max_backend_session_limit_count={} policy={} clients={} auth_version={}",
         metric_text(max_backend_session_limit_count.value),
         max_backend_session_limit_count
             .policy
@@ -466,11 +515,15 @@ fn summarize_tsv(
         max_backend_session_limit_count
             .clients
             .as_deref()
+            .unwrap_or("-"),
+        max_backend_session_limit_count
+            .auth_version
+            .as_deref()
             .unwrap_or("-")
     ));
     output.push('\n');
     output.push_str(&format!(
-        "max_backend_session_not_found_count={} policy={} clients={}",
+        "max_backend_session_not_found_count={} policy={} clients={} auth_version={}",
         metric_text(max_backend_session_not_found_count.value),
         max_backend_session_not_found_count
             .policy
@@ -478,6 +531,10 @@ fn summarize_tsv(
             .unwrap_or("-"),
         max_backend_session_not_found_count
             .clients
+            .as_deref()
+            .unwrap_or("-"),
+        max_backend_session_not_found_count
+            .auth_version
             .as_deref()
             .unwrap_or("-")
     ));
@@ -487,16 +544,28 @@ fn summarize_tsv(
             &mut gate_failures,
             &rows,
             &gate_config.expected_policies,
+            &gate_config.expected_auth_versions,
             &gate_config.expected_clients,
         );
         output.push('\n');
-        output.push_str(&format!(
-            "expected_matrix policies={} clients={} status={} missing={}",
-            gate_config.expected_policies.join(","),
-            gate_config.expected_clients.join(","),
-            if missing == 0 { "pass" } else { "fail" },
-            missing
-        ));
+        if gate_config.expected_auth_versions.is_empty() {
+            output.push_str(&format!(
+                "expected_matrix policies={} clients={} status={} missing={}",
+                gate_config.expected_policies.join(","),
+                gate_config.expected_clients.join(","),
+                if missing == 0 { "pass" } else { "fail" },
+                missing
+            ));
+        } else {
+            output.push_str(&format!(
+                "expected_matrix policies={} auth_versions={} clients={} status={} missing={}",
+                gate_config.expected_policies.join(","),
+                gate_config.expected_auth_versions.join(","),
+                gate_config.expected_clients.join(","),
+                if missing == 0 { "pass" } else { "fail" },
+                missing
+            ));
+        }
     }
 
     for comparison in policy_comparisons(&rows) {
@@ -506,8 +575,8 @@ fn summarize_tsv(
         output.push_str(&comparison.recommendation_line());
         if fail_on_fixed_better && comparison.verdict == PolicyVerdict::FixedBetter {
             gate_failures.push(format!(
-                "fixed_better tunnel matrix verdict failed KTP tunnel policy gate for clients={}",
-                comparison.clients
+                "fixed_better tunnel matrix verdict failed KTP tunnel policy gate for clients={} auth_version={}",
+                comparison.clients, comparison.auth_version
             ));
         }
     }
@@ -522,25 +591,52 @@ fn record_expected_matrix_failures(
     gate_failures: &mut Vec<String>,
     rows: &[MatrixRow],
     expected_policies: &[String],
+    expected_auth_versions: &[String],
     expected_clients: &[String],
 ) -> usize {
-    let observed = rows
-        .iter()
-        .map(|row| {
-            (
-                row.relay_batch_policy.as_str().to_string(),
-                row.clients.as_str().to_string(),
-            )
-        })
-        .collect::<BTreeSet<_>>();
     let mut missing = 0;
-    for policy in expected_policies {
-        for clients in expected_clients {
-            if !observed.contains(&(policy.clone(), clients.clone())) {
-                missing += 1;
-                gate_failures.push(format!(
-                    "missing tunnel matrix row policy={policy} clients={clients}"
-                ));
+    if expected_auth_versions.is_empty() {
+        let observed = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.relay_batch_policy.as_str().to_string(),
+                    row.clients.as_str().to_string(),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        for policy in expected_policies {
+            for clients in expected_clients {
+                if !observed.contains(&(policy.clone(), clients.clone())) {
+                    missing += 1;
+                    gate_failures.push(format!(
+                        "missing tunnel matrix row policy={policy} clients={clients}"
+                    ));
+                }
+            }
+        }
+    } else {
+        let observed = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.relay_batch_policy.as_str().to_string(),
+                    row.ktp_auth_version.as_str().to_string(),
+                    row.clients.as_str().to_string(),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        for policy in expected_policies {
+            for auth_version in expected_auth_versions {
+                for clients in expected_clients {
+                    if !observed.contains(&(policy.clone(), auth_version.clone(), clients.clone()))
+                    {
+                        missing += 1;
+                        gate_failures.push(format!(
+                            "missing tunnel matrix row policy={policy} auth_version={auth_version} clients={clients}"
+                        ));
+                    }
+                }
             }
         }
     }
@@ -559,12 +655,12 @@ fn record_min_throughput_gate_failure(
     };
     match value {
         Some(value) if value < min => gate_failures.push(format!(
-            "tunnel matrix row policy={} clients={} {metric_name}={value:.3} below min {min:.3}",
-            row.relay_batch_policy, row.clients
+            "tunnel matrix row policy={} clients={} {metric_name}={value:.3} below min {min:.3} auth_version={}",
+            row.relay_batch_policy, row.clients, row.ktp_auth_version
         )),
         None => gate_failures.push(format!(
-            "tunnel matrix row policy={} clients={} {metric_name} missing for min {min:.3}",
-            row.relay_batch_policy, row.clients
+            "tunnel matrix row policy={} clients={} {metric_name} missing for min {min:.3} auth_version={}",
+            row.relay_batch_policy, row.clients, row.ktp_auth_version
         )),
         _ => {}
     }
@@ -582,12 +678,12 @@ fn record_max_gate_failure(
     };
     match value {
         Some(value) if value > max => gate_failures.push(format!(
-            "tunnel matrix row policy={} clients={} {metric_name}={value} exceeds max {max}",
-            row.relay_batch_policy, row.clients
+            "tunnel matrix row policy={} clients={} {metric_name}={value} exceeds max {max} auth_version={}",
+            row.relay_batch_policy, row.clients, row.ktp_auth_version
         )),
         None => gate_failures.push(format!(
-            "tunnel matrix row policy={} clients={} {metric_name} missing for max {max}",
-            row.relay_batch_policy, row.clients
+            "tunnel matrix row policy={} clients={} {metric_name} missing for max {max} auth_version={}",
+            row.relay_batch_policy, row.clients, row.ktp_auth_version
         )),
         _ => {}
     }
@@ -600,6 +696,10 @@ fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> Summary
         .map(|index| field(&fields, index, "relay_batch_policy").map(str::to_string))
         .transpose()?
         .unwrap_or_else(|| "fixed".to_string());
+    let ktp_auth_version = indexes
+        .ktp_auth_version
+        .and_then(|index| optional_text(&fields, Some(index)))
+        .unwrap_or_else(|| "v1".to_string());
     let clients = field(&fields, indexes.clients, "clients")?.to_string();
     let status = field(&fields, indexes.status, "status")?.to_string();
     let elapsed_millis = parse_required_u64(&fields, indexes.elapsed_millis, "elapsed_millis")?;
@@ -607,6 +707,7 @@ fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> Summary
 
     Ok(MatrixRow {
         relay_batch_policy,
+        ktp_auth_version,
         clients: clients.clone(),
         relay_adaptive_high_sessions: optional_text(&fields, indexes.relay_adaptive_high_sessions),
         relay_adaptive_elevated_dwell_us: optional_text(
@@ -812,6 +913,7 @@ fn text_value(value: Option<&str>) -> &str {
 
 #[derive(Clone, Debug)]
 struct PolicyComparison {
+    auth_version: String,
     clients: String,
     fixed_elapsed_millis: u64,
     adaptive_elapsed_millis: u64,
@@ -825,7 +927,7 @@ struct PolicyComparison {
 impl PolicyComparison {
     fn report_line(&self) -> String {
         format!(
-            "policy_compare clients={} fixed_elapsed_millis={} adaptive_elapsed_millis={} elapsed_delta_pct={:.2} fixed_rtt_micros_p95={} adaptive_rtt_micros_p95={} rtt_p95_delta_pct={:.2} fixed_rtt_client_p95_spread_micros={} adaptive_rtt_client_p95_spread_micros={} spread_delta_pct={:.2} verdict={}",
+            "policy_compare clients={} fixed_elapsed_millis={} adaptive_elapsed_millis={} elapsed_delta_pct={:.2} fixed_rtt_micros_p95={} adaptive_rtt_micros_p95={} rtt_p95_delta_pct={:.2} fixed_rtt_client_p95_spread_micros={} adaptive_rtt_client_p95_spread_micros={} spread_delta_pct={:.2} verdict={} auth_version={}",
             self.clients,
             self.fixed_elapsed_millis,
             self.adaptive_elapsed_millis,
@@ -837,17 +939,19 @@ impl PolicyComparison {
             self.adaptive_spread_micros,
             percent_delta(self.adaptive_spread_micros, self.fixed_spread_micros),
             self.verdict.as_str(),
+            self.auth_version,
         )
     }
 
     fn recommendation_line(&self) -> String {
         let (recommended, reason) = self.verdict.recommendation();
         format!(
-            "policy_recommend clients={} recommended={} verdict={} reason={}",
+            "policy_recommend clients={} recommended={} verdict={} reason={} auth_version={}",
             self.clients,
             recommended,
             self.verdict.as_str(),
-            reason
+            reason,
+            self.auth_version
         )
     }
 }
@@ -919,12 +1023,14 @@ struct PolicyPair<'a> {
 }
 
 fn policy_comparisons(rows: &[MatrixRow]) -> Vec<PolicyComparison> {
-    let mut pairs = BTreeMap::<&str, PolicyPair<'_>>::new();
+    let mut pairs = BTreeMap::<(String, String), PolicyPair<'_>>::new();
     for row in rows {
         if row.status != "pass" {
             continue;
         }
-        let pair = pairs.entry(row.clients.as_str()).or_default();
+        let pair = pairs
+            .entry((row.ktp_auth_version.clone(), row.clients.clone()))
+            .or_default();
         match row.relay_batch_policy.as_str() {
             "fixed" => pair.fixed = Some(row),
             "adaptive" => pair.adaptive = Some(row),
@@ -934,7 +1040,7 @@ fn policy_comparisons(rows: &[MatrixRow]) -> Vec<PolicyComparison> {
 
     pairs
         .into_iter()
-        .filter_map(|(clients, pair)| {
+        .filter_map(|((auth_version, clients), pair)| {
             let fixed = pair.fixed?;
             let adaptive = pair.adaptive?;
             let fixed_rtt_micros_p95 = fixed.rtt_micros_p95?;
@@ -942,7 +1048,8 @@ fn policy_comparisons(rows: &[MatrixRow]) -> Vec<PolicyComparison> {
             let fixed_spread_micros = fixed.client_p95_spread_micros?;
             let adaptive_spread_micros = adaptive.client_p95_spread_micros?;
             Some(PolicyComparison {
-                clients: clients.to_string(),
+                auth_version,
+                clients,
                 fixed_elapsed_millis: fixed.elapsed_millis,
                 adaptive_elapsed_millis: adaptive.elapsed_millis,
                 fixed_rtt_micros_p95,
@@ -979,10 +1086,11 @@ struct MaxMetric {
     value: Option<u64>,
     policy: Option<String>,
     clients: Option<String>,
+    auth_version: Option<String>,
 }
 
 impl MaxMetric {
-    fn record(&mut self, policy: &str, clients: &str, value: Option<u64>) {
+    fn record(&mut self, policy: &str, clients: &str, auth_version: &str, value: Option<u64>) {
         let Some(value) = value else {
             return;
         };
@@ -990,6 +1098,7 @@ impl MaxMetric {
             self.value = Some(value);
             self.policy = Some(policy.to_string());
             self.clients = Some(clients.to_string());
+            self.auth_version = Some(auth_version.to_string());
         }
     }
 }
@@ -999,10 +1108,11 @@ struct MinMetric {
     value: Option<u64>,
     policy: Option<String>,
     clients: Option<String>,
+    auth_version: Option<String>,
 }
 
 impl MinMetric {
-    fn record(&mut self, policy: &str, clients: &str, value: Option<u64>) {
+    fn record(&mut self, policy: &str, clients: &str, auth_version: &str, value: Option<u64>) {
         let Some(value) = value else {
             return;
         };
@@ -1010,6 +1120,7 @@ impl MinMetric {
             self.value = Some(value);
             self.policy = Some(policy.to_string());
             self.clients = Some(clients.to_string());
+            self.auth_version = Some(auth_version.to_string());
         }
     }
 }
@@ -1019,10 +1130,11 @@ struct MinFloatMetric {
     value: Option<f64>,
     policy: Option<String>,
     clients: Option<String>,
+    auth_version: Option<String>,
 }
 
 impl MinFloatMetric {
-    fn record(&mut self, policy: &str, clients: &str, value: Option<f64>) {
+    fn record(&mut self, policy: &str, clients: &str, auth_version: &str, value: Option<f64>) {
         let Some(value) = value else {
             return;
         };
@@ -1030,6 +1142,7 @@ impl MinFloatMetric {
             self.value = Some(value);
             self.policy = Some(policy.to_string());
             self.clients = Some(clients.to_string());
+            self.auth_version = Some(auth_version.to_string());
         }
     }
 }
@@ -1037,6 +1150,7 @@ impl MinFloatMetric {
 #[derive(Clone, Copy, Debug)]
 struct MatrixIndexes {
     relay_batch_policy: Option<usize>,
+    ktp_auth_version: Option<usize>,
     clients: usize,
     relay_adaptive_high_sessions: Option<usize>,
     relay_adaptive_elevated_dwell_us: Option<usize>,
@@ -1067,6 +1181,7 @@ impl MatrixIndexes {
             .collect::<HashMap<_, _>>();
         Ok(Self {
             relay_batch_policy: positions.get("relay_batch_policy").copied(),
+            ktp_auth_version: positions.get("ktp_auth_version").copied(),
             clients: required_column(&positions, "clients")?,
             relay_adaptive_high_sessions: positions.get("relay_adaptive_high_sessions").copied(),
             relay_adaptive_elevated_dwell_us: positions
@@ -1111,6 +1226,6 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 
 fn print_usage() {
     eprintln!(
-        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] [--min-echo-throughput-mib-s N] [--max-backend-session-limit-count N] [--max-backend-session-not-found-count N] [--expect-policies LIST --expect-clients LIST] <matrix-summary.tsv>"
+        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] [--min-echo-throughput-mib-s N] [--max-backend-session-limit-count N] [--max-backend-session-not-found-count N] [--expect-policies LIST [--expect-auth-versions LIST] --expect-clients LIST] <matrix-summary.tsv>"
     );
 }
