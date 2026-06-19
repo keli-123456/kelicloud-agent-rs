@@ -2023,7 +2023,10 @@ Notes:
   also include socket batch-write counters from `ktp-live-canary.evidence.md`.
 - The `KTP Tunnel Matrix` workflow keeps `workflow_dispatch` for full manual
   `1 2 4 8` runs, but its `push` self-check uses the lighter `1 2` matrix and
-  publishes `matrix-summary.tsv` to the Actions job summary plus artifact.
+  now covers both `KTA1` and `KTA2` with `auth_versions=v1 v2`. That makes KTA2
+  compatibility a continuous CI gate instead of only a one-off release-host
+  run. The workflow publishes `matrix-summary.tsv` to the Actions job summary
+  plus artifact.
 - New matrix summaries include `elapsed_millis` and support per-client-count
   hard timeouts. Older tables above were captured before that column existed,
   so they intentionally preserve the original artifact shape.
@@ -2093,9 +2096,9 @@ Notes:
 
 Next evidence to collect:
 
-- Repeat KTA2 on a live canary or manual workflow artifact after the 2026-06-19
-  full local-backend matrix, so default-switch evidence is not limited to a
-  single release host.
+- Repeat KTA2 on a production live canary after the 2026-06-19 full
+  local-backend matrix and continuous `KTP Tunnel Matrix` push self-check, so
+  default-switch evidence includes a real relay observation window.
 - Repeat the 4/8 client release-host matrix after the next relay scheduling
   change and compare it against the `59a0a1d` high-concurrency baseline, with
   `rtt_client_p95_spread_micros` included in the comparison.
