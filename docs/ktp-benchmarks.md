@@ -1643,15 +1643,18 @@ batching is worse on all tracked latency/elapsed dimensions. Add
 `--min-throughput-mib-s N` to fail passing rows whose real-backend tunnel echo
 full-smoke throughput drops below the configured floor. Add
 `--min-echo-throughput-mib-s N` to gate the data-plane-only echo throughput
-without letting backend and agent startup time dominate the decision. Both
-thresholds are intentionally optional so release hosts can set floors based on
-their own baselines.
+without letting backend and agent startup time dominate the decision. Use `0`
+to disable either throughput floor when collecting exploratory evidence.
 The `KTP Tunnel Matrix` workflow now writes this output to
 `matrix-summary.report.txt` beside the raw TSV artifact. Push-triggered runs
 keep the light `fixed` policy self-check; manual workflow dispatch defaults to
 `fixed adaptive` so scheduling experiments can collect comparable real
-forwarding rows without editing the workflow. Manual dispatch also exposes
-`min_throughput_mib_s` and `min_echo_throughput_mib_s` for optional summary
+forwarding rows without editing the workflow. Push and manual workflow runs use
+conservative default throughput floors of `0.0001 MiB/s` for both full-smoke and
+echo-only throughput, so a row with missing, zero, or badly regressed
+throughput cannot pass by only satisfying connectivity and latency gates.
+Manual dispatch also exposes `min_throughput_mib_s` and
+`min_echo_throughput_mib_s` to raise, lower, or disable those summary
 throughput gates.
 The workflow passes the requested policy list and client-count list to
 `ktp-tunnel-matrix-summary` with `--expect-policies` and `--expect-clients`.
