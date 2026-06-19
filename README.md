@@ -348,6 +348,16 @@ the published binaries:
 - `kelicloud-agent-rs-linux-armv7`
 - `SHA256SUMS`
 
+The publish job signs build provenance for the staged Linux assets and checksum
+manifest with `actions/attest@v4`. The attested subjects are
+`release-assets/kelicloud-agent-rs-linux-*` and `release-assets/SHA256SUMS`.
+After downloading an asset, verify its provenance with:
+
+```bash
+gh attestation verify ./kelicloud-agent-rs-linux-amd64 -R keli-123456/kelicloud-agent-rs
+gh attestation verify ./SHA256SUMS -R keli-123456/kelicloud-agent-rs
+```
+
 Before the release binaries are built, the workflow runs the same formatting and
 all-target checks as CI, then runs the tunnel data-plane smoke gate:
 
@@ -384,5 +394,4 @@ GitHub Actions runs the same checks on Linux for pushes to `main` and pull reque
 ## Next Milestones
 
 1. Run the live smoke test against a real kelicloud backend and record the first compatibility gaps.
-2. Add signed release attestations for the checksum manifest and Linux assets.
-3. Expand installer support after systemd deployment is stable.
+2. Expand installer support after systemd deployment is stable.

@@ -52,6 +52,30 @@ fn release_workflow_builds_linux_assets_used_by_installer() {
     }
 }
 
+#[test]
+fn release_workflow_attests_linux_assets_and_checksum_manifest() {
+    let workflow = std::fs::read_to_string(release_workflow_path()).unwrap();
+
+    assert!(workflow.contains("id-token: write"));
+    assert!(workflow.contains("attestations: write"));
+    assert!(workflow.contains("name: Generate release asset attestations"));
+    assert!(workflow.contains("uses: actions/attest@v4"));
+    assert!(workflow.contains("subject-path: |"));
+    assert!(workflow.contains("release-assets/kelicloud-agent-rs-linux-*"));
+    assert!(workflow.contains("release-assets/SHA256SUMS"));
+
+    let attest_pos = workflow
+        .find("name: Generate release asset attestations")
+        .expect("attestation step should exist");
+    let release_pos = workflow
+        .find("name: Publish release")
+        .expect("release publish step should exist");
+    assert!(
+        attest_pos < release_pos,
+        "release assets should be attested before publication"
+    );
+}
+
 fn release_workflow_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(".github")

@@ -24,4 +24,7 @@ fn readme_documents_release_safety_gates() {
     assert!(readme.contains("KELICLOUD_CANARY_TUNNEL_KTP_TCP_ADDRESS"));
     assert!(readme.contains("KELICLOUD_CANARY_TUNNEL_KTP_TCP_AUTH_VERSION"));
     assert!(readme.contains("KELICLOUD_CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY"));
+    assert!(readme.contains("actions/attest@v4"));
+    assert!(readme.contains("gh attestation verify"));
+    assert!(readme.contains("release-assets/SHA256SUMS"));
 }
