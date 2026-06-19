@@ -1484,8 +1484,8 @@ policy and client count, always with `KELICLOUD_SMOKE_KTP_TCP=true`. It exports
 `AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY` into each smoke run and writes
 `matrix-summary.tsv` with each row's policy, status, elapsed milliseconds,
 `tunnel-echo.evidence.md`, `ktp-live-canary.evidence.md`, RTT percentiles,
-client p95 spread, socket batch-read/write counters, and the maximum effective
-write batch limit. Each
+client p95 spread, socket batch-read/write counters, maximum effective write
+batch limit, and backend relay error counts from `backend.log`. Each
 policy/client-count row is bounded by
 `KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS` so full matrices fail
 with a `timeout` row instead of hanging without evidence. Use it after runtime
@@ -1514,6 +1514,8 @@ To publish a concise matrix report from the TSV artifact:
 
 ```bash
 cargo run --locked --bin ktp-tunnel-matrix-summary -- \
+  --max-backend-session-limit-count 0 \
+  --max-backend-session-not-found-count 0 \
   smoke-logs/local-backend-tunnel-matrix/matrix-summary.tsv
 ```
 
@@ -1524,11 +1526,12 @@ full-smoke `elapsed_millis`, and per-row `echo_throughput_mib_s` computed from
 maximum RTT p95, maximum per-client p95 spread, maximum socket batch sizes,
 maximum effective write batch limit, minimum observed effective write batch
 limit, minimum observed full-smoke throughput, and minimum observed echo-only
-throughput across passing rows, including the policy/client combination that
-produced each value. Older TSV artifacts without `total_payload_bytes`,
-`echo_elapsed_micros`, `socket_write_*` columns, or
-`socket_write_batch_limit_*` columns remain readable and show those metrics as
-`-`. When a TSV has passing
+throughput across passing rows, plus maximum backend `session_limit` and
+`tunnel relay session not found` counts, including the policy/client
+combination that produced each value. Older TSV artifacts without
+`total_payload_bytes`, `echo_elapsed_micros`, `socket_write_*`,
+`socket_write_batch_limit_*`, or backend relay error-count columns remain
+readable and show those metrics as `-`. When a TSV has passing
 `fixed` and `adaptive` rows for the same client count, the report also emits a
 `policy_compare` line with elapsed, RTT p95, and per-client p95-spread deltas
 plus a verdict such as `adaptive_better`, `fixed_better`, `same`, or `mixed`.

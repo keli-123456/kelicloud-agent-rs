@@ -164,6 +164,8 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     assert!(workflow.contains("max_client_p95_spread_micros:"));
     assert!(workflow.contains("min_throughput_mib_s:"));
     assert!(workflow.contains("min_echo_throughput_mib_s:"));
+    assert!(workflow.contains("max_backend_session_limit_count:"));
+    assert!(workflow.contains("max_backend_session_not_found_count:"));
     assert!(workflow.contains("summary_require_pass:"));
     assert!(workflow.contains("summary_fail_on_fixed_better:"));
     assert!(workflow.contains("default: \"1 2 4 8\""));
@@ -235,6 +237,12 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
         "KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_ECHO_THROUGHPUT_MIB_S: ${{ github.event_name == 'workflow_dispatch' && inputs.min_echo_throughput_mib_s || '' }}"
     ));
     assert!(workflow.contains(
+        "KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_LIMIT_COUNT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_backend_session_limit_count || '0' }}"
+    ));
+    assert!(workflow.contains(
+        "KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_NOT_FOUND_COUNT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_backend_session_not_found_count || '0' }}"
+    ));
+    assert!(workflow.contains(
         "KTP_TUNNEL_MATRIX_SUMMARY_REQUIRE_PASS: ${{ github.event_name == 'workflow_dispatch' && inputs.summary_require_pass || 'true' }}"
     ));
     assert!(workflow.contains(
@@ -259,6 +267,12 @@ fn ktp_tunnel_matrix_workflow_runs_manual_local_backend_matrix() {
     ));
     assert!(workflow.contains(
         "summary_args+=(--min-echo-throughput-mib-s \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_ECHO_THROUGHPUT_MIB_S}\")"
+    ));
+    assert!(workflow.contains(
+        "summary_args+=(--max-backend-session-limit-count \"${KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_LIMIT_COUNT}\")"
+    ));
+    assert!(workflow.contains(
+        "summary_args+=(--max-backend-session-not-found-count \"${KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_NOT_FOUND_COUNT}\")"
     ));
     assert!(workflow.contains(
         "summary_args+=(--expect-policies \"${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}\")"

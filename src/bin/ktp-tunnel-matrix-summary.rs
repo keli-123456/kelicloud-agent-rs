@@ -24,6 +24,8 @@ struct MatrixRow {
     socket_write_batch_limit_max: Option<u64>,
     socket_write_batch_limit_min: Option<u64>,
     socket_write_batch_limit_last: Option<u64>,
+    backend_session_limit_count: Option<u64>,
+    backend_session_not_found_count: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -38,6 +40,8 @@ struct GateConfig {
     max_client_p95_spread_micros: Option<u64>,
     min_throughput_mib_s: Option<f64>,
     min_echo_throughput_mib_s: Option<f64>,
+    max_backend_session_limit_count: Option<u64>,
+    max_backend_session_not_found_count: Option<u64>,
     expected_policies: Vec<String>,
     expected_clients: Vec<String>,
 }
@@ -90,6 +94,20 @@ fn run(args: impl Iterator<Item = String>) -> SummaryResult<MatrixReport> {
             "--min-echo-throughput-mib-s" => {
                 gate_config.min_echo_throughput_mib_s =
                     Some(next_f64_arg(&mut args, "--min-echo-throughput-mib-s")?);
+            }
+            "--max-backend-session-limit-count" => {
+                gate_config.max_backend_session_limit_count = Some(next_u64_arg(
+                    &mut args,
+                    "--max-backend-session-limit-count",
+                    true,
+                )?);
+            }
+            "--max-backend-session-not-found-count" => {
+                gate_config.max_backend_session_not_found_count = Some(next_u64_arg(
+                    &mut args,
+                    "--max-backend-session-not-found-count",
+                    true,
+                )?);
             }
             "--expect-policies" => {
                 gate_config.expected_policies = next_list_arg(&mut args, "--expect-policies")?;
@@ -224,6 +242,8 @@ fn summarize_tsv(
     let mut min_socket_write_batch_limit = MinMetric::default();
     let mut min_throughput = MinFloatMetric::default();
     let mut min_echo_throughput = MinFloatMetric::default();
+    let mut max_backend_session_limit_count = MaxMetric::default();
+    let mut max_backend_session_not_found_count = MaxMetric::default();
     let mut gate_failures = Vec::new();
 
     for row in &rows {
@@ -241,6 +261,8 @@ fn summarize_tsv(
         let socket_write_batch_limit = metric_text(row.socket_write_batch_limit_max);
         let socket_write_batch_limit_min = metric_text(row.socket_write_batch_limit_min);
         let socket_write_batch_limit_last = metric_text(row.socket_write_batch_limit_last);
+        let backend_session_limit_count = metric_text(row.backend_session_limit_count);
+        let backend_session_not_found_count = metric_text(row.backend_session_not_found_count);
         let throughput_mib_s = throughput_mib_s(row);
         let echo_throughput_mib_s = echo_throughput_mib_s(row);
         let relay_adaptive_high_sessions = text_value(row.relay_adaptive_high_sessions.as_deref());
@@ -252,7 +274,7 @@ fn summarize_tsv(
         let relay_adaptive_severe_cap = text_value(row.relay_adaptive_severe_cap.as_deref());
         output.push('\n');
         output.push_str(&format!(
-            "policy={} clients={} status={} elapsed_millis={} total_payload_bytes={} throughput_mib_s={} echo_elapsed_micros={} echo_throughput_mib_s={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={} relay_adaptive_high_sessions={} relay_adaptive_elevated_dwell_us={} relay_adaptive_severe_dwell_us={} relay_adaptive_elevated_cap={} relay_adaptive_severe_cap={}",
+            "policy={} clients={} status={} elapsed_millis={} total_payload_bytes={} throughput_mib_s={} echo_elapsed_micros={} echo_throughput_mib_s={} rtt_micros_p95={} rtt_client_p95_spread_micros={} socket_read_max_batch_frames={} socket_write_max_batch_frames={} socket_write_batch_limit_max={} socket_write_batch_limit_min={} socket_write_batch_limit_last={} backend_session_limit_count={} backend_session_not_found_count={} relay_adaptive_high_sessions={} relay_adaptive_elevated_dwell_us={} relay_adaptive_severe_dwell_us={} relay_adaptive_elevated_cap={} relay_adaptive_severe_cap={}",
             row.relay_batch_policy,
             row.clients,
             row.status,
@@ -268,6 +290,8 @@ fn summarize_tsv(
             socket_write_batch_limit,
             socket_write_batch_limit_min,
             socket_write_batch_limit_last,
+            backend_session_limit_count,
+            backend_session_not_found_count,
             relay_adaptive_high_sessions,
             relay_adaptive_elevated_dwell_us,
             relay_adaptive_severe_dwell_us,
@@ -304,6 +328,20 @@ fn summarize_tsv(
                 echo_throughput_mib_s,
                 gate_config.min_echo_throughput_mib_s,
             );
+            record_max_gate_failure(
+                &mut gate_failures,
+                row,
+                "backend_session_limit_count",
+                row.backend_session_limit_count,
+                gate_config.max_backend_session_limit_count,
+            );
+            record_max_gate_failure(
+                &mut gate_failures,
+                row,
+                "backend_session_not_found_count",
+                row.backend_session_not_found_count,
+                gate_config.max_backend_session_not_found_count,
+            );
             max_rtt.record(&row.relay_batch_policy, &row.clients, row.rtt_micros_p95);
             max_spread.record(
                 &row.relay_batch_policy,
@@ -335,6 +373,16 @@ fn summarize_tsv(
                 &row.relay_batch_policy,
                 &row.clients,
                 echo_throughput_mib_s,
+            );
+            max_backend_session_limit_count.record(
+                &row.relay_batch_policy,
+                &row.clients,
+                row.backend_session_limit_count,
+            );
+            max_backend_session_not_found_count.record(
+                &row.relay_batch_policy,
+                &row.clients,
+                row.backend_session_not_found_count,
             );
         }
     }
@@ -406,6 +454,32 @@ fn summarize_tsv(
         float_metric_text(min_echo_throughput.value),
         min_echo_throughput.policy.as_deref().unwrap_or("-"),
         min_echo_throughput.clients.as_deref().unwrap_or("-")
+    ));
+    output.push('\n');
+    output.push_str(&format!(
+        "max_backend_session_limit_count={} policy={} clients={}",
+        metric_text(max_backend_session_limit_count.value),
+        max_backend_session_limit_count
+            .policy
+            .as_deref()
+            .unwrap_or("-"),
+        max_backend_session_limit_count
+            .clients
+            .as_deref()
+            .unwrap_or("-")
+    ));
+    output.push('\n');
+    output.push_str(&format!(
+        "max_backend_session_not_found_count={} policy={} clients={}",
+        metric_text(max_backend_session_not_found_count.value),
+        max_backend_session_not_found_count
+            .policy
+            .as_deref()
+            .unwrap_or("-"),
+        max_backend_session_not_found_count
+            .clients
+            .as_deref()
+            .unwrap_or("-")
     ));
 
     if !gate_config.expected_policies.is_empty() {
@@ -616,6 +690,22 @@ fn parse_row(line: &str, indexes: &MatrixIndexes, line_number: usize) -> Summary
             indexes.socket_write_batch_limit_last,
             "socket_write_batch_limit_last",
             pass_row,
+            line_number,
+            &clients,
+        )?,
+        backend_session_limit_count: parse_optional_metric(
+            &fields,
+            indexes.backend_session_limit_count,
+            "backend_session_limit_count",
+            false,
+            line_number,
+            &clients,
+        )?,
+        backend_session_not_found_count: parse_optional_metric(
+            &fields,
+            indexes.backend_session_not_found_count,
+            "backend_session_not_found_count",
+            false,
             line_number,
             &clients,
         )?,
@@ -964,6 +1054,8 @@ struct MatrixIndexes {
     socket_write_batch_limit_max: Option<usize>,
     socket_write_batch_limit_min: Option<usize>,
     socket_write_batch_limit_last: Option<usize>,
+    backend_session_limit_count: Option<usize>,
+    backend_session_not_found_count: Option<usize>,
 }
 
 impl MatrixIndexes {
@@ -1002,6 +1094,10 @@ impl MatrixIndexes {
             socket_write_batch_limit_max: positions.get("socket_write_batch_limit_max").copied(),
             socket_write_batch_limit_min: positions.get("socket_write_batch_limit_min").copied(),
             socket_write_batch_limit_last: positions.get("socket_write_batch_limit_last").copied(),
+            backend_session_limit_count: positions.get("backend_session_limit_count").copied(),
+            backend_session_not_found_count: positions
+                .get("backend_session_not_found_count")
+                .copied(),
         })
     }
 }
@@ -1015,6 +1111,6 @@ fn required_column(positions: &HashMap<String, usize>, name: &str) -> SummaryRes
 
 fn print_usage() {
     eprintln!(
-        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] [--min-echo-throughput-mib-s N] [--expect-policies LIST --expect-clients LIST] <matrix-summary.tsv>"
+        "usage: ktp-tunnel-matrix-summary [--require-pass] [--fail-on-fixed-better] [--max-rtt-p95-micros N] [--max-client-p95-spread-micros N] [--min-throughput-mib-s N] [--min-echo-throughput-mib-s N] [--max-backend-session-limit-count N] [--max-backend-session-not-found-count N] [--expect-policies LIST --expect-clients LIST] <matrix-summary.tsv>"
     );
 }

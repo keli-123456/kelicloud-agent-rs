@@ -153,7 +153,7 @@ init_summary() {
         return
     fi
     mkdir -p "$(dirname "${MATRIX_SUMMARY_PATH}")"
-    printf '%s\n' "relay_batch_policy	clients	relay_adaptive_high_sessions	relay_adaptive_elevated_dwell_us	relay_adaptive_severe_dwell_us	relay_adaptive_elevated_cap	relay_adaptive_severe_cap	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	echo_elapsed_micros	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max	socket_write_batch_limit_min	socket_write_batch_limit_last" >"${MATRIX_SUMMARY_PATH}"
+    printf '%s\n' "relay_batch_policy	clients	relay_adaptive_high_sessions	relay_adaptive_elevated_dwell_us	relay_adaptive_severe_dwell_us	relay_adaptive_elevated_cap	relay_adaptive_severe_cap	rounds	profile	payload_bytes	status	elapsed_millis	log_dir	tunnel_evidence_file	ktp_evidence_file	total_payload_bytes	echo_elapsed_micros	rtt_micros_p50	rtt_micros_p95	rtt_micros_p99	rtt_micros_max	rtt_client_p95_spread_micros	socket_read_batches	socket_read_frames	socket_read_max_batch_frames	socket_write_batches	socket_write_frames	socket_write_max_batch_frames	socket_write_batch_limit_max	socket_write_batch_limit_min	socket_write_batch_limit_last	backend_session_limit_count	backend_session_not_found_count" >"${MATRIX_SUMMARY_PATH}"
 }
 
 plain_markdown_value() {
@@ -188,6 +188,17 @@ backtick_markdown_value() {
     fi
 }
 
+count_backend_log_occurrences() {
+    local log_dir="$1"
+    local pattern="$2"
+    local file="${log_dir}/backend.log"
+    if [[ ! -f "${file}" ]]; then
+        printf '%s' "0"
+        return
+    fi
+    grep -F -c -- "${pattern}" "${file}" || true
+}
+
 write_summary_row() {
     local policy="$1"
     local clients="$2"
@@ -202,6 +213,7 @@ write_summary_row() {
     local rtt_client_p95_spread_micros socket_read_batches socket_read_frames socket_read_max_batch_frames
     local socket_write_batches socket_write_frames socket_write_max_batch_frames
     local socket_write_batch_limit_max socket_write_batch_limit_min socket_write_batch_limit_last
+    local backend_session_limit_count backend_session_not_found_count
 
     if [[ -f "${tunnel_evidence_file}" ]]; then
         tunnel_evidence_summary="${tunnel_evidence_file}"
@@ -226,8 +238,10 @@ write_summary_row() {
     socket_write_batch_limit_max="$(backtick_markdown_value "${ktp_evidence_file}" "socket_write_batch_limit_max")"
     socket_write_batch_limit_min="$(backtick_markdown_value "${ktp_evidence_file}" "socket_write_batch_limit_min")"
     socket_write_batch_limit_last="$(backtick_markdown_value "${ktp_evidence_file}" "socket_write_batch_limit_last")"
+    backend_session_limit_count="$(count_backend_log_occurrences "${log_dir}" "session_limit")"
+    backend_session_not_found_count="$(count_backend_log_occurrences "${log_dir}" "tunnel relay session not found")"
 
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${policy}" \
         "${clients}" \
         "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ADAPTIVE_HIGH_SESSIONS}" \
@@ -258,7 +272,9 @@ write_summary_row() {
         "${socket_write_max_batch_frames}" \
         "${socket_write_batch_limit_max}" \
         "${socket_write_batch_limit_min}" \
-        "${socket_write_batch_limit_last}" >>"${MATRIX_SUMMARY_PATH}"
+        "${socket_write_batch_limit_last}" \
+        "${backend_session_limit_count}" \
+        "${backend_session_not_found_count}" >>"${MATRIX_SUMMARY_PATH}"
 
     if [[ "${status}" == "pass" ]]; then
         check_max_metric "${policy}" "${clients}" "rtt_micros_p95" "${rtt_micros_p95}" "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS}"

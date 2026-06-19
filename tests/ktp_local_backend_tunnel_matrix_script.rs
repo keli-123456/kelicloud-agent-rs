@@ -49,6 +49,9 @@ fn ktp_local_backend_tunnel_matrix_script_declares_contract() {
     assert!(script.contains("socket_write_batch_limit_max"));
     assert!(script.contains("socket_write_batch_limit_min"));
     assert!(script.contains("socket_write_batch_limit_last"));
+    assert!(script.contains("backend_session_limit_count"));
+    assert!(script.contains("backend_session_not_found_count"));
+    assert!(script.contains("tunnel relay session not found"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_RTT_P95_MICROS"));
     assert!(script.contains("KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS"));
     assert!(script.contains("performance_gate_failures"));
@@ -299,7 +302,7 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
     );
     let summary = std::fs::read_to_string(&summary_path).expect("summary should be written");
     assert!(summary.contains(
-        "relay_batch_policy\tclients\trelay_adaptive_high_sessions\trelay_adaptive_elevated_dwell_us\trelay_adaptive_severe_dwell_us\trelay_adaptive_elevated_cap\trelay_adaptive_severe_cap\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\techo_elapsed_micros\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last"
+        "relay_batch_policy\tclients\trelay_adaptive_high_sessions\trelay_adaptive_elevated_dwell_us\trelay_adaptive_severe_dwell_us\trelay_adaptive_elevated_cap\trelay_adaptive_severe_cap\trounds\tprofile\tpayload_bytes\tstatus\telapsed_millis\tlog_dir\ttunnel_evidence_file\tktp_evidence_file\ttotal_payload_bytes\techo_elapsed_micros\trtt_micros_p50\trtt_micros_p95\trtt_micros_p99\trtt_micros_max\trtt_client_p95_spread_micros\tsocket_read_batches\tsocket_read_frames\tsocket_read_max_batch_frames\tsocket_write_batches\tsocket_write_frames\tsocket_write_max_batch_frames\tsocket_write_batch_limit_max\tsocket_write_batch_limit_min\tsocket_write_batch_limit_last\tbackend_session_limit_count\tbackend_session_not_found_count"
     ));
     assert_summary_row_with_adaptive(
         &summary,
@@ -340,6 +343,8 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
             "64",
             "64",
             "64",
+            "1",
+            "0",
         ],
     );
     assert_summary_row_with_adaptive(
@@ -381,6 +386,8 @@ fn ktp_local_backend_tunnel_matrix_script_writes_summary_with_fake_smoke_on_linu
             "64",
             "16",
             "16",
+            "0",
+            "2",
         ],
     );
 }
@@ -463,6 +470,8 @@ sleep 5
             "-",
             "-",
             "-",
+            "0",
+            "0",
         ],
     );
 }
@@ -549,6 +558,8 @@ fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summa
             "64",
             "64",
             "64",
+            "1",
+            "0",
         ],
     );
     assert_summary_row(
@@ -589,6 +600,8 @@ fn ktp_local_backend_tunnel_matrix_script_latency_gate_fails_after_writing_summa
             "64",
             "16",
             "16",
+            "0",
+            "2",
         ],
     );
 }
@@ -720,6 +733,16 @@ cat >"${SMOKE_LOG_DIR}/ktp-live-canary.evidence.md" <<EOF
 
 - \`socket_read_max_batch_frames\`: \`${socket_max_batch}\`
 EOF
+if [[ "${KELICLOUD_TUNNEL_ECHO_CLIENTS}" == "1" ]]; then
+  cat >"${SMOKE_LOG_DIR}/backend.log" <<EOF
+level=warn msg="session_limit reached"
+EOF
+else
+  cat >"${SMOKE_LOG_DIR}/backend.log" <<EOF
+level=warn msg="tunnel relay session not found"
+level=warn msg="tunnel relay session not found"
+EOF
+fi
 "#
 }
 

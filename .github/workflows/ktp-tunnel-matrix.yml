@@ -91,6 +91,14 @@ on:
         description: Optional minimum echo-only throughput in MiB/s for each passing row.
         required: false
         default: ""
+      max_backend_session_limit_count:
+        description: Maximum allowed backend session_limit log count for each passing row.
+        required: false
+        default: "0"
+      max_backend_session_not_found_count:
+        description: Maximum allowed backend tunnel relay session-not-found log count for each passing row.
+        required: false
+        default: "0"
       summary_require_pass:
         description: Fail the summary step when any matrix row is not pass.
         required: true
@@ -132,6 +140,8 @@ env:
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MAX_CLIENT_P95_SPREAD_MICROS: ${{ github.event_name == 'workflow_dispatch' && inputs.max_client_p95_spread_micros || '' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_THROUGHPUT_MIB_S: ${{ github.event_name == 'workflow_dispatch' && inputs.min_throughput_mib_s || '' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_ECHO_THROUGHPUT_MIB_S: ${{ github.event_name == 'workflow_dispatch' && inputs.min_echo_throughput_mib_s || '' }}
+  KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_LIMIT_COUNT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_backend_session_limit_count || '0' }}
+  KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_NOT_FOUND_COUNT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_backend_session_not_found_count || '0' }}
   KTP_TUNNEL_MATRIX_SUMMARY_REQUIRE_PASS: ${{ github.event_name == 'workflow_dispatch' && inputs.summary_require_pass || 'true' }}
   KTP_TUNNEL_MATRIX_SUMMARY_FAIL_ON_FIXED_BETTER: ${{ github.event_name == 'workflow_dispatch' && inputs.summary_fail_on_fixed_better || 'false' }}
   KTP_LOCAL_BACKEND_TUNNEL_MATRIX_LOG_DIR: tunnel-matrix-logs
@@ -211,6 +221,8 @@ jobs:
             if [[ -n "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_ECHO_THROUGHPUT_MIB_S}" ]]; then
               summary_args+=(--min-echo-throughput-mib-s "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_ECHO_THROUGHPUT_MIB_S}")
             fi
+            summary_args+=(--max-backend-session-limit-count "${KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_LIMIT_COUNT}")
+            summary_args+=(--max-backend-session-not-found-count "${KTP_TUNNEL_MATRIX_MAX_BACKEND_SESSION_NOT_FOUND_COUNT}")
             summary_args+=(--expect-policies "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES}")
             summary_args+=(--expect-clients "${KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS}")
             cargo run --locked --bin ktp-tunnel-matrix-summary -- "${summary_args[@]}" "${summary}" | tee "${report}"
