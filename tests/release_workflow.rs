@@ -10,6 +10,9 @@ fn release_workflow_builds_linux_assets_used_by_installer() {
     assert!(workflow.contains("contents: write"));
     assert!(workflow.contains("CC_x86_64_unknown_linux_musl: musl-gcc"));
     assert!(workflow.contains("apt-get install -y --no-install-recommends musl-tools"));
+    assert!(workflow.contains("for attempt in 1 2 3; do"));
+    assert!(workflow.contains("cargo install cross --locked"));
+    assert!(workflow.contains("sleep $((attempt * 10))"));
     assert!(workflow.contains("cross build --locked --release --target"));
     assert!(workflow.contains("sha256sum * > SHA256SUMS"));
     assert!(workflow.contains("sha256sum -c SHA256SUMS"));
