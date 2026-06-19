@@ -905,6 +905,43 @@ def percentile(sorted_values, percent):
     index = max(0, math.ceil((percent / 100.0) * len(sorted_values)) - 1)
     return sorted_values[min(index, len(sorted_values) - 1)]
 
+def compact_text(value, max_len=240):
+    text = str(value).replace("\n", "\\n").replace("|", "\\|")
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+def describe_response(response, expected):
+    return (
+        f"unexpected echo response len={len(response)} expected_len={len(expected)} "
+        f"response_prefix={response[:128]!r} expected_prefix={expected[:128]!r}"
+    )
+
+def write_tunnel_echo_failure_evidence(detail):
+    evidence_dir = os.path.dirname(evidence_file)
+    if evidence_dir:
+        os.makedirs(evidence_dir, exist_ok=True)
+    with open(evidence_file, "w", encoding="utf-8") as fh:
+        fh.write("# Tunnel Echo Evidence\n\n")
+        fh.write("- status: failed\n")
+        fh.write(f"- profile: {profile}\n")
+        fh.write(f"- rounds: {rounds}\n")
+        fh.write(f"- clients: {client_count}\n")
+        fh.write(f"- expected_samples: {expected_samples}\n")
+        fh.write(f"- collected_samples: {len(samples)}\n")
+        fh.write(f"- echo_elapsed_micros: {echo_elapsed_micros}\n")
+        fh.write(f"- failure: {compact_text(detail)}\n")
+        if errors:
+            fh.write("\n## Errors\n\n")
+            for error in errors[:20]:
+                fh.write(f"- {compact_text(error)}\n")
+        if samples:
+            fh.write("\n## Samples\n\n")
+            fh.write("| client | round | payload_bytes | rtt_micros |\n")
+            fh.write("| ---: | ---: | ---: | ---: |\n")
+            for sample in sorted(samples, key=lambda item: (item["client"], item["round"])):
+                fh.write(f"| {sample['client']} | {sample['round']} | {sample['payload_bytes']} | {sample['rtt_micros']} |\n")
+
 def recv_expected_response(sock, expected_len):
     response = b""
     while len(response) < expected_len:
@@ -936,7 +973,7 @@ def client_worker(client_id):
                                 "rtt_micros": int((time.perf_counter() - started) * 1_000_000),
                             })
                         break
-                    last_error = f"client {client_id} round {round}: unexpected echo response: {response!r}"
+                    last_error = f"client {client_id} round {round}: {describe_response(response, expected)}"
             except Exception as exc:
                 last_error = f"client {client_id} round {round}: {exc}"
             time.sleep(1)
@@ -958,6 +995,7 @@ echo_elapsed_micros = max(1, int((time.perf_counter() - echo_started) * 1_000_00
 expected_samples = client_count * rounds
 if errors or len(samples) != expected_samples:
     detail = errors[0] if errors else f"expected {expected_samples} samples, got {len(samples)}"
+    write_tunnel_echo_failure_evidence(detail)
     print(f"tunnel relay echo failed: {detail}", file=sys.stderr)
     raise SystemExit(1)
 

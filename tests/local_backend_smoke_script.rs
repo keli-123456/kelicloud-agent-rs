@@ -97,6 +97,19 @@ fn local_backend_smoke_script_reads_tunnel_echo_until_expected_length() {
 }
 
 #[test]
+fn local_backend_smoke_script_writes_tunnel_echo_failure_evidence() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+
+    assert!(script.contains("def write_tunnel_echo_failure_evidence(detail):"));
+    assert!(script.contains("def describe_response(response, expected):"));
+    assert!(script.contains("- status: failed"));
+    assert!(script.contains("unexpected echo response len="));
+    assert!(script.contains("response_prefix="));
+    assert!(script.contains("expected_prefix="));
+    assert!(script.contains("write_tunnel_echo_failure_evidence(detail)"));
+}
+
+#[test]
 fn local_backend_smoke_script_prints_agent_logs_before_backend_logs() {
     let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
 
