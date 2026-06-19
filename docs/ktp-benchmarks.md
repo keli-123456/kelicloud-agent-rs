@@ -1650,12 +1650,13 @@ The `KTP Tunnel Matrix` workflow now writes this output to
 keep the light `fixed` policy self-check; manual workflow dispatch defaults to
 `fixed adaptive` so scheduling experiments can collect comparable real
 forwarding rows without editing the workflow. Push and manual workflow runs use
-conservative default throughput floors of `0.0001 MiB/s` for both full-smoke and
-echo-only throughput, so a row with missing, zero, or badly regressed
-throughput cannot pass by only satisfying connectivity and latency gates.
-Manual dispatch also exposes `min_throughput_mib_s` and
-`min_echo_throughput_mib_s` to raise, lower, or disable those summary
-throughput gates.
+a conservative default echo-only throughput floor of `0.0001 MiB/s`, so a row
+with missing, zero, or badly regressed data-plane echo throughput cannot pass by
+only satisfying connectivity and latency gates. The full-smoke
+`min_throughput_mib_s` floor remains opt-in because that metric includes
+backend and agent startup time. Manual dispatch exposes both
+`min_throughput_mib_s` and `min_echo_throughput_mib_s` to raise, lower, or
+disable those summary throughput gates.
 The workflow passes the requested policy list and client-count list to
 `ktp-tunnel-matrix-summary` with `--expect-policies` and `--expect-clients`.
 That makes the report fail when a policy/client combination is missing, even if
