@@ -13,16 +13,17 @@ use kelicloud_agent_rs::transport::{HeaderPair, TransportError};
 use kelicloud_agent_rs::tunnel_async_runtime::TunnelQueueDwellStatsSnapshot;
 use kelicloud_agent_rs::tunnel_control::SelectedTunnelRule;
 use kelicloud_agent_rs::tunnel_data::{
-    build_ktp_tcp_auth_preface, derive_ktp_tcp_crypto_key, run_tunnel_data_once,
-    run_tunnel_data_session, run_tunnel_data_session_with_ready_source,
+    build_ktp_tcp_auth_preface, build_ktp_tcp_auth_preface_with_version, derive_ktp_tcp_crypto_key,
+    derive_ktp_tcp_crypto_key_with_version, run_tunnel_data_once, run_tunnel_data_session,
+    run_tunnel_data_session_with_ready_source,
     run_tunnel_data_session_with_ready_source_and_runtime,
     run_tunnel_data_session_with_ready_source_runtime_and_diagnostics,
     run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter,
     tunnel_data_diagnostics_line, tunnel_data_reconnect_delay_after_attempt,
-    tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport, SharedTunnelDataDiagnostics,
-    SharedTunnelDataReadyState, TungsteniteTunnelDataTransport, TunnelDataDiagnosticsSnapshot,
-    TunnelDataReadySource, TunnelDataReadyState, TunnelDataRuleFailure, TunnelDataSocket,
-    TunnelDataTransport,
+    tunnel_data_startup_line, KtpEncryptedTcpTunnelDataTransport, KtpTcpAuthVersion,
+    SharedTunnelDataDiagnostics, SharedTunnelDataReadyState, TungsteniteTunnelDataTransport,
+    TunnelDataDiagnosticsSnapshot, TunnelDataReadySource, TunnelDataReadyState,
+    TunnelDataRuleFailure, TunnelDataSocket, TunnelDataTransport,
 };
 use kelicloud_agent_rs::tunnel_runtime::TunnelSessionRuntime;
 
@@ -1016,6 +1017,35 @@ fn ktp_tcp_auth_preface_hides_token_and_derives_session_key() {
 }
 
 #[test]
+fn ktp_tcp_auth_v2_uses_hkdf_style_session_key_with_stable_vector() {
+    let token = "client-token-secret";
+    let nonce = test_ktp_tcp_auth_nonce();
+    let preface = build_ktp_tcp_auth_preface_with_version(token, nonce, KtpTcpAuthVersion::V2)
+        .expect("v2 auth preface should build");
+
+    assert_eq!(&preface[0..4], b"KTA2");
+    assert_eq!(&preface[4..20], &nonce);
+    assert_eq!(preface.len(), 84);
+    assert_eq!(
+        bytes_to_hex(&preface),
+        "4b544132000102030405060708090a0b0c0d0e0f3f336d6c5736f2980a51def2c52df1c39dcea203b5b0cbef109124e9a68386beb8b496942e7f24520e9e5ab9e6b1f22a435f79a9a409cea2083cf5e2722fb444"
+    );
+    assert!(!preface
+        .windows(token.as_bytes().len())
+        .any(|window| window == token.as_bytes()));
+    assert_eq!(
+        bytes_to_hex(
+            &derive_ktp_tcp_crypto_key_with_version(token, nonce, KtpTcpAuthVersion::V2).to_bytes()
+        ),
+        "82be8be2fe1385574d06526790182f076ce2ba37105ae18d2063d4de70ed330d"
+    );
+    assert_ne!(
+        derive_ktp_tcp_crypto_key(token, nonce),
+        derive_ktp_tcp_crypto_key_with_version(token, nonce, KtpTcpAuthVersion::V2)
+    );
+}
+
+#[test]
 fn ktp_tcp_tunnel_data_transport_sends_auth_preface_before_hello() {
     let token = "client-token-secret";
     let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ktp tcp listener");
@@ -1080,6 +1110,79 @@ fn ktp_tcp_tunnel_data_transport_sends_auth_preface_before_hello() {
         .recv_timeout(Duration::from_secs(2))
         .expect("server should capture auth and frames");
     assert_eq!(&preface[0..4], b"KTA1");
+    assert_eq!(hello.frame_type, FrameType::Hello);
+    assert_eq!(ready.frame_type, FrameType::Ready);
+    server.join().expect("server thread should finish");
+}
+
+#[test]
+fn ktp_tcp_tunnel_data_transport_can_send_v2_auth_preface_before_hello() {
+    let token = "client-token-secret";
+    let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ktp tcp listener");
+    std_listener
+        .set_nonblocking(true)
+        .expect("set listener nonblocking");
+    let addr = std_listener.local_addr().expect("listener addr");
+    let (tx, rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("build ktp tcp server runtime");
+        runtime.block_on(async move {
+            use tokio::io::AsyncReadExt;
+
+            let listener = tokio::net::TcpListener::from_std(std_listener).expect("tokio listener");
+            let (mut stream, _) = listener.accept().await.expect("accept ktp tcp client");
+            let mut preface = [0u8; 84];
+            stream
+                .read_exact(&mut preface)
+                .await
+                .expect("read v2 auth preface");
+            let mut nonce = [0u8; 16];
+            nonce.copy_from_slice(&preface[4..20]);
+            let key = derive_ktp_tcp_crypto_key_with_version(token, nonce, KtpTcpAuthVersion::V2);
+            let mut server = KtpEncryptedTcpStream::from_stream(
+                stream,
+                key,
+                KtpCryptoDirection::RelayToClient,
+                KtpCryptoDirection::ClientToRelay,
+                KTP_MAX_PAYLOAD_LEN,
+                1024 * 1024,
+            );
+            let hello = server.next_frame().await.expect("read tunnel hello");
+            server
+                .send_frame(&KtpFrame::connection(FrameType::HelloAck, Vec::new()))
+                .await
+                .expect("send tunnel hello ack");
+            let ready = server.next_frame().await.expect("read tunnel ready");
+            tx.send((preface.to_vec(), hello, ready))
+                .expect("send captured frames");
+        });
+    });
+
+    let mut ready = TunnelDataReadyState::empty("rev-ktp-auth-v2");
+    ready.ingress_rule_ids.push(7);
+    let mut transport = KtpEncryptedTcpTunnelDataTransport::new_with_token_auth_version(
+        token,
+        KtpTcpAuthVersion::V2,
+    );
+
+    run_tunnel_data_once(
+        &format!("ktp+tcp://{addr}"),
+        &[],
+        "node-ktp",
+        "0.2.3",
+        &ready,
+        &mut transport,
+    )
+    .expect("ktp tcp tunnel data once should succeed with v2 auth");
+
+    let (preface, hello, ready) = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("server should capture v2 auth and frames");
+    assert_eq!(&preface[0..4], b"KTA2");
     assert_eq!(hello.frame_type, FrameType::Hello);
     assert_eq!(ready.frame_type, FrameType::Ready);
     server.join().expect("server thread should finish");

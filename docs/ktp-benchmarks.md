@@ -184,6 +184,18 @@ recent cap in the diagnostics window.
 Treat the generated Markdown file as the live-log companion to
 `ktp-e2e-bench --latency` output.
 
+KTP TCP auth compatibility:
+
+- `KTA1` remains the default production auth preface and derives the traffic key
+  with the original v1 token/nonce hash path.
+- `KTA2` is implemented as an opt-in compatibility path for the next rollout
+  step. It keeps the same 84-byte preface shape but uses `KTA2` magic and
+  HKDF-style HMAC-SHA256 extract/expand labels for auth tag and traffic-key
+  derivation.
+- The Go backend accepts both `KTA1` and `KTA2`, while the Rust agent still
+  defaults to `KTA1`. That keeps rollback simple until live backend evidence is
+  collected for switching the default.
+
 KTP codec cursor microbench:
 
 ```bash

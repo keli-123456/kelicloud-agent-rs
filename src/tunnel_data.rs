@@ -694,7 +694,10 @@ pub struct KtpEncryptedTcpTunnelDataTransport {
 #[derive(Debug, Clone)]
 enum KtpEncryptedTcpTunnelDataAuth {
     StaticKey(KtpCryptoKey),
-    Token(String),
+    Token {
+        token: String,
+        version: KtpTcpAuthVersion,
+    },
 }
 
 impl KtpEncryptedTcpTunnelDataTransport {
@@ -708,8 +711,15 @@ impl KtpEncryptedTcpTunnelDataTransport {
     }
 
     pub fn new_with_token(token: &str) -> Self {
+        Self::new_with_token_auth_version(token, KtpTcpAuthVersion::V1)
+    }
+
+    pub fn new_with_token_auth_version(token: &str, version: KtpTcpAuthVersion) -> Self {
         Self {
-            auth: KtpEncryptedTcpTunnelDataAuth::Token(token.trim().to_string()),
+            auth: KtpEncryptedTcpTunnelDataAuth::Token {
+                token: token.trim().to_string(),
+                version,
+            },
             read_timeout: Duration::from_secs(2),
             max_payload_len: KTP_MAX_PAYLOAD_LEN,
             max_buffer_len: 1024 * 1024,
@@ -741,14 +751,17 @@ impl TunnelDataTransport for KtpEncryptedTcpTunnelDataTransport {
             .map_err(|error| ktp_tcp_request_failed("ktp_tcp_connect_failed", error))?;
         let (stream, key) = match &self.auth {
             KtpEncryptedTcpTunnelDataAuth::StaticKey(key) => (stream, key.clone()),
-            KtpEncryptedTcpTunnelDataAuth::Token(token) => {
+            KtpEncryptedTcpTunnelDataAuth::Token { token, version } => {
                 let nonce = random_ktp_tcp_auth_nonce()?;
-                let preface = build_ktp_tcp_auth_preface(token, nonce)?;
+                let preface = build_ktp_tcp_auth_preface_with_version(token, nonce, *version)?;
                 let mut stream = stream;
                 runtime
                     .block_on(stream.write_all(&preface))
                     .map_err(|error| ktp_tcp_request_failed("ktp_tcp_auth_write_failed", error))?;
-                (stream, derive_ktp_tcp_crypto_key(token, nonce))
+                (
+                    stream,
+                    derive_ktp_tcp_crypto_key_with_version(token, nonce, *version),
+                )
             }
         };
         let stream = KtpEncryptedTcpStream::from_stream(
@@ -768,7 +781,30 @@ impl TunnelDataTransport for KtpEncryptedTcpTunnelDataTransport {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KtpTcpAuthVersion {
+    V1,
+    V2,
+}
+
+impl KtpTcpAuthVersion {
+    fn magic(self) -> &'static [u8; 4] {
+        match self {
+            Self::V1 => b"KTA1",
+            Self::V2 => b"KTA2",
+        }
+    }
+}
+
 pub fn build_ktp_tcp_auth_preface(token: &str, nonce: [u8; 16]) -> Result<Vec<u8>, TransportError> {
+    build_ktp_tcp_auth_preface_with_version(token, nonce, KtpTcpAuthVersion::V1)
+}
+
+pub fn build_ktp_tcp_auth_preface_with_version(
+    token: &str,
+    nonce: [u8; 16],
+    version: KtpTcpAuthVersion,
+) -> Result<Vec<u8>, TransportError> {
     let token = token.trim();
     if token.is_empty() {
         return Err(TransportError::EmptyToken);
@@ -776,19 +812,30 @@ pub fn build_ktp_tcp_auth_preface(token: &str, nonce: [u8; 16]) -> Result<Vec<u8
 
     let fingerprint = Sha256::digest(token.as_bytes());
     let mut preface = Vec::with_capacity(84);
-    preface.extend_from_slice(b"KTA1");
+    preface.extend_from_slice(version.magic());
     preface.extend_from_slice(&nonce);
     preface.extend_from_slice(&fingerprint);
-    let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes())
-        .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
-    mac.update(b"kelicloud ktp tcp auth v1");
-    mac.update(&nonce);
-    mac.update(&fingerprint);
-    preface.extend_from_slice(&mac.finalize().into_bytes());
+    let tag = ktp_tcp_auth_tag(token, nonce, &fingerprint, version)?;
+    preface.extend_from_slice(&tag);
     Ok(preface)
 }
 
 pub fn derive_ktp_tcp_crypto_key(token: &str, nonce: [u8; 16]) -> KtpCryptoKey {
+    derive_ktp_tcp_crypto_key_with_version(token, nonce, KtpTcpAuthVersion::V1)
+}
+
+pub fn derive_ktp_tcp_crypto_key_with_version(
+    token: &str,
+    nonce: [u8; 16],
+    version: KtpTcpAuthVersion,
+) -> KtpCryptoKey {
+    match version {
+        KtpTcpAuthVersion::V1 => derive_ktp_tcp_crypto_key_v1(token, nonce),
+        KtpTcpAuthVersion::V2 => derive_ktp_tcp_crypto_key_v2(token, nonce),
+    }
+}
+
+fn derive_ktp_tcp_crypto_key_v1(token: &str, nonce: [u8; 16]) -> KtpCryptoKey {
     let mut hash = Sha256::new();
     hash.update(b"kelicloud ktp tcp data v1");
     hash.update(token.trim().as_bytes());
@@ -797,6 +844,55 @@ pub fn derive_ktp_tcp_crypto_key(token: &str, nonce: [u8; 16]) -> KtpCryptoKey {
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(&digest);
     KtpCryptoKey::from_bytes(bytes)
+}
+
+fn derive_ktp_tcp_crypto_key_v2(token: &str, nonce: [u8; 16]) -> KtpCryptoKey {
+    let prk = ktp_tcp_auth_v2_prk(token, nonce);
+    KtpCryptoKey::from_bytes(hmac_sha256(
+        &prk,
+        &[b"kelicloud ktp tcp data v2 key", &[1u8]],
+    ))
+}
+
+fn ktp_tcp_auth_tag(
+    token: &str,
+    nonce: [u8; 16],
+    fingerprint: &[u8],
+    version: KtpTcpAuthVersion,
+) -> Result<[u8; 32], TransportError> {
+    match version {
+        KtpTcpAuthVersion::V1 => {
+            let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes())
+                .map_err(|error| TransportError::RequestFailed(error.to_string()))?;
+            mac.update(b"kelicloud ktp tcp auth v1");
+            mac.update(&nonce);
+            mac.update(fingerprint);
+            let mut tag = [0u8; 32];
+            tag.copy_from_slice(&mac.finalize().into_bytes());
+            Ok(tag)
+        }
+        KtpTcpAuthVersion::V2 => {
+            let prk = ktp_tcp_auth_v2_prk(token, nonce);
+            Ok(hmac_sha256(
+                &prk,
+                &[b"kelicloud ktp tcp auth v2", &nonce, fingerprint],
+            ))
+        }
+    }
+}
+
+fn ktp_tcp_auth_v2_prk(token: &str, nonce: [u8; 16]) -> [u8; 32] {
+    hmac_sha256(&nonce, &[token.trim().as_bytes()])
+}
+
+fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
+    for part in parts {
+        mac.update(part);
+    }
+    let mut output = [0u8; 32];
+    output.copy_from_slice(&mac.finalize().into_bytes());
+    output
 }
 
 fn random_ktp_tcp_auth_nonce() -> Result<[u8; 16], TransportError> {
