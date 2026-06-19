@@ -2109,6 +2109,69 @@ Notes:
   real-forwarding latency and throughput signal next to the KTP socket
   diagnostics.
 
+## 2026-06-19 v0.2.6 Release Host Close-Boundary And KTP Bench Sample
+
+This sample validates the `v0.2.6` agent release after tightening the async
+runtime close boundary so queued frames for a remotely closed session are
+dropped before they can be relayed.
+
+Environment:
+
+- Host: `2.56.116.39`
+- OS: Debian GNU/Linux 12 (bookworm)
+- Kernel: `6.1.0-31-amd64`
+- Rust: `rustc 1.95.0 (59807616e 2026-04-14)`
+- Cargo: `cargo 1.95.0 (f2d3ce0bd 2026-03-21)`
+- Agent commit: `9f3080f`
+- Release tag: `v0.2.6`
+- Run directory:
+  `/tmp/kelicloud-agent-rs-v026-evidence-20260619T105900Z`
+- Built binary version: `kelicloud-agent-rs 0.2.6`
+
+Focused Linux gates:
+
+```text
+cargo test --locked --test tunnel_async_runtime async_runtime_close_session_drops_queued_outbound_frames_for_that_session -- --nocapture
+test async_runtime_close_session_drops_queued_outbound_frames_for_that_session ... ok
+
+cargo test --locked --test tunnel_runtime tcp_runtime_two_agent_relay_simulation_forwards_echo -- --nocapture
+test tcp_runtime_two_agent_relay_simulation_forwards_echo ... ok
+
+cargo test --locked --test ktp_transport encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips -- --nocapture
+test encrypted_tcp_stream_handles_100_concurrent_loopback_round_trips ... ok
+```
+
+Release-mode runtime e2e samples:
+
+| Profile | Runs | Clients | Frames / Client | Payload Cap | Bytes / Run | Elapsed Min | Elapsed Median | Elapsed Max | Throughput Min | Throughput Median | Throughput Max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| fixed | 3 | 1 | 1024 | 1024 B | 1048576 B | 179.054 ms | 208.393 ms | 263.521 ms | 3.795 MiB/s | 4.799 MiB/s | 5.585 MiB/s |
+| fixed | 3 | 4 | 256 | 1024 B | 1048576 B | 69.608 ms | 88.382 ms | 123.499 ms | 8.097 MiB/s | 11.315 MiB/s | 14.366 MiB/s |
+| fixed | 3 | 4 | 256 | 16384 B | 16777216 B | 89.908 ms | 96.731 ms | 125.377 ms | 127.615 MiB/s | 165.406 MiB/s | 177.960 MiB/s |
+
+RDP-like runtime sample:
+
+```text
+ktp_e2e_bench mode=runtime_ingress_egress transport=ktp_tcp bridge=batch profile=rdp_like runs=3 clients=4 frames=32 payload_bytes=8192 client_payload_reused=1 bytes=123648 elapsed_ms_min=13.804 elapsed_ms_median=14.252 elapsed_ms_max=15.552 throughput_mib_s_min=7.582 throughput_mib_s_median=8.274 throughput_mib_s_max=8.542 rtt_micros_samples=384 rtt_micros_p50=244 rtt_micros_p95=1189 rtt_micros_p99=2195 rtt_micros_max=2496 rtt_client_p95_micros_min=1050 rtt_client_p95_micros_max=1304 rtt_client_p95_spread_micros=254 rtt_client_max_micros_max=2496 relay_batch_policy=fixed relay_batch_frames=64 relay_batch_frames_effective=64 relay_adaptive_high_sessions=8 relay_adaptive_elevated_dwell_us=50000 relay_adaptive_severe_dwell_us=250000 relay_adaptive_elevated_cap=16 relay_adaptive_severe_cap=8 relay_turns=566 relay_empty_turns=59 relay_yield_turns=563 relay_wait_turns=436 ingress_frames=396 egress_frames=394 ingress_data_frames=384 egress_data_frames=384 ingress_batches=284 egress_batches=303 ingress_max_batch_frames=4 egress_max_batch_frames=4
+```
+
+Encrypted KTP TCP carrier samples:
+
+| Direction | Runs | Frames | Payload | Bytes / Run | Total Bytes | Batch Frames | Elapsed Min | Elapsed Median | Elapsed Max | Throughput Min | Throughput Median | Throughput Max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| client-to-relay batch write | 3 | 4096 | 16384 B | 67108864 B | 201326592 B | 64 | 188.232 ms | 196.517 ms | 198.181 ms | 322.937 MiB/s | 325.671 MiB/s | 340.006 MiB/s |
+| relay-to-client batch read | 3 | 4096 | 16384 B | 67108864 B | 201326592 B | 64 | 156.114 ms | 203.894 ms | 225.107 ms | 284.310 MiB/s | 313.889 MiB/s | 409.957 MiB/s |
+
+Notes:
+
+- This confirms the new close-boundary regression on Linux, not only on the
+  Windows development host.
+- The e2e numbers use loopback relay simulation inside the Rust runtime. They
+  are regression evidence for throughput and latency shape, not production
+  WAN capacity claims.
+- The carrier numbers measure encrypted KTP TCP framing, AEAD records, and
+  batch read/write paths over local loopback.
+
 Next evidence to collect:
 
 - Repeat KTA2 on a production live canary after the 2026-06-19 full
