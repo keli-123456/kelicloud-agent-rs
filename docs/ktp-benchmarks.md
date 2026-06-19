@@ -649,6 +649,103 @@ Notes:
   throughput ceiling; this row still includes local backend, single-host loopback
   scheduling, and small RDP-like payloads.
 
+## 2026-06-19 Release Candidate KTP TCP Diagnostics Gate
+
+Code:
+
+- Repository: `kelicloud-agent-rs`
+- Commit: `c06ffdb`
+- Change under test: stable KTP TCP transport diagnostics and condition-based
+  outbound queue waiting.
+- Build mode:
+  `cargo build --locked --release --bin kelicloud-agent-rs --bin ktp-codec-bench --bin ktp-tunnel-bench --bin ktp-e2e-bench --bin ktp-carrier-matrix-summary`
+
+Host:
+
+- OS: Debian GNU/Linux 12
+- Kernel: `6.1.0-31-amd64`
+- Architecture: `x86_64`
+- Rust: `rustc 1.95.0`
+- Disk before gate: `/dev/vda1 79G 24G 52G 32%`
+- Disk during build before cleanup: `/dev/vda1 79G 26G 50G 34%`
+- Disk after cleanup: `/dev/vda1 79G 24G 52G 32%`
+
+Focused Linux tests:
+
+```bash
+cargo test --locked --test ktp_transport --test tunnel_data --test tunnel_async_runtime --test tunnel_runtime -- --nocapture
+```
+
+Result:
+
+| Test target | Result |
+| --- | --- |
+| `ktp_transport` | 19 passed |
+| `tunnel_async_runtime` | 22 passed |
+| `tunnel_data` | 37 passed |
+| `tunnel_runtime` | 34 passed |
+
+Carrier matrix gate:
+
+```bash
+KTP_CARRIER_MATRIX_CSV=/tmp/ktp-carrier-matrix.csv \
+KTP_CARRIER_MATRIX_RUNS=1 \
+KTP_CARRIER_MATRIX_FRAMES="256" \
+KTP_CARRIER_MATRIX_PAYLOAD_BYTES="1024" \
+bash scripts/ktp-carrier-matrix.sh
+
+ktp-carrier-matrix-summary \
+  --require-ktp-aead \
+  --require-batch-reuse \
+  --require-positive-throughput \
+  /tmp/ktp-carrier-matrix.csv
+```
+
+Summary:
+
+| Direction | Median Throughput | Batch Evidence |
+| --- | ---: | --- |
+| client to relay | 75.005 MiB/s | baseline |
+| client to relay batch write | 150.072 MiB/s | `write_batch_frames=64`, `write_batch_reused=1` |
+| relay to client batch read | 68.534 MiB/s | `read_batch_frames=64`, `read_batch_reused=1` |
+
+Codec release samples:
+
+| Mode | Frames | Payload | Throughput | Evidence |
+| --- | ---: | ---: | ---: | --- |
+| stream | 512 | 4096 B | 3703.045 MiB/s | `cursor_compaction=1` |
+| crypto | 512 | 4096 B | 331.407 MiB/s | `cursor_compaction=1` |
+
+RDP-like runtime sample:
+
+```bash
+ktp-e2e-bench \
+  --profile rdp-like \
+  --diagnostics \
+  --latency \
+  --relay-wait-timeout-us 100 \
+  --runs 1 \
+  --clients 2 \
+  --frames 16 \
+  --payload-bytes 8192
+```
+
+| Clients | Frames / Client | Payload Cap | Bytes | Elapsed | Throughput | RTT p50 | RTT p95 | RTT p99 | RTT Max | Client p95 Spread | Ingress Max Batch | Egress Max Batch |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 16 | 8192 B | 30912 | 9.159 ms | 3.219 MiB/s | 307 us | 1945 us | 2188 us | 2188 us | 243 us | 3 | 2 |
+
+Notes:
+
+- The carrier matrix summary returned `gate=pass` with AEAD, batch-write reuse,
+  batch-read reuse, and positive throughput evidence.
+- The RDP-like sample is a quick release-candidate signal after the diagnostics
+  change. It is intentionally smaller than the full tunnel matrix and is not a
+  production capacity claim.
+- The focused test set includes the stable KTP TCP error-code regression
+  (`ktp_tcp_tunnel_data_connect_failure_has_stable_code`) and the condition
+  wait regression for outbound queue wakeups
+  (`async_frame_queue_drain_after_wait_wakes_when_frame_is_pushed`).
+
 ## 2026-06-18 Release Host Latency Sample
 
 Code:
