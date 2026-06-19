@@ -595,6 +595,60 @@ Notes:
   sample. The next scheduling change should repeat this matrix with a larger
   payload or more rounds before raising the default floor.
 
+## 2026-06-19 Release Host Adaptive Session-Lifecycle Regression
+
+Code:
+
+- Agent repository: `kelicloud-agent-rs`
+- Backend repository: `kelicloud`
+- Agent change under test: `scripts/smoke-local-backend.sh` sizes tunnel rule
+  `max_concurrent_sessions` to at least `max(32, echo_clients)`.
+- Backend change under test: stale session frames after route close are ignored
+  instead of surfacing `tunnel relay session not found`.
+- Remote evidence root:
+  `/tmp/kelicloud-relay-close-matrix-run-r4`
+
+Command shape:
+
+```bash
+export KELICLOUD_BACKEND_PATH=/tmp/kelicloud-backend-relay-close-current
+export KELICLOUD_PREPARE_FRONTEND=false
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENTS="8"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_RELAY_BATCH_POLICIES="adaptive"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_ROUNDS=8
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PROFILE="rdp-like"
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_PAYLOAD_BYTES=8192
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_BATCH_FRAMES=2
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_MIN_MAX_WRITE_BATCH_FRAMES=2
+export KTP_LOCAL_BACKEND_TUNNEL_MATRIX_CLIENT_TIMEOUT_SECONDS=600
+
+bash scripts/ktp-local-backend-tunnel-matrix.sh
+```
+
+Tunnel matrix row:
+
+| Policy | Clients | Status | Echo Elapsed | Echo Throughput | RTT p95 | Client p95 Spread | Read Max Batch | Write Max Batch |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| adaptive | 8 | pass | 29299749 us | 0.003 MiB/s | 19824 us | 11230 us | 12 | 16 |
+
+Regression checks:
+
+```text
+session_limit_count=0
+tunnel_relay_session_not_found_count=0
+```
+
+Notes:
+
+- Earlier release-host reruns of this shape failed once the smoke tunnel rule
+  capped concurrent sessions below the client count or leaked half-closed
+  routes. This sample verifies the test harness no longer creates that false
+  bottleneck and the backend no longer reports stale late frames as active
+  routing errors.
+- The echo throughput remains a compatibility signal, not a production
+  throughput ceiling; this row still includes local backend, single-host loopback
+  scheduling, and small RDP-like payloads.
+
 ## 2026-06-18 Release Host Latency Sample
 
 Code:

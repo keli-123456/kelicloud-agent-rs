@@ -16,6 +16,7 @@ KTP_DIAGNOSTICS_TIMEOUT_SECONDS="${KTP_DIAGNOSTICS_TIMEOUT_SECONDS:-45}"
 KTP_LIVE_CANARY_MIN_LINES="${KTP_LIVE_CANARY_MIN_LINES:-1}"
 KELICLOUD_TUNNEL_ECHO_ROUNDS="${KELICLOUD_TUNNEL_ECHO_ROUNDS:-1}"
 KELICLOUD_TUNNEL_ECHO_CLIENTS="${KELICLOUD_TUNNEL_ECHO_CLIENTS:-1}"
+KELICLOUD_TUNNEL_MAX_CONCURRENT_SESSIONS="${KELICLOUD_TUNNEL_MAX_CONCURRENT_SESSIONS:-}"
 KELICLOUD_TUNNEL_ECHO_PROFILE="${KELICLOUD_TUNNEL_ECHO_PROFILE:-fixed}"
 KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES="${KELICLOUD_TUNNEL_ECHO_PAYLOAD_BYTES:-0}"
 KELICLOUD_TUNNEL_ECHO_EVIDENCE="${KELICLOUD_TUNNEL_ECHO_EVIDENCE:-}"
@@ -232,12 +233,28 @@ elif kind == "tunnel-rule":
         "target_host": "127.0.0.1",
         "target_port": int(sys.argv[4]),
         "source_allowlist": "127.0.0.1/32",
-        "max_concurrent_sessions": 4,
+        "max_concurrent_sessions": int(sys.argv[5]),
         "remark": "local backend smoke tunnel relay",
     }))
 else:
     raise SystemExit(f"unknown payload kind: {kind}")
 PY
+}
+
+tunnel_rule_max_concurrent_sessions() {
+    local minimum=32
+    if ((KELICLOUD_TUNNEL_ECHO_CLIENTS > minimum)); then
+        minimum="${KELICLOUD_TUNNEL_ECHO_CLIENTS}"
+    fi
+    if [[ -z "${KELICLOUD_TUNNEL_MAX_CONCURRENT_SESSIONS}" ]]; then
+        printf '%s\n' "${minimum}"
+        return
+    fi
+    require_positive_integer "KELICLOUD_TUNNEL_MAX_CONCURRENT_SESSIONS" "${KELICLOUD_TUNNEL_MAX_CONCURRENT_SESSIONS}"
+    if ((KELICLOUD_TUNNEL_MAX_CONCURRENT_SESSIONS < minimum)); then
+        die "KELICLOUD_TUNNEL_MAX_CONCURRENT_SESSIONS must be at least ${minimum}"
+    fi
+    printf '%s\n' "${KELICLOUD_TUNNEL_MAX_CONCURRENT_SESSIONS}"
 }
 
 pick_free_tcp_port() {
@@ -681,7 +698,7 @@ PY
 create_tunnel_rule() {
     TUNNEL_LISTEN_PORT="$(pick_free_tcp_port)"
     local payload response
-    payload="$(json_payload tunnel-rule "${SMOKE_TUNNEL_GROUP}" "${TUNNEL_LISTEN_PORT}" "${TUNNEL_TARGET_PORT}")"
+    payload="$(json_payload tunnel-rule "${SMOKE_TUNNEL_GROUP}" "${TUNNEL_LISTEN_PORT}" "${TUNNEL_TARGET_PORT}" "$(tunnel_rule_max_concurrent_sessions)")"
     response="$(curl_api POST "/api/admin/tunnels" "${payload}")"
     TUNNEL_RULE_ID="$(printf '%s' "${response}" | json_value "data.id")"
     [[ -n "${TUNNEL_RULE_ID}" ]] || die "tunnel rule response did not include id"

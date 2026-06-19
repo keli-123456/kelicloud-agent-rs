@@ -283,6 +283,75 @@ fn local_backend_smoke_script_reads_latest_auto_discovery_uuid_from_agent_log() 
 }
 
 #[test]
+fn local_backend_smoke_script_sizes_tunnel_rule_limit_to_echo_clients() {
+    let script = std::fs::read_to_string(local_backend_smoke_script_path()).unwrap();
+    assert!(
+        script.contains("tunnel_rule_max_concurrent_sessions"),
+        "smoke script should size tunnel rule session limits dynamically"
+    );
+    assert!(
+        !script.contains(r#""max_concurrent_sessions": 4"#),
+        "smoke script must not cap high-concurrency matrix tunnel rules at 4 sessions"
+    );
+
+    let Some(bash) = find_bash() else {
+        eprintln!("bash not available; skipping tunnel rule limit test");
+        return;
+    };
+    if !bash_has_python3(&bash) {
+        eprintln!("python3 not available under bash; skipping tunnel rule limit test");
+        return;
+    }
+
+    let sourced_script = script
+        .strip_suffix("main \"$@\"\n")
+        .or_else(|| script.strip_suffix("main \"$@\""))
+        .expect("script should end with main invocation");
+    let temp_dir = std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-tunnel-rule-limit-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let sourced_path = temp_dir.join("smoke-local-backend-functions.sh");
+    std::fs::write(&sourced_path, sourced_script).unwrap();
+
+    let output = Command::new(bash)
+        .arg("-c")
+        .arg(
+            r#"
+set -Eeuo pipefail
+source "$1"
+json_payload tunnel-rule edge 10088 3389 8
+"#,
+        )
+        .arg("bash")
+        .arg(&sourced_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "tunnel rule payload helper failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("helper should print JSON");
+    let max_concurrent_sessions = payload
+        .get("max_concurrent_sessions")
+        .and_then(serde_json::Value::as_u64)
+        .expect("payload should include max_concurrent_sessions");
+    assert!(
+        max_concurrent_sessions >= 8,
+        "tunnel rule limit should cover echo clients for high-concurrency matrix runs: {payload}"
+    );
+}
+
+#[test]
 fn local_backend_smoke_script_generates_tunnel_echo_evidence() {
     let Some(bash) = find_bash() else {
         eprintln!("bash not available; skipping tunnel echo evidence test");
