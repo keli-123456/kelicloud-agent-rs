@@ -30,6 +30,7 @@ fn install_script_exposes_panel_compatible_linux_flags() {
         "--month-rotate DAY",
         "--enable-tunnel-data",
         "--tunnel-ktp-tcp-address ADDRESS",
+        "--tunnel-ktp-tcp-auth-version VERSION",
         "--tunnel-ktp-relay-batch-policy POLICY",
         "--tunnel-ktp-relay-adaptive-high-sessions N",
         "--tunnel-ktp-relay-adaptive-elevated-dwell-us N",
@@ -44,6 +45,7 @@ fn install_script_exposes_panel_compatible_linux_flags() {
         "AGENT_MONTH_ROTATE",
         "AGENT_TUNNEL_DATA_ENABLED",
         "AGENT_TUNNEL_KTP_TCP_ADDRESS",
+        "AGENT_TUNNEL_KTP_TCP_AUTH_VERSION",
         "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY",
         "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS",
         "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US",
@@ -123,6 +125,8 @@ fn render_env_can_enable_tunnel_data_plane() {
         .arg("--enable-tunnel-data")
         .arg("--tunnel-ktp-tcp-address")
         .arg("127.0.0.1:25775")
+        .arg("--tunnel-ktp-tcp-auth-version")
+        .arg("v2")
         .output()
         .unwrap();
 
@@ -134,6 +138,7 @@ fn render_env_can_enable_tunnel_data_plane() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("AGENT_TUNNEL_DATA_ENABLED='true'"));
     assert!(stdout.contains("AGENT_TUNNEL_KTP_TCP_ADDRESS='127.0.0.1:25775'"));
+    assert!(stdout.contains("AGENT_TUNNEL_KTP_TCP_AUTH_VERSION='v2'"));
     assert!(stdout.contains("AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY='adaptive'"));
 }
 

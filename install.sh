@@ -31,6 +31,7 @@ INCLUDE_MOUNTPOINTS=""
 MONTH_ROTATE=""
 TUNNEL_DATA_ENABLED=""
 TUNNEL_KTP_TCP_ADDRESS=""
+TUNNEL_KTP_TCP_AUTH_VERSION=""
 TUNNEL_KTP_RELAY_BATCH_POLICY=""
 TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS=""
 TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US=""
@@ -84,6 +85,8 @@ Install options:
   --enable-tunnel-data           Set AGENT_TUNNEL_DATA_ENABLED=true
   --tunnel-ktp-tcp-address ADDRESS
                                   Set AGENT_TUNNEL_KTP_TCP_ADDRESS
+  --tunnel-ktp-tcp-auth-version VERSION
+                                  Set AGENT_TUNNEL_KTP_TCP_AUTH_VERSION, v1 or v2
   --tunnel-ktp-relay-batch-policy POLICY
                                   Set AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY,
                                   default adaptive when tunnel data is enabled
@@ -265,6 +268,11 @@ parse_args() {
                 TUNNEL_KTP_TCP_ADDRESS="$2"
                 shift 2
                 ;;
+            --tunnel-ktp-tcp-auth-version|--ktp-tcp-auth-version)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_TCP_AUTH_VERSION="$2"
+                shift 2
+                ;;
             --tunnel-ktp-relay-batch-policy|--ktp-relay-batch-policy)
                 need_value "$1" "${2:-}"
                 TUNNEL_KTP_RELAY_BATCH_POLICY="$2"
@@ -414,6 +422,7 @@ render_env() {
     emit_env "AGENT_MONTH_ROTATE" "$MONTH_ROTATE"
     emit_env "AGENT_TUNNEL_DATA_ENABLED" "$TUNNEL_DATA_ENABLED"
     emit_env "AGENT_TUNNEL_KTP_TCP_ADDRESS" "$TUNNEL_KTP_TCP_ADDRESS"
+    emit_env "AGENT_TUNNEL_KTP_TCP_AUTH_VERSION" "$TUNNEL_KTP_TCP_AUTH_VERSION"
     emit_env "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY" "$tunnel_ktp_relay_batch_policy"
     emit_env "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS" "$TUNNEL_KTP_RELAY_ADAPTIVE_HIGH_SESSIONS"
     emit_env "AGENT_TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US" "$TUNNEL_KTP_RELAY_ADAPTIVE_ELEVATED_DWELL_US"

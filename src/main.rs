@@ -191,6 +191,7 @@ fn main() {
         let tunnel_data_endpoint = config.endpoint.clone();
         let tunnel_data_custom_dns = config.custom_dns.clone();
         let tunnel_ktp_tcp_address = config.tunnel_ktp_tcp_address.clone();
+        let tunnel_ktp_tcp_auth_version = config.tunnel_ktp_tcp_auth_version;
         let tunnel_data_agent_version = env!("CARGO_PKG_VERSION").to_string();
         let tunnel_data_shared_token = shared_token.clone();
         let tunnel_data_ready_state = tunnel_ready_state.clone();
@@ -224,9 +225,11 @@ fn main() {
                 let session_result = match url_result {
                     Ok(url) => {
                         if ktp_tcp_enabled {
-                            let mut transport = KtpEncryptedTcpTunnelDataTransport::new_with_token(
-                                &tunnel_data_shared_token.get(),
-                            );
+                            let mut transport =
+                                KtpEncryptedTcpTunnelDataTransport::new_with_token_auth_version(
+                                    &tunnel_data_shared_token.get(),
+                                    tunnel_ktp_tcp_auth_version,
+                                );
                             let result =
                                 run_tunnel_data_session_with_ready_source_runtime_diagnostics_and_reporter(
                                     &url,

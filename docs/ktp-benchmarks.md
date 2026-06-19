@@ -195,6 +195,9 @@ KTP TCP auth compatibility:
 - The Go backend accepts both `KTA1` and `KTA2`, while the Rust agent still
   defaults to `KTA1`. That keeps rollback simple until live backend evidence is
   collected for switching the default.
+- Canary nodes can opt in with `AGENT_TUNNEL_KTP_TCP_AUTH_VERSION=v2` or
+  `--tunnel-ktp-tcp-auth-version v2`. The install script emits this setting only
+  when it is explicitly passed, so omitting it keeps existing nodes on `KTA1`.
 
 KTP codec cursor microbench:
 

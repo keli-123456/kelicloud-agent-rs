@@ -7,6 +7,7 @@ use std::fs;
 use crate::tunnel_async_runtime::{
     TunnelRelayBatchPolicy, TunnelRelayBatchTuning, TunnelRuntimeLimits,
 };
+use crate::tunnel_data::KtpTcpAuthVersion;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentConfig {
@@ -18,6 +19,7 @@ pub struct AgentConfig {
     pub tunnel_control_enabled: bool,
     pub tunnel_data_enabled: bool,
     pub tunnel_ktp_tcp_address: String,
+    pub tunnel_ktp_tcp_auth_version: KtpTcpAuthVersion,
     pub tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy,
     pub tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning,
     pub interval_seconds: f64,
@@ -98,6 +100,7 @@ impl AgentConfig {
         let mut tunnel_data_enabled = false;
         let mut tunnel_ktp_tcp_address =
             clean_optional(env_lookup("AGENT_TUNNEL_KTP_TCP_ADDRESS")).unwrap_or_default();
+        let mut tunnel_ktp_tcp_auth_version = KtpTcpAuthVersion::V1;
         let mut tunnel_ktp_relay_batch_policy = TunnelRelayBatchPolicy::Fixed;
         let mut tunnel_ktp_relay_batch_policy_explicit = false;
         let mut tunnel_ktp_relay_batch_tuning = TunnelRelayBatchTuning::default();
@@ -179,6 +182,12 @@ impl AgentConfig {
                 }
                 "--tunnel-ktp-tcp-address" | "--ktp-tcp-address" => {
                     tunnel_ktp_tcp_address = next_value(&mut iter, "--tunnel-ktp-tcp-address")?;
+                }
+                "--tunnel-ktp-tcp-auth-version" | "--ktp-tcp-auth-version" => {
+                    tunnel_ktp_tcp_auth_version = parse_ktp_tcp_auth_version(
+                        "--tunnel-ktp-tcp-auth-version",
+                        &next_value(&mut iter, "--tunnel-ktp-tcp-auth-version")?,
+                    )?;
                 }
                 "--tunnel-ktp-relay-batch-policy" | "--ktp-relay-batch-policy" => {
                     tunnel_ktp_relay_batch_policy = parse_tunnel_relay_batch_policy(
@@ -410,6 +419,18 @@ impl AgentConfig {
                         clean_required(&arg["--ktp-tcp-address=".len()..], "--ktp-tcp-address")?
                             .unwrap();
                 }
+                _ if arg.starts_with("--tunnel-ktp-tcp-auth-version=") => {
+                    tunnel_ktp_tcp_auth_version = parse_ktp_tcp_auth_version(
+                        "--tunnel-ktp-tcp-auth-version",
+                        &arg["--tunnel-ktp-tcp-auth-version=".len()..],
+                    )?;
+                }
+                _ if arg.starts_with("--ktp-tcp-auth-version=") => {
+                    tunnel_ktp_tcp_auth_version = parse_ktp_tcp_auth_version(
+                        "--ktp-tcp-auth-version",
+                        &arg["--ktp-tcp-auth-version=".len()..],
+                    )?;
+                }
                 _ if arg.starts_with("--tunnel-ktp-relay-batch-policy=") => {
                     tunnel_ktp_relay_batch_policy = parse_tunnel_relay_batch_policy(
                         "--tunnel-ktp-relay-batch-policy",
@@ -509,6 +530,7 @@ impl AgentConfig {
             "AGENT_TUNNEL_KTP_TCP_ADDRESS",
             &mut tunnel_ktp_tcp_address,
         );
+        apply_ktp_tcp_auth_version_env(&env_lookup, &mut tunnel_ktp_tcp_auth_version)?;
         tunnel_ktp_relay_batch_policy_explicit |=
             apply_tunnel_relay_batch_policy_env(&env_lookup, &mut tunnel_ktp_relay_batch_policy)?;
         apply_tunnel_relay_batch_tuning_env(&env_lookup, &mut tunnel_ktp_relay_batch_tuning)?;
@@ -590,6 +612,10 @@ impl AgentConfig {
             }
             if let Some(value) = file_config.tunnel_ktp_tcp_address {
                 tunnel_ktp_tcp_address = clean_config_string(value);
+            }
+            if let Some(value) = file_config.tunnel_ktp_tcp_auth_version {
+                tunnel_ktp_tcp_auth_version =
+                    parse_ktp_tcp_auth_version("tunnel_ktp_tcp_auth_version", &value)?;
             }
             if let Some(value) = file_config.tunnel_ktp_relay_batch_policy {
                 tunnel_ktp_relay_batch_policy =
@@ -694,6 +720,7 @@ impl AgentConfig {
             tunnel_control_enabled,
             tunnel_data_enabled,
             tunnel_ktp_tcp_address,
+            tunnel_ktp_tcp_auth_version,
             tunnel_ktp_relay_batch_policy,
             tunnel_ktp_relay_batch_tuning,
             interval_seconds,
@@ -736,6 +763,7 @@ struct FileConfig {
     tunnel_control_enabled: Option<bool>,
     tunnel_data_enabled: Option<bool>,
     tunnel_ktp_tcp_address: Option<String>,
+    tunnel_ktp_tcp_auth_version: Option<String>,
     tunnel_ktp_relay_batch_policy: Option<String>,
     tunnel_ktp_relay_adaptive_high_sessions: Option<usize>,
     tunnel_ktp_relay_adaptive_elevated_dwell_us: Option<u64>,
@@ -829,6 +857,17 @@ fn parse_tunnel_relay_batch_policy(
 ) -> Result<TunnelRelayBatchPolicy, ConfigError> {
     TunnelRelayBatchPolicy::parse_config_value(&value.trim().to_ascii_lowercase())
         .ok_or_else(|| ConfigError::InvalidValue(flag, value.trim().to_string()))
+}
+
+fn parse_ktp_tcp_auth_version(
+    flag: &'static str,
+    value: &str,
+) -> Result<KtpTcpAuthVersion, ConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "v1" | "kta1" => Ok(KtpTcpAuthVersion::V1),
+        "2" | "v2" | "kta2" => Ok(KtpTcpAuthVersion::V2),
+        _ => Err(ConfigError::InvalidValue(flag, value.trim().to_string())),
+    }
 }
 
 fn parse_env_f64<F>(env_lookup: &F, key: &'static str, default: f64) -> Result<f64, ConfigError>
@@ -935,6 +974,19 @@ where
         return Ok(true);
     }
     Ok(false)
+}
+
+fn apply_ktp_tcp_auth_version_env<F>(
+    env_lookup: &F,
+    target: &mut KtpTcpAuthVersion,
+) -> Result<(), ConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if let Some(value) = clean_optional(env_lookup("AGENT_TUNNEL_KTP_TCP_AUTH_VERSION")) {
+        *target = parse_ktp_tcp_auth_version("AGENT_TUNNEL_KTP_TCP_AUTH_VERSION", &value)?;
+    }
+    Ok(())
 }
 
 fn apply_tunnel_relay_batch_tuning_env<F>(

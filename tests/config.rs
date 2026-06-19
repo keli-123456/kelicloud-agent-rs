@@ -1,5 +1,6 @@
 use kelicloud_agent_rs::config::{AgentConfig, ConfigError};
 use kelicloud_agent_rs::tunnel_async_runtime::{TunnelRelayBatchPolicy, TunnelRelayBatchTuning};
+use kelicloud_agent_rs::tunnel_data::KtpTcpAuthVersion;
 use std::fs;
 
 fn env_lookup(key: &str) -> Option<String> {
@@ -133,6 +134,84 @@ fn config_reads_ktp_tcp_tunnel_data_address_from_environment_and_cli() {
     })
     .unwrap();
     assert_eq!(config.tunnel_ktp_tcp_address, "10.0.0.10:25775");
+}
+
+#[test]
+fn config_reads_ktp_tcp_auth_version_from_cli_env_and_file() {
+    let from_cli = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--tunnel-ktp-tcp-auth-version",
+            "v2",
+        ],
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(from_cli.tunnel_ktp_tcp_auth_version, KtpTcpAuthVersion::V2);
+
+    let from_env = AgentConfig::from_args_and_env(["kelicloud-agent-rs"], |key| match key {
+        "AGENT_ENDPOINT" => Some("https://env.example.com".to_string()),
+        "AGENT_TOKEN" => Some("env-token".to_string()),
+        "AGENT_TUNNEL_KTP_TCP_AUTH_VERSION" => Some("v2".to_string()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(from_env.tunnel_ktp_tcp_auth_version, KtpTcpAuthVersion::V2);
+
+    let path = std::env::temp_dir().join(format!(
+        "kelicloud-agent-rs-ktp-auth-version-{}.json",
+        std::process::id()
+    ));
+    fs::write(
+        &path,
+        r#"{
+            "endpoint": "https://file.example.com",
+            "token": "file-token",
+            "tunnel_ktp_tcp_auth_version": "v2"
+        }"#,
+    )
+    .unwrap();
+    let from_file = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--config",
+            path.to_str().unwrap(),
+        ],
+        |_| None,
+    )
+    .unwrap();
+    fs::remove_file(path).unwrap();
+    assert_eq!(from_file.tunnel_ktp_tcp_auth_version, KtpTcpAuthVersion::V2);
+}
+
+#[test]
+fn config_rejects_invalid_ktp_tcp_auth_version() {
+    let err = AgentConfig::from_args_and_env(
+        [
+            "kelicloud-agent-rs",
+            "--endpoint",
+            "https://cli.example.com",
+            "--token",
+            "cli-token",
+            "--tunnel-ktp-tcp-auth-version",
+            "latest",
+        ],
+        |_| None,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        err,
+        ConfigError::InvalidValue("--tunnel-ktp-tcp-auth-version", value) if value == "latest"
+    ));
 }
 
 #[test]

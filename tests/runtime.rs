@@ -33,6 +33,7 @@ fn startup_summary_redacts_token() {
         tunnel_control_enabled: true,
         tunnel_data_enabled: false,
         tunnel_ktp_tcp_address: String::new(),
+        tunnel_ktp_tcp_auth_version: kelicloud_agent_rs::tunnel_data::KtpTcpAuthVersion::V1,
         tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
         tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning::default(),
         interval_seconds: 1.0,
@@ -77,6 +78,7 @@ fn startup_summary_reports_ktp_relay_policy_when_tunnel_data_is_enabled() {
         tunnel_control_enabled: true,
         tunnel_data_enabled: true,
         tunnel_ktp_tcp_address: "127.0.0.1:25775".to_string(),
+        tunnel_ktp_tcp_auth_version: kelicloud_agent_rs::tunnel_data::KtpTcpAuthVersion::V1,
         tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Adaptive,
         tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning {
             high_session_threshold: 6,
@@ -927,6 +929,7 @@ fn test_config() -> AgentConfig {
         tunnel_control_enabled: true,
         tunnel_data_enabled: false,
         tunnel_ktp_tcp_address: String::new(),
+        tunnel_ktp_tcp_auth_version: kelicloud_agent_rs::tunnel_data::KtpTcpAuthVersion::V1,
         tunnel_ktp_relay_batch_policy: TunnelRelayBatchPolicy::Fixed,
         tunnel_ktp_relay_batch_tuning: TunnelRelayBatchTuning::default(),
         interval_seconds: 1.0,
