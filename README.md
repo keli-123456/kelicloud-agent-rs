@@ -348,6 +348,29 @@ the published binaries:
 - `kelicloud-agent-rs-linux-armv7`
 - `SHA256SUMS`
 
+Before the release binaries are built, the workflow runs the same formatting and
+all-target checks as CI, then runs the tunnel data-plane smoke gate:
+
+```bash
+KTP_SMOKE_POLICY_GATE=1 bash scripts/tunnel-relay-local-smoke.sh
+```
+
+That smoke covers tunnel preflight, the two-agent relay simulation, async
+runtime concurrency, close-boundary cleanup, encrypted KTP TCP carrier tests,
+codec and e2e benchmark samples, runtime listener lifecycle, failure
+diagnostics, and the fixed/adaptive relay batch policy comparison. CI also runs
+`actionlint` on GitHub Actions workflow files so release, canary, and smoke
+workflow syntax or shellcheck regressions fail before a tag is created.
+
+To run a real-host install canary automatically after publishing a release,
+set repository variable `KELICLOUD_RELEASE_CANARY=1`. The release workflow will
+dispatch `real-host-canary.yml` with the just-published tag as
+`install_version`. Configure the canary runner and secrets as described above;
+for KTP tunnel-data canaries, add the optional secrets
+`KELICLOUD_CANARY_TUNNEL_KTP_TCP_ADDRESS`,
+`KELICLOUD_CANARY_TUNNEL_KTP_TCP_AUTH_VERSION`, and
+`KELICLOUD_CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY`.
+
 ## Verification
 
 ```bash

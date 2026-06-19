@@ -11,3 +11,17 @@ fn release_metadata_tracks_current_version() {
         "README install-version examples should use {EXPECTED_RELEASE_TAG}"
     );
 }
+
+#[test]
+fn readme_documents_release_safety_gates() {
+    let readme = std::fs::read_to_string("README.md").expect("README should be readable");
+
+    assert!(readme.contains("bash scripts/tunnel-relay-local-smoke.sh"));
+    assert!(readme.contains("KTP_SMOKE_POLICY_GATE=1"));
+    assert!(readme.contains("actionlint"));
+    assert!(readme.contains("KELICLOUD_RELEASE_CANARY=1"));
+    assert!(readme.contains("real-host-canary.yml"));
+    assert!(readme.contains("KELICLOUD_CANARY_TUNNEL_KTP_TCP_ADDRESS"));
+    assert!(readme.contains("KELICLOUD_CANARY_TUNNEL_KTP_TCP_AUTH_VERSION"));
+    assert!(readme.contains("KELICLOUD_CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY"));
+}
