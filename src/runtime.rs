@@ -542,7 +542,15 @@ where
 {
     loop {
         match socket.read_message() {
-            Ok(Some(bytes)) => process_backend_message(socket, handler, ping_executor, &bytes)?,
+            Ok(Some(bytes)) => {
+                if let Err(error) = process_backend_message(socket, handler, ping_executor, &bytes)
+                {
+                    return match error {
+                        RuntimeError::Transport(_) => Ok(true),
+                        other => Err(other),
+                    };
+                }
+            }
             Ok(None) => return Ok(false),
             Err(_) => return Ok(true),
         }

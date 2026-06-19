@@ -878,6 +878,45 @@ fn run_report_cycles_executes_ping_message_and_sends_result() {
     assert!(handler.messages.is_empty());
 }
 
+#[test]
+fn run_report_cycles_reconnects_after_ping_result_send_failure() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let inbound =
+        br#"{"message":"ping","ping_task_id":7,"ping_type":"tcp","ping_target":"1.1.1.1:443"}"#
+            .to_vec();
+    let mut http = FakeHttp::new(events.clone());
+    let mut websocket =
+        FakeWebSocketTransport::new(events.clone(), Some(inbound)).with_ping_result_failures(1);
+    let mut handler = RecordingHandler::default();
+    let mut delay = RecordingDelay::new(events.clone());
+
+    run_report_cycles_with_ping_delay(
+        &test_config(),
+        &test_basic_info(),
+        &FixedReportGenerator(test_report(11.0)),
+        &FixedPingExecutor::new(25),
+        &mut http,
+        &mut websocket,
+        &mut handler,
+        &mut delay,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            "upload:https://panel.example.com/api/clients/uploadBasicInfo?token=secret-token-value",
+            "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
+            "send_ping_result_error",
+            "sleep_report:1",
+            "connect:wss://panel.example.com/api/clients/report?token=secret-token-value",
+            "send_report"
+        ]
+    );
+    assert!(handler.messages.is_empty());
+}
+
 fn test_config() -> AgentConfig {
     AgentConfig {
         endpoint: "https://panel.example.com".to_string(),
@@ -1117,6 +1156,7 @@ struct FakeWebSocketTransport {
     sent_reports: Rc<RefCell<Vec<Report>>>,
     sent_ping_results: Rc<RefCell<Vec<PingResult>>>,
     send_failures_remaining: Rc<RefCell<usize>>,
+    ping_result_failures_remaining: Rc<RefCell<usize>>,
     connect_invalid_token: Rc<RefCell<Option<String>>>,
 }
 
@@ -1128,6 +1168,7 @@ impl FakeWebSocketTransport {
             sent_reports: Rc::new(RefCell::new(Vec::new())),
             sent_ping_results: Rc::new(RefCell::new(Vec::new())),
             send_failures_remaining: Rc::new(RefCell::new(0)),
+            ping_result_failures_remaining: Rc::new(RefCell::new(0)),
             connect_invalid_token: Rc::new(RefCell::new(None)),
         }
     }
@@ -1152,6 +1193,11 @@ impl FakeWebSocketTransport {
 
     fn with_send_failures(self, failures: usize) -> Self {
         *self.send_failures_remaining.borrow_mut() = failures;
+        self
+    }
+
+    fn with_ping_result_failures(self, failures: usize) -> Self {
+        *self.ping_result_failures_remaining.borrow_mut() = failures;
         self
     }
 
@@ -1190,6 +1236,7 @@ impl WebSocketTransport for FakeWebSocketTransport {
             sent_reports: self.sent_reports.clone(),
             sent_ping_results: self.sent_ping_results.clone(),
             send_failures_remaining: self.send_failures_remaining.clone(),
+            ping_result_failures_remaining: self.ping_result_failures_remaining.clone(),
         })
     }
 }
@@ -1200,6 +1247,7 @@ struct FakeSocket {
     sent_reports: Rc<RefCell<Vec<Report>>>,
     sent_ping_results: Rc<RefCell<Vec<PingResult>>>,
     send_failures_remaining: Rc<RefCell<usize>>,
+    ping_result_failures_remaining: Rc<RefCell<usize>>,
 }
 
 impl ReportSocket for FakeSocket {
@@ -1229,6 +1277,18 @@ impl ReportSocket for FakeSocket {
     }
 
     fn send_ping_result(&mut self, result: &PingResult) -> Result<(), TransportError> {
+        let mut failures = self.ping_result_failures_remaining.borrow_mut();
+        if *failures > 0 {
+            *failures -= 1;
+            self.events
+                .borrow_mut()
+                .push("send_ping_result_error".to_string());
+            return Err(TransportError::RequestFailed(
+                "broken pipe while sending ping result".to_string(),
+            ));
+        }
+        drop(failures);
+
         self.events
             .borrow_mut()
             .push("send_ping_result".to_string());
