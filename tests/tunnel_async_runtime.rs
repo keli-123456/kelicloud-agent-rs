@@ -661,6 +661,47 @@ fn async_runtime_close_session_stops_target_reader_before_late_data() {
 }
 
 #[test]
+fn async_runtime_close_session_drops_queued_outbound_frames_for_that_session() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .worker_threads(2)
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let listener = TokioTcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind async target listener");
+        let target_port = listener.local_addr().expect("target addr").port();
+        let target_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept target");
+            stream
+                .write_all(b"queued-before-close")
+                .await
+                .expect("write queued target data");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+        let core = AsyncTunnelCore::new(TunnelRuntimeLimits::default());
+        core.open_egress_session(25, 7, "127.0.0.1", target_port, session_open_payload(7))
+            .await
+            .expect("session should open");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        core.close_session(25, "remote close")
+            .await
+            .expect("session should close");
+        let frames = core.next_frames(16).await;
+
+        assert!(
+            !frames.iter().any(|frame| frame.session_id == 25),
+            "remote close must drop queued frames for the closed session: {frames:?}"
+        );
+        target_task.await.expect("target task should finish");
+    });
+}
+
+#[test]
 fn async_runtime_rejects_payload_over_session_pending_byte_limit() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()

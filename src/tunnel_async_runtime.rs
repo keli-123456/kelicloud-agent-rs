@@ -377,6 +377,18 @@ impl AsyncTunnelFrameQueue {
             .unwrap_or(0)
     }
 
+    pub fn remove_session_frames(&self, session_id: u64) -> usize {
+        self.inner
+            .frames
+            .lock()
+            .map(|mut inner| {
+                let before = inner.len();
+                inner.retain(|queued| queued.frame.session_id != session_id);
+                before.saturating_sub(inner.len())
+            })
+            .unwrap_or(0)
+    }
+
     pub fn len(&self) -> usize {
         self.inner
             .frames
@@ -908,6 +920,7 @@ impl AsyncTunnelCore {
             if let Some(reader) = session.abort_reader() {
                 let _ = reader.await;
             }
+            self.outbound.remove_session_frames(session_id);
             self.stats.session_closed(session.rule_id);
             Ok(())
         } else {
