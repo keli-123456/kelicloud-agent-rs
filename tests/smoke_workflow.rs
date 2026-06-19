@@ -386,11 +386,31 @@ fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     assert!(workflow.contains("KELICLOUD_CANARY_ROLLBACK_COMMAND"));
     assert!(workflow.contains("require_rollback:"));
     assert!(workflow.contains("keep_installed:"));
+    let install_version_input = workflow
+        .split("install_version:")
+        .nth(1)
+        .and_then(|rest| rest.split("tunnel_ktp_tcp_address:").next())
+        .expect("install_version input block");
+    assert!(install_version_input.contains("default: \"\""));
+    assert!(!install_version_input.contains("default: \"v0.1.0\""));
     assert!(workflow.contains("control_plane:"));
     assert!(workflow.contains("derive_auto_discovery_from_old_service:"));
     assert!(workflow.contains("ping_target:"));
     assert!(workflow.contains("old_service_name:"));
     assert!(workflow.contains("rollback_service_name:"));
+    assert!(workflow.contains("tunnel_ktp_tcp_address:"));
+    assert!(workflow.contains("tunnel_ktp_tcp_auth_version:"));
+    assert!(workflow.contains("tunnel_ktp_relay_batch_policy:"));
+    assert!(workflow.contains("CANARY_TUNNEL_KTP_TCP_ADDRESS"));
+    assert!(workflow.contains("CANARY_TUNNEL_KTP_TCP_AUTH_VERSION"));
+    assert!(workflow.contains("CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY"));
+    assert!(workflow.contains("--tunnel-ktp-tcp-address \"${CANARY_TUNNEL_KTP_TCP_ADDRESS}\""));
+    assert!(workflow
+        .contains("--tunnel-ktp-tcp-auth-version \"${CANARY_TUNNEL_KTP_TCP_AUTH_VERSION}\""));
+    assert!(workflow
+        .contains("--tunnel-ktp-relay-batch-policy \"${CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY}\""));
+    assert!(workflow.contains("--tunnel-ktp-tcp-auth-version must be v1 or v2"));
+    assert!(workflow.contains("--tunnel-ktp-relay-batch-policy must be fixed or adaptive"));
     assert!(workflow.contains("::add-mask::${CANARY_AUTO_DISCOVERY_KEY}"));
     assert!(workflow.contains("::add-mask::${CANARY_ROLLBACK_COMMAND}"));
     assert!(workflow.contains("::add-mask::${CANARY_PANEL_COOKIE}"));

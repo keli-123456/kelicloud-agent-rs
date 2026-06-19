@@ -15,7 +15,10 @@ COOKIE_JAR="${KELICLOUD_PANEL_COOKIE_JAR:-}"
 PANEL_USERNAME="${KELICLOUD_PANEL_USERNAME:-}"
 PANEL_PASSWORD="${KELICLOUD_PANEL_PASSWORD:-}"
 PING_TARGET="${KELICLOUD_PANEL_PING_TARGET:-1.1.1.1:443}"
-INSTALL_VERSION="${KELICLOUD_CANARY_INSTALL_VERSION:-v0.1.0}"
+INSTALL_VERSION="${KELICLOUD_CANARY_INSTALL_VERSION:-}"
+TUNNEL_KTP_TCP_ADDRESS="${KELICLOUD_CANARY_TUNNEL_KTP_TCP_ADDRESS:-${AGENT_TUNNEL_KTP_TCP_ADDRESS:-}}"
+TUNNEL_KTP_TCP_AUTH_VERSION="${KELICLOUD_CANARY_TUNNEL_KTP_TCP_AUTH_VERSION:-${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION:-}}"
+TUNNEL_KTP_RELAY_BATCH_POLICY="${KELICLOUD_CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY:-${AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY:-}}"
 SERVICE_WAIT_SECONDS="${KELICLOUD_CANARY_SERVICE_WAIT:-60}"
 CONTROL_TIMEOUT_SECONDS="${KELICLOUD_PANEL_CONTROL_TIMEOUT:-90}"
 WORKDIR="${KELICLOUD_CANARY_WORKDIR:-}"
@@ -44,7 +47,13 @@ Options:
   --username USERNAME         admin username, also read from KELICLOUD_PANEL_USERNAME
   --password PASSWORD         admin password, also read from KELICLOUD_PANEL_PASSWORD
   --ping-target HOST:PORT     TCP ping target, default 1.1.1.1:443
-  --install-version VERSION   release tag to install/pin, default v0.1.0
+  --install-version VERSION   release tag to install/pin, default latest
+  --tunnel-ktp-tcp-address ADDRESS
+                              enable KTP TCP tunnel data through this relay
+  --tunnel-ktp-tcp-auth-version VERSION
+                              KTP TCP auth version, v1 or v2
+  --tunnel-ktp-relay-batch-policy POLICY
+                              KTP relay batch policy, fixed or adaptive
   --old-service NAME          existing Go agent service to restore, default komari-agent
   --rollback-command COMMAND  command to run after Rust uninstall, default enables old service
   --workdir PATH              evidence/log directory
@@ -129,6 +138,21 @@ parse_args() {
                 INSTALL_VERSION="$2"
                 shift 2
                 ;;
+            --tunnel-ktp-tcp-address|--ktp-tcp-address)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_TCP_ADDRESS="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-tcp-auth-version|--ktp-tcp-auth-version)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_TCP_AUTH_VERSION="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-relay-batch-policy|--ktp-relay-batch-policy)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_RELAY_BATCH_POLICY="$2"
+                shift 2
+                ;;
             --old-service)
                 need_value "$1" "${2:-}"
                 OLD_SERVICE_NAME="$2"
@@ -167,6 +191,17 @@ validate_config() {
     [[ -n "$PING_TARGET" ]] || die "--ping-target or KELICLOUD_PANEL_PING_TARGET is required"
     if [[ "$SKIP_CONTROL" != "true" && -z "$COOKIE_HEADER" && -z "$COOKIE_JAR" && ( -z "$PANEL_USERNAME" || -z "$PANEL_PASSWORD" ) ]]; then
         die "--cookie, --cookie-jar, or --username/--password is required"
+    fi
+    case "$TUNNEL_KTP_TCP_AUTH_VERSION" in
+        ""|v1|v2) ;;
+        *) die "--tunnel-ktp-tcp-auth-version must be v1 or v2" ;;
+    esac
+    case "$TUNNEL_KTP_RELAY_BATCH_POLICY" in
+        ""|fixed|adaptive) ;;
+        *) die "--tunnel-ktp-relay-batch-policy must be fixed or adaptive" ;;
+    esac
+    if [[ -z "$TUNNEL_KTP_TCP_ADDRESS" && ( -n "$TUNNEL_KTP_TCP_AUTH_VERSION" || -n "$TUNNEL_KTP_RELAY_BATCH_POLICY" ) ]]; then
+        die "--tunnel-ktp-tcp-address is required when KTP auth version or relay batch policy is set"
     fi
     command -v curl >/dev/null 2>&1 || die "curl is required"
     command -v systemctl >/dev/null 2>&1 || die "systemctl is required"
@@ -235,9 +270,18 @@ run_install_canary() {
     log "Endpoint: ${ENDPOINT}"
     log "Auto-discovery key: $(redact_value "$AUTO_DISCOVERY_KEY")"
     log "Install version: ${INSTALL_VERSION}"
+    if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
+        log "KTP TCP address: ${TUNNEL_KTP_TCP_ADDRESS}"
+    fi
+    if [[ -n "$TUNNEL_KTP_TCP_AUTH_VERSION" ]]; then
+        log "KTP TCP auth version: ${TUNNEL_KTP_TCP_AUTH_VERSION}"
+    fi
+    if [[ -n "$TUNNEL_KTP_RELAY_BATCH_POLICY" ]]; then
+        log "KTP relay batch policy: ${TUNNEL_KTP_RELAY_BATCH_POLICY}"
+    fi
     systemctl stop "${OLD_SERVICE_NAME}.service" >/dev/null 2>&1 || true
     systemctl disable "${OLD_SERVICE_NAME}.service" >/dev/null 2>&1 || true
-    bash "${WORKDIR}/canary-install.sh" \
+    local install_args=(
         --endpoint "$ENDPOINT" \
         --auto-discovery "$AUTO_DISCOVERY_KEY" \
         --install-version "$INSTALL_VERSION" \
@@ -245,6 +289,17 @@ run_install_canary() {
         --service-wait "$SERVICE_WAIT_SECONDS" \
         --keep-installed \
         --evidence-file "${WORKDIR}/real-host-canary.evidence.md"
+    )
+    if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
+        install_args+=(--tunnel-ktp-tcp-address "$TUNNEL_KTP_TCP_ADDRESS")
+    fi
+    if [[ -n "$TUNNEL_KTP_TCP_AUTH_VERSION" ]]; then
+        install_args+=(--tunnel-ktp-tcp-auth-version "$TUNNEL_KTP_TCP_AUTH_VERSION")
+    fi
+    if [[ -n "$TUNNEL_KTP_RELAY_BATCH_POLICY" ]]; then
+        install_args+=(--tunnel-ktp-relay-batch-policy "$TUNNEL_KTP_RELAY_BATCH_POLICY")
+    fi
+    bash "${WORKDIR}/canary-install.sh" "${install_args[@]}"
     RUST_CLIENT_UUID="$(parse_latest_registered_uuid)"
     log "Rust client UUID: ${RUST_CLIENT_UUID}"
 }
@@ -296,6 +351,9 @@ write_evidence() {
         printf '%s\n' "- Architecture: \`$(uname -m 2>/dev/null || true)\`"
         printf '%s\n' "- Panel endpoint: \`${ENDPOINT}\`"
         printf '%s\n' "- Install version: \`${INSTALL_VERSION}\`"
+        printf '%s\n' "- KTP TCP address: \`${TUNNEL_KTP_TCP_ADDRESS:-not set}\`"
+        printf '%s\n' "- KTP TCP auth version: \`${TUNNEL_KTP_TCP_AUTH_VERSION:-default}\`"
+        printf '%s\n' "- KTP relay batch policy: \`${TUNNEL_KTP_RELAY_BATCH_POLICY:-default}\`"
         printf '%s\n' "- Rust client UUID: \`${RUST_CLIENT_UUID:-not resolved}\`"
         printf '%s\n' "- Ping target: \`${PING_TARGET}\`"
         printf '%s\n' "- Old service restored: \`${RESTORED}\`"

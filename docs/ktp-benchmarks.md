@@ -199,6 +199,13 @@ KTP TCP auth compatibility:
 - Canary nodes can opt in with `AGENT_TUNNEL_KTP_TCP_AUTH_VERSION=v2` or
   `--tunnel-ktp-tcp-auth-version v2`. The install script emits this setting only
   when it is explicitly passed, so omitting it keeps existing nodes on `KTA1`.
+- Real-host canary now exposes the same opt-in path through
+  `.github/workflows/real-host-canary.yml` inputs:
+  `tunnel_ktp_tcp_address`, `tunnel_ktp_tcp_auth_version`, and
+  `tunnel_ktp_relay_batch_policy`. Passing `tunnel_ktp_tcp_auth_version=v2`
+  requires a KTP TCP relay address and writes the selected KTP address, auth
+  version, and relay batch policy into both install and control-plane canary
+  evidence. Leaving these inputs empty keeps the existing canary behavior.
 
 KTA2 full local-backend tunnel matrix evidence, 2026-06-19:
 

@@ -10,6 +10,8 @@ REPO="keli-123456/kelicloud-agent-rs"
 ENDPOINT="${AGENT_ENDPOINT:-}"
 AUTO_DISCOVERY_KEY="${AGENT_AUTO_DISCOVERY_KEY:-}"
 TUNNEL_KTP_TCP_ADDRESS="${AGENT_TUNNEL_KTP_TCP_ADDRESS:-}"
+TUNNEL_KTP_TCP_AUTH_VERSION="${AGENT_TUNNEL_KTP_TCP_AUTH_VERSION:-}"
+TUNNEL_KTP_RELAY_BATCH_POLICY="${AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY:-}"
 INSTALL_VERSION=""
 GITHUB_PROXY=""
 INSECURE="false"
@@ -50,6 +52,10 @@ Options:
   --github-proxy URL             Prefix used by the installer for GitHub downloads
   --tunnel-ktp-tcp-address ADDRESS
                                   Enable KTP TCP tunnel data and pass the relay address
+  --tunnel-ktp-tcp-auth-version VERSION
+                                  Set KTP TCP auth version, v1 or v2
+  --tunnel-ktp-relay-batch-policy POLICY
+                                  Set relay batch policy, fixed or adaptive
   --insecure                     Pass --ignore-unsafe-cert to the installer
   --duration SECONDS             Online observation window for panel exec/ping/WebSSH, default 90
   --service-wait SECONDS         Wait time for systemd active checks, default 45
@@ -62,8 +68,8 @@ Options:
 
 This script verifies the release asset name pattern kelicloud-agent-rs-linux-*,
 the installed systemd service, AGENT_ENDPOINT / AGENT_AUTO_DISCOVERY_KEY config,
-optional AGENT_TUNNEL_KTP_TCP_ADDRESS config, restart behavior, optional version
-pin/upgrade, uninstall, and optional rollback.
+optional KTP tunnel config, restart behavior, optional version pin/upgrade,
+uninstall, and optional rollback.
 EOF
 }
 
@@ -119,6 +125,16 @@ parse_args() {
             --tunnel-ktp-tcp-address|--ktp-tcp-address)
                 need_value "$1" "${2:-}"
                 TUNNEL_KTP_TCP_ADDRESS="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-tcp-auth-version|--ktp-tcp-auth-version)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_TCP_AUTH_VERSION="$2"
+                shift 2
+                ;;
+            --tunnel-ktp-relay-batch-policy|--ktp-relay-batch-policy)
+                need_value "$1" "${2:-}"
+                TUNNEL_KTP_RELAY_BATCH_POLICY="$2"
                 shift 2
                 ;;
             --github-proxy)
@@ -186,6 +202,17 @@ validate_config() {
     fi
     if [[ "$SKIP_ROLLBACK_SERVICE_CHECK" != "true" && -n "$ROLLBACK_COMMAND" && -z "$ROLLBACK_SERVICE_NAME" ]]; then
         die "--rollback-service-name cannot be empty"
+    fi
+    case "$TUNNEL_KTP_TCP_AUTH_VERSION" in
+        ""|v1|v2) ;;
+        *) die "--tunnel-ktp-tcp-auth-version must be v1 or v2" ;;
+    esac
+    case "$TUNNEL_KTP_RELAY_BATCH_POLICY" in
+        ""|fixed|adaptive) ;;
+        *) die "--tunnel-ktp-relay-batch-policy must be fixed or adaptive" ;;
+    esac
+    if [[ -z "$TUNNEL_KTP_TCP_ADDRESS" && ( -n "$TUNNEL_KTP_TCP_AUTH_VERSION" || -n "$TUNNEL_KTP_RELAY_BATCH_POLICY" ) ]]; then
+        die "--tunnel-ktp-tcp-address is required when KTP auth version or relay batch policy is set"
     fi
 }
 
@@ -260,6 +287,12 @@ installer_args() {
     if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
         INSTALL_ARGS+=(--enable-tunnel-data --tunnel-ktp-tcp-address "$TUNNEL_KTP_TCP_ADDRESS")
     fi
+    if [[ -n "$TUNNEL_KTP_TCP_AUTH_VERSION" ]]; then
+        INSTALL_ARGS+=(--tunnel-ktp-tcp-auth-version "$TUNNEL_KTP_TCP_AUTH_VERSION")
+    fi
+    if [[ -n "$TUNNEL_KTP_RELAY_BATCH_POLICY" ]]; then
+        INSTALL_ARGS+=(--tunnel-ktp-relay-batch-policy "$TUNNEL_KTP_RELAY_BATCH_POLICY")
+    fi
     if [[ -n "$GITHUB_PROXY" ]]; then
         INSTALL_ARGS+=(--install-ghproxy "$GITHUB_PROXY")
     fi
@@ -312,6 +345,14 @@ verify_service() {
             die "AGENT_TUNNEL_DATA_ENABLED missing from config"
         grep -q "^AGENT_TUNNEL_KTP_TCP_ADDRESS=" "$CONFIG_FILE" ||
             die "AGENT_TUNNEL_KTP_TCP_ADDRESS missing from config"
+    fi
+    if [[ -n "$TUNNEL_KTP_TCP_AUTH_VERSION" ]]; then
+        grep -q "^AGENT_TUNNEL_KTP_TCP_AUTH_VERSION='${TUNNEL_KTP_TCP_AUTH_VERSION}'" "$CONFIG_FILE" ||
+            die "AGENT_TUNNEL_KTP_TCP_AUTH_VERSION missing from config"
+    fi
+    if [[ -n "$TUNNEL_KTP_RELAY_BATCH_POLICY" ]]; then
+        grep -q "^AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY='${TUNNEL_KTP_RELAY_BATCH_POLICY}'" "$CONFIG_FILE" ||
+            die "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY missing from config"
     fi
     wait_for_service
     RUST_SERVICE_STATUS="$(systemctl is-active "${SERVICE_NAME}.service")"
@@ -441,6 +482,9 @@ write_evidence() {
         printf '%s\n' "- Panel endpoint: \`${ENDPOINT}\`"
         printf '%s\n' "- Install source: \`${INSTALL_URL}\`"
         printf '%s\n' "- Requested install version: \`${INSTALL_VERSION:-latest}\`"
+        printf '%s\n' "- KTP TCP address: \`${TUNNEL_KTP_TCP_ADDRESS:-not set}\`"
+        printf '%s\n' "- KTP TCP auth version: \`${TUNNEL_KTP_TCP_AUTH_VERSION:-default}\`"
+        printf '%s\n' "- KTP relay batch policy: \`${TUNNEL_KTP_RELAY_BATCH_POLICY:-default}\`"
         printf '%s\n' "- Release asset: \`${RELEASE_ASSET:-not checked}\`"
         printf '%s\n' "- Release asset URL: \`${RELEASE_ASSET_URL:-not checked}\`"
         printf '%s\n' "- Rust install result: \`${INSTALL_RESULT}\`"
@@ -483,6 +527,12 @@ main() {
     log "Auto-discovery key: $(redact_value "$AUTO_DISCOVERY_KEY")"
     if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
         log "KTP TCP address: ${TUNNEL_KTP_TCP_ADDRESS}"
+    fi
+    if [[ -n "$TUNNEL_KTP_TCP_AUTH_VERSION" ]]; then
+        log "KTP TCP auth version: ${TUNNEL_KTP_TCP_AUTH_VERSION}"
+    fi
+    if [[ -n "$TUNNEL_KTP_RELAY_BATCH_POLICY" ]]; then
+        log "KTP relay batch policy: ${TUNNEL_KTP_RELAY_BATCH_POLICY}"
     fi
     log "Install source: ${INSTALL_URL}"
     if [[ -n "$INSTALL_VERSION" ]]; then

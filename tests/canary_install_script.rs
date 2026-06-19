@@ -10,6 +10,8 @@ fn canary_install_script_documents_real_host_stages() {
         "--auto-discovery KEY",
         "--install-version VERSION",
         "--tunnel-ktp-tcp-address ADDRESS",
+        "--tunnel-ktp-tcp-auth-version VERSION",
+        "--tunnel-ktp-relay-batch-policy POLICY",
         "--rollback-command COMMAND",
         "--rollback-service-name NAME",
         "--skip-rollback-service-check",
@@ -34,6 +36,12 @@ fn canary_install_script_documents_real_host_stages() {
         "AGENT_ENDPOINT",
         "AGENT_AUTO_DISCOVERY_KEY",
         "AGENT_TUNNEL_KTP_TCP_ADDRESS",
+        "AGENT_TUNNEL_KTP_TCP_AUTH_VERSION",
+        "AGENT_TUNNEL_KTP_RELAY_BATCH_POLICY",
+        "--tunnel-ktp-tcp-auth-version \"$TUNNEL_KTP_TCP_AUTH_VERSION\"",
+        "--tunnel-ktp-relay-batch-policy \"$TUNNEL_KTP_RELAY_BATCH_POLICY\"",
+        "KTP TCP auth version",
+        "KTP relay batch policy",
         "kelicloud-agent-rs-linux",
     ] {
         assert!(script.contains(expected), "missing {expected}");
@@ -68,6 +76,8 @@ fn canary_install_script_has_valid_bash_syntax_and_help() {
     assert!(stdout.contains("Real Linux host install canary"));
     assert!(stdout.contains("--rollback-command COMMAND"));
     assert!(stdout.contains("--rollback-service-name NAME"));
+    assert!(stdout.contains("--tunnel-ktp-tcp-auth-version VERSION"));
+    assert!(stdout.contains("--tunnel-ktp-relay-batch-policy POLICY"));
     assert!(stdout.contains("--evidence-file PATH"));
 }
 
