@@ -1,5 +1,5 @@
-const EXPECTED_RELEASE_VERSION: &str = "0.2.6";
-const EXPECTED_RELEASE_TAG: &str = "v0.2.6";
+const EXPECTED_RELEASE_VERSION: &str = "0.2.7";
+const EXPECTED_RELEASE_TAG: &str = "v0.2.7";
 
 #[test]
 fn release_metadata_tracks_current_version() {
