@@ -5,6 +5,7 @@ SERVICE_NAME="kelicloud-agent-rs"
 BIN_PATH="/usr/local/bin/kelicloud-agent-rs"
 CONFIG_FILE="/etc/kelicloud-agent-rs/config.env"
 INSTALL_URL="https://raw.githubusercontent.com/keli-123456/kelicloud-agent-rs/refs/heads/main/install.sh"
+KTP_EVIDENCE_SCRIPT_URL="${KTP_EVIDENCE_SCRIPT_URL:-https://raw.githubusercontent.com/keli-123456/kelicloud-agent-rs/refs/heads/main/scripts/ktp-live-canary-evidence.sh}"
 REPO="keli-123456/kelicloud-agent-rs"
 
 ENDPOINT="${AGENT_ENDPOINT:-}"
@@ -22,7 +23,10 @@ ROLLBACK_COMMAND=""
 ROLLBACK_SERVICE_NAME="${KELICLOUD_ROLLBACK_SERVICE_NAME:-kelicloud-agent}"
 SKIP_ROLLBACK_SERVICE_CHECK="false"
 EVIDENCE_FILE="${KELICLOUD_CANARY_EVIDENCE_FILE:-}"
+KTP_LIVE_CANARY_EVIDENCE_FILE="${KTP_LIVE_CANARY_EVIDENCE_FILE:-}"
 INSTALLER_PATH=""
+KTP_EVIDENCE_SCRIPT_PATH=""
+KTP_EVIDENCE_SINCE_EPOCH=""
 STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
 RELEASE_ASSET=""
 RELEASE_ASSET_URL=""
@@ -31,6 +35,7 @@ ROLLBACK_SERVICE_STATUS="not checked"
 INSTALL_RESULT="not run"
 RESTART_RESULT="not run"
 PIN_OR_UPGRADE_RESULT="not run"
+KTP_LIVE_CANARY_RESULT="skipped: KTP TCP not enabled"
 UNINSTALL_RESULT="not run"
 ROLLBACK_RESULT="not run"
 EVIDENCE_WRITTEN="false"
@@ -364,6 +369,7 @@ verify_service() {
 
 restart_agent() {
     stage "restart_agent"
+    KTP_EVIDENCE_SINCE_EPOCH="$(date -u '+%s' 2>/dev/null || true)"
     systemctl restart "${SERVICE_NAME}.service"
     wait_for_service
     RESTART_RESULT="passed"
@@ -390,8 +396,54 @@ observe_panel_window() {
     stage "panel observation window"
     log "Keep this host selected in kelicloud now."
     log "Trigger one script exec task, one TCP ping task, and one WebSSH terminal before this window ends."
+    if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
+        log "KTP TCP is enabled; also trigger one tunnel forwarding flow so live KTP diagnostics include socket read/write evidence."
+    fi
     log "Observation window: ${DURATION_SECONDS}s"
     sleep "$DURATION_SECONDS"
+}
+
+download_ktp_evidence_script() {
+    if [[ -n "$KTP_EVIDENCE_SCRIPT_PATH" && -f "$KTP_EVIDENCE_SCRIPT_PATH" ]]; then
+        return
+    fi
+
+    KTP_EVIDENCE_SCRIPT_PATH="$(mktemp "${TMPDIR:-/tmp}/kelicloud-agent-rs-ktp-live-canary.XXXXXX.sh")"
+    curl -fsSL "$KTP_EVIDENCE_SCRIPT_URL" -o "$KTP_EVIDENCE_SCRIPT_PATH"
+    chmod 0700 "$KTP_EVIDENCE_SCRIPT_PATH"
+    bash -n "$KTP_EVIDENCE_SCRIPT_PATH"
+}
+
+collect_ktp_live_canary_evidence() {
+    if [[ -z "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
+        return
+    fi
+
+    stage "collect_ktp_live_canary_evidence"
+    KTP_LIVE_CANARY_RESULT="running"
+    if [[ -z "$KTP_EVIDENCE_SINCE_EPOCH" ]]; then
+        KTP_EVIDENCE_SINCE_EPOCH="$(date -u '+%s' 2>/dev/null || true)"
+    fi
+    [[ -n "$KTP_EVIDENCE_SINCE_EPOCH" ]] || die "cannot determine KTP evidence journal start time"
+
+    if [[ -z "$KTP_LIVE_CANARY_EVIDENCE_FILE" ]]; then
+        if [[ -n "$EVIDENCE_FILE" ]]; then
+            KTP_LIVE_CANARY_EVIDENCE_FILE="$(dirname "$EVIDENCE_FILE")/ktp-live-canary.evidence.md"
+        else
+            KTP_LIVE_CANARY_EVIDENCE_FILE="$(mktemp "${TMPDIR:-/tmp}/kelicloud-agent-rs-ktp-live-canary.XXXXXX.md")"
+        fi
+    fi
+    mkdir -p "$(dirname "$KTP_LIVE_CANARY_EVIDENCE_FILE")"
+
+    download_ktp_evidence_script
+    KTP_LIVE_CANARY_AUTH_VERSION="${TUNNEL_KTP_TCP_AUTH_VERSION:-v1}" \
+        bash "$KTP_EVIDENCE_SCRIPT_PATH" \
+            --service-name "$SERVICE_NAME" \
+            --since "@${KTP_EVIDENCE_SINCE_EPOCH}" \
+            --evidence-file "$KTP_LIVE_CANARY_EVIDENCE_FILE" \
+            --min-lines 1
+    KTP_LIVE_CANARY_RESULT="passed"
+    log "smoke: ktp_live_canary_evidence=${KTP_LIVE_CANARY_EVIDENCE_FILE}"
 }
 
 uninstall_agent() {
@@ -447,6 +499,9 @@ cleanup() {
     if [[ -n "$INSTALLER_PATH" && -f "$INSTALLER_PATH" ]]; then
         rm -f "$INSTALLER_PATH"
     fi
+    if [[ -n "$KTP_EVIDENCE_SCRIPT_PATH" && -f "$KTP_EVIDENCE_SCRIPT_PATH" ]]; then
+        rm -f "$KTP_EVIDENCE_SCRIPT_PATH"
+    fi
 }
 
 shell_output_or_empty() {
@@ -485,6 +540,8 @@ write_evidence() {
         printf '%s\n' "- KTP TCP address: \`${TUNNEL_KTP_TCP_ADDRESS:-not set}\`"
         printf '%s\n' "- KTP TCP auth version: \`${TUNNEL_KTP_TCP_AUTH_VERSION:-default}\`"
         printf '%s\n' "- KTP relay batch policy: \`${TUNNEL_KTP_RELAY_BATCH_POLICY:-default}\`"
+        printf '%s\n' "- KTP live canary evidence: \`${KTP_LIVE_CANARY_EVIDENCE_FILE:-not collected}\`"
+        printf '%s\n' "- KTP live canary result: \`${KTP_LIVE_CANARY_RESULT}\`"
         printf '%s\n' "- Release asset: \`${RELEASE_ASSET:-not checked}\`"
         printf '%s\n' "- Release asset URL: \`${RELEASE_ASSET_URL:-not checked}\`"
         printf '%s\n' "- Rust install result: \`${INSTALL_RESULT}\`"
@@ -548,6 +605,7 @@ main() {
     restart_agent
     pin_or_upgrade_agent
     observe_panel_window
+    collect_ktp_live_canary_evidence
 
     if [[ "$KEEP_INSTALLED" == "true" ]]; then
         stage "keep installed"

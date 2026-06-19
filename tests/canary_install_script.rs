@@ -81,6 +81,32 @@ fn canary_install_script_has_valid_bash_syntax_and_help() {
     assert!(stdout.contains("--evidence-file PATH"));
 }
 
+#[test]
+fn canary_install_script_collects_ktp_live_evidence_when_tunnel_enabled() {
+    let script = std::fs::read_to_string(canary_script_path()).unwrap();
+
+    for expected in [
+        "KTP_EVIDENCE_SCRIPT_URL",
+        "KTP_LIVE_CANARY_EVIDENCE_FILE",
+        "download_ktp_evidence_script",
+        "collect_ktp_live_canary_evidence",
+        "ktp-live-canary-evidence.sh",
+        "KTP_LIVE_CANARY_AUTH_VERSION=\"${TUNNEL_KTP_TCP_AUTH_VERSION:-v1}\"",
+        "--since \"@${KTP_EVIDENCE_SINCE_EPOCH}\"",
+        "if [[ -z \"$TUNNEL_KTP_TCP_ADDRESS\" ]]",
+        "smoke: ktp_live_canary_evidence=",
+        "- KTP live canary evidence:",
+        "- KTP live canary result:",
+    ] {
+        assert!(script.contains(expected), "missing {expected}");
+    }
+
+    assert!(
+        script.find("observe_panel_window") < script.find("collect_ktp_live_canary_evidence"),
+        "KTP evidence should be collected after the operator traffic window"
+    );
+}
+
 fn canary_script_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("scripts")

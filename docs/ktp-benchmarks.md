@@ -205,7 +205,11 @@ KTP TCP auth compatibility:
   `tunnel_ktp_relay_batch_policy`. Passing `tunnel_ktp_tcp_auth_version=v2`
   requires a KTP TCP relay address and writes the selected KTP address, auth
   version, and relay batch policy into both install and control-plane canary
-  evidence. Leaving these inputs empty keeps the existing canary behavior.
+  evidence. When a KTP TCP relay address is set, `scripts/canary-install.sh`
+  now also collects `ktp-live-canary.evidence.md` after the observation window;
+  trigger one tunnel forwarding flow during that window so the evidence includes
+  live socket read/write counters. Leaving these inputs empty keeps the existing
+  canary behavior.
 
 KTA2 full local-backend tunnel matrix evidence, 2026-06-19:
 
