@@ -6,6 +6,7 @@ on:
       - "v*"
 
 permissions:
+  actions: write
   contents: write
 
 concurrency:
@@ -129,3 +130,21 @@ jobs:
             release-assets/kelicloud-agent-rs-linux-*
             release-assets/SHA256SUMS
           generate_release_notes: true
+
+  dispatch-real-host-canary:
+    name: Dispatch real host canary
+    runs-on: ubuntu-latest
+    needs: publish
+    if: ${{ vars.KELICLOUD_RELEASE_CANARY == '1' }}
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Dispatch release canary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run real-host-canary.yml \
+            --ref "${{ github.event.repository.default_branch }}" \
+            -f install_version="${GITHUB_REF_NAME}"

@@ -377,13 +377,18 @@ fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     let workflow = std::fs::read_to_string(real_host_canary_workflow_path()).unwrap();
 
     assert!(workflow.contains("name: Real Host Canary"));
+    assert!(workflow.contains("release:"));
+    assert!(workflow.contains("types: [published]"));
     assert!(workflow.contains("workflow_dispatch:"));
     assert!(workflow.contains("runner_labels:"));
     assert!(workflow.contains("[\"self-hosted\",\"Linux\",\"kelicloud-canary\"]"));
-    assert!(workflow.contains("runs-on: ${{ fromJSON(inputs.runner_labels) }}"));
+    assert!(workflow.contains("runs-on: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.runner_labels || '[\"self-hosted\",\"Linux\",\"kelicloud-canary\"]') }}"));
     assert!(workflow.contains("KELICLOUD_CANARY_ENDPOINT"));
     assert!(workflow.contains("KELICLOUD_CANARY_AUTO_DISCOVERY_KEY"));
     assert!(workflow.contains("KELICLOUD_CANARY_ROLLBACK_COMMAND"));
+    assert!(workflow.contains("github.event.release.tag_name"));
+    assert!(workflow
+        .contains("CANARY_INSTALL_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.install_version }}"));
     assert!(workflow.contains("require_rollback:"));
     assert!(workflow.contains("keep_installed:"));
     let install_version_input = workflow
@@ -401,6 +406,9 @@ fn real_host_canary_workflow_runs_on_self_hosted_runner() {
     assert!(workflow.contains("tunnel_ktp_tcp_address:"));
     assert!(workflow.contains("tunnel_ktp_tcp_auth_version:"));
     assert!(workflow.contains("tunnel_ktp_relay_batch_policy:"));
+    assert!(workflow.contains("secrets.KELICLOUD_CANARY_TUNNEL_KTP_TCP_ADDRESS"));
+    assert!(workflow.contains("secrets.KELICLOUD_CANARY_TUNNEL_KTP_TCP_AUTH_VERSION"));
+    assert!(workflow.contains("secrets.KELICLOUD_CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY"));
     assert!(workflow.contains("CANARY_TUNNEL_KTP_TCP_ADDRESS"));
     assert!(workflow.contains("CANARY_TUNNEL_KTP_TCP_AUTH_VERSION"));
     assert!(workflow.contains("CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY"));

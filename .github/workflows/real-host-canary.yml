@@ -1,6 +1,8 @@
 name: Real Host Canary
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       runner_labels:
@@ -117,38 +119,38 @@ concurrency:
 jobs:
   canary:
     name: Real Linux Host Canary
-    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    runs-on: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.runner_labels || '["self-hosted","Linux","kelicloud-canary"]') }}
     timeout-minutes: 30
     env:
-      CANARY_ENDPOINT: ${{ inputs.endpoint != '' && inputs.endpoint || secrets.KELICLOUD_CANARY_ENDPOINT }}
+      CANARY_ENDPOINT: ${{ github.event_name == 'workflow_dispatch' && inputs.endpoint != '' && inputs.endpoint || secrets.KELICLOUD_CANARY_ENDPOINT }}
       CANARY_AUTO_DISCOVERY_KEY: ${{ secrets.KELICLOUD_CANARY_AUTO_DISCOVERY_KEY }}
       CANARY_ROLLBACK_COMMAND: ${{ secrets.KELICLOUD_CANARY_ROLLBACK_COMMAND }}
-      CANARY_INSTALL_VERSION: ${{ inputs.install_version }}
-      CANARY_TUNNEL_KTP_TCP_ADDRESS: ${{ inputs.tunnel_ktp_tcp_address }}
-      CANARY_TUNNEL_KTP_TCP_AUTH_VERSION: ${{ inputs.tunnel_ktp_tcp_auth_version }}
-      CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY: ${{ inputs.tunnel_ktp_relay_batch_policy }}
-      CANARY_DURATION: ${{ inputs.duration }}
-      CANARY_SERVICE_WAIT: ${{ inputs.service_wait }}
-      CANARY_GITHUB_PROXY: ${{ inputs.github_proxy }}
-      CANARY_INSECURE: ${{ inputs.insecure }}
-      CANARY_KEEP_INSTALLED: ${{ inputs.keep_installed }}
-      CANARY_CONTROL_PLANE: ${{ inputs.control_plane }}
-      CANARY_PANEL_PING_TARGET: ${{ inputs.ping_target != '' && inputs.ping_target || secrets.KELICLOUD_PANEL_PING_TARGET }}
+      CANARY_INSTALL_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.install_version }}
+      CANARY_TUNNEL_KTP_TCP_ADDRESS: ${{ github.event_name == 'workflow_dispatch' && inputs.tunnel_ktp_tcp_address || secrets.KELICLOUD_CANARY_TUNNEL_KTP_TCP_ADDRESS }}
+      CANARY_TUNNEL_KTP_TCP_AUTH_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tunnel_ktp_tcp_auth_version || secrets.KELICLOUD_CANARY_TUNNEL_KTP_TCP_AUTH_VERSION }}
+      CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY: ${{ github.event_name == 'workflow_dispatch' && inputs.tunnel_ktp_relay_batch_policy || secrets.KELICLOUD_CANARY_TUNNEL_KTP_RELAY_BATCH_POLICY }}
+      CANARY_DURATION: ${{ github.event_name == 'workflow_dispatch' && inputs.duration || '180' }}
+      CANARY_SERVICE_WAIT: ${{ github.event_name == 'workflow_dispatch' && inputs.service_wait || '60' }}
+      CANARY_GITHUB_PROXY: ${{ github.event_name == 'workflow_dispatch' && inputs.github_proxy || '' }}
+      CANARY_INSECURE: ${{ github.event_name == 'workflow_dispatch' && inputs.insecure || 'false' }}
+      CANARY_KEEP_INSTALLED: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_installed || 'true' }}
+      CANARY_CONTROL_PLANE: ${{ github.event_name == 'workflow_dispatch' && inputs.control_plane || 'false' }}
+      CANARY_PANEL_PING_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.ping_target != '' && inputs.ping_target || secrets.KELICLOUD_PANEL_PING_TARGET }}
       CANARY_PANEL_COOKIE: ${{ secrets.KELICLOUD_PANEL_COOKIE }}
       CANARY_PANEL_USERNAME: ${{ secrets.KELICLOUD_PANEL_USERNAME }}
       CANARY_PANEL_PASSWORD: ${{ secrets.KELICLOUD_PANEL_PASSWORD }}
-      CANARY_REQUIRE_ROLLBACK: ${{ inputs.require_rollback }}
-      CANARY_ROLLBACK_SERVICE_NAME: ${{ inputs.rollback_service_name }}
-      CANARY_OLD_SERVICE_NAME: ${{ inputs.old_service_name }}
-      CANARY_DERIVE_AUTO_DISCOVERY_FROM_OLD_SERVICE: ${{ inputs.derive_auto_discovery_from_old_service }}
-      CANARY_SKIP_ROLLBACK_SERVICE_CHECK: ${{ inputs.skip_rollback_service_check }}
+      CANARY_REQUIRE_ROLLBACK: ${{ github.event_name == 'workflow_dispatch' && inputs.require_rollback || 'false' }}
+      CANARY_ROLLBACK_SERVICE_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.rollback_service_name || 'kelicloud-agent' }}
+      CANARY_OLD_SERVICE_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.old_service_name || 'komari-agent' }}
+      CANARY_DERIVE_AUTO_DISCOVERY_FROM_OLD_SERVICE: ${{ github.event_name == 'workflow_dispatch' && inputs.derive_auto_discovery_from_old_service || 'true' }}
+      CANARY_SKIP_ROLLBACK_SERVICE_CHECK: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_rollback_service_check || 'false' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Derive auto-discovery from old service
-        if: ${{ inputs.derive_auto_discovery_from_old_service == 'true' }}
+        if: ${{ github.event_name == 'release' || inputs.derive_auto_discovery_from_old_service == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -229,7 +231,7 @@ jobs:
           fi
 
       - name: Run real host canary
-        if: ${{ inputs.control_plane != 'true' }}
+        if: ${{ github.event_name == 'release' || inputs.control_plane != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -273,7 +275,7 @@ jobs:
           sudo bash scripts/canary-install.sh "${args[@]}" 2>&1 | tee canary-logs/real-host-canary.log
 
       - name: Run real host control canary
-        if: ${{ inputs.control_plane == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.control_plane == 'true' }}
         shell: bash
         run: |
           set -euo pipefail

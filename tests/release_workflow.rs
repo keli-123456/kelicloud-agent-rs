@@ -8,6 +8,7 @@ fn release_workflow_builds_linux_assets_used_by_installer() {
     assert!(workflow.contains("tags:"));
     assert!(workflow.contains("\"v*\""));
     assert!(workflow.contains("contents: write"));
+    assert!(workflow.contains("actions: write"));
     assert!(workflow.contains("CC_x86_64_unknown_linux_musl: musl-gcc"));
     assert!(workflow.contains("apt-get install -y --no-install-recommends musl-tools"));
     assert!(workflow.contains("for attempt in 1 2 3; do"));
@@ -22,6 +23,14 @@ fn release_workflow_builds_linux_assets_used_by_installer() {
     assert!(workflow.contains("sha256sum -c SHA256SUMS"));
     assert!(workflow.contains("release-assets/SHA256SUMS"));
     assert!(workflow.contains("softprops/action-gh-release@v2"));
+    assert!(workflow.contains("uses: softprops/action-gh-release@v2\n        with:"));
+    assert!(workflow.contains("dispatch-real-host-canary:"));
+    assert!(workflow.contains("name: Dispatch real host canary"));
+    assert!(workflow.contains("needs: publish"));
+    assert!(workflow.contains("vars.KELICLOUD_RELEASE_CANARY == '1'"));
+    assert!(workflow.contains("gh workflow run real-host-canary.yml"));
+    assert!(workflow.contains("--ref \"${{ github.event.repository.default_branch }}\""));
+    assert!(workflow.contains("-f install_version=\"${GITHUB_REF_NAME}\""));
 
     for (target, asset) in [
         (
