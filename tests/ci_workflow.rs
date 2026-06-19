@@ -6,7 +6,11 @@ fn ci_workflow_lints_github_actions_workflows() {
 
     assert!(workflow.contains("name: CI"));
     assert!(workflow.contains("Check GitHub Actions workflows"));
-    assert!(workflow.contains("uses: rhysd/actionlint@v1"));
+    assert!(workflow.contains(
+        "bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)"
+    ));
+    assert!(workflow.contains("./actionlint -color"));
+    assert!(!workflow.contains("uses: rhysd/actionlint@v1"));
 }
 
 fn ci_workflow_path() -> PathBuf {
