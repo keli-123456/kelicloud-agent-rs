@@ -15,6 +15,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   BIN_NAME: kelicloud-agent-rs
+  CC_x86_64_unknown_linux_musl: musl-gcc
 
 jobs:
   build:
@@ -41,6 +42,12 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add ${{ matrix.target }}
+
+      - name: Install amd64 musl toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
 
       - name: Install cross
         run: cargo install cross --locked
