@@ -48,6 +48,7 @@ Options:
   --password PASSWORD         admin password, also read from KELICLOUD_PANEL_PASSWORD
   --ping-target HOST:PORT     TCP ping target, default 1.1.1.1:443
   --install-version VERSION   release tag to install/pin, default latest
+  --service-wait SECONDS      wait time for Rust or rollback services, default 60
   --tunnel-ktp-tcp-address ADDRESS
                               enable KTP TCP tunnel data through this relay
   --tunnel-ktp-tcp-auth-version VERSION
@@ -136,6 +137,11 @@ parse_args() {
             --install-version)
                 need_value "$1" "${2:-}"
                 INSTALL_VERSION="$2"
+                shift 2
+                ;;
+            --service-wait)
+                need_value "$1" "${2:-}"
+                SERVICE_WAIT_SECONDS="$2"
                 shift 2
                 ;;
             --tunnel-ktp-tcp-address|--ktp-tcp-address)
@@ -284,12 +290,14 @@ run_install_canary() {
     local install_args=(
         --endpoint "$ENDPOINT" \
         --auto-discovery "$AUTO_DISCOVERY_KEY" \
-        --install-version "$INSTALL_VERSION" \
         --duration 1 \
         --service-wait "$SERVICE_WAIT_SECONDS" \
         --keep-installed \
         --evidence-file "${WORKDIR}/real-host-canary.evidence.md"
     )
+    if [[ -n "$INSTALL_VERSION" ]]; then
+        install_args+=(--install-version "$INSTALL_VERSION")
+    fi
     if [[ -n "$TUNNEL_KTP_TCP_ADDRESS" ]]; then
         install_args+=(--tunnel-ktp-tcp-address "$TUNNEL_KTP_TCP_ADDRESS")
     fi

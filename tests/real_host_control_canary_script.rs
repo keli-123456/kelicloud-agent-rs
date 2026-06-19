@@ -67,6 +67,41 @@ fn real_host_control_canary_reports_success_as_passed_from_exit_trap() {
 }
 
 #[test]
+fn real_host_control_canary_accepts_service_wait_from_workflow() {
+    let script = std::fs::read_to_string(real_host_control_canary_script_path()).unwrap();
+
+    for expected in [
+        "--service-wait SECONDS",
+        "--service-wait)",
+        "SERVICE_WAIT_SECONDS=\"$2\"",
+        "--service-wait \"$SERVICE_WAIT_SECONDS\"",
+    ] {
+        assert!(script.contains(expected), "missing {expected}");
+    }
+}
+
+#[test]
+fn real_host_control_canary_omits_empty_install_version_for_latest() {
+    let script = std::fs::read_to_string(real_host_control_canary_script_path()).unwrap();
+
+    let guard = script
+        .find("if [[ -n \"$INSTALL_VERSION\" ]]; then")
+        .expect("missing install-version guard");
+    let append = script
+        .find("install_args+=(--install-version \"$INSTALL_VERSION\")")
+        .expect("missing guarded install-version append");
+
+    assert!(
+        guard < append,
+        "control canary should only pass --install-version when a version is set"
+    );
+    assert!(
+        !script.contains("--install-version \"$INSTALL_VERSION\" \\"),
+        "empty install-version must not be included in the initial canary-install argument array"
+    );
+}
+
+#[test]
 fn real_host_control_canary_passes_panel_credentials_through_environment() {
     let script = std::fs::read_to_string(real_host_control_canary_script_path()).unwrap();
 
