@@ -653,7 +653,8 @@ where
         self.stream
             .write_all(&self.write_buffer)
             .await
-            .map_err(KtpTcpTransportError::Io)
+            .map_err(KtpTcpTransportError::Io)?;
+        self.stream.flush().await.map_err(KtpTcpTransportError::Io)
     }
 
     pub async fn send_frames(&mut self, frames: &[KtpFrame]) -> Result<(), KtpTcpTransportError> {
@@ -669,7 +670,8 @@ where
         self.stream
             .write_all(&self.write_buffer)
             .await
-            .map_err(KtpTcpTransportError::Io)
+            .map_err(KtpTcpTransportError::Io)?;
+        self.stream.flush().await.map_err(KtpTcpTransportError::Io)
     }
 
     pub async fn next_frame(&mut self) -> Result<KtpFrame, KtpTcpTransportError> {

@@ -8,8 +8,12 @@ use kelicloud_agent_rs::ktp_transport::{
     KtpEncryptedTcpStream, KtpStreamCodec, KtpStreamCodecError, KtpTcpTransportError,
 };
 use std::io::ErrorKind;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName};
@@ -323,6 +327,43 @@ fn encrypted_stream_round_trips_over_generic_duplex_io() {
         let received = server.next_frame().await.expect("receive over duplex");
 
         assert_eq!(received, send);
+    });
+}
+
+#[test]
+fn encrypted_stream_flushes_after_single_and_batched_writes() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .expect("build tokio runtime");
+
+    runtime.block_on(async {
+        let probe = FlushTrackingIoProbe::default();
+        let io = FlushTrackingIo::new(probe.clone());
+        let mut stream = KtpEncryptedStream::from_io(
+            io,
+            test_crypto_key(),
+            KtpCryptoDirection::ClientToRelay,
+            KtpCryptoDirection::RelayToClient,
+            KTP_MAX_PAYLOAD_LEN,
+            1024 * 1024,
+        );
+
+        stream
+            .send_frame(&session_data(6301, b"flush single"))
+            .await
+            .expect("send single frame");
+        assert_eq!(probe.flushes(), 1);
+
+        stream
+            .send_frames(&[
+                session_data(6302, b"flush batch one"),
+                session_data(6303, b"flush batch two"),
+            ])
+            .await
+            .expect("send frame batch");
+        assert_eq!(probe.flushes(), 2);
+        assert!(probe.writes() >= 2);
     });
 }
 
@@ -886,6 +927,62 @@ fn ktp_tls_test_configs() -> (ServerConfig, ClientConfig) {
         .with_no_client_auth();
 
     (server, client)
+}
+
+#[derive(Clone, Default)]
+struct FlushTrackingIoProbe {
+    writes: Arc<AtomicUsize>,
+    flushes: Arc<AtomicUsize>,
+}
+
+impl FlushTrackingIoProbe {
+    fn writes(&self) -> usize {
+        self.writes.load(Ordering::SeqCst)
+    }
+
+    fn flushes(&self) -> usize {
+        self.flushes.load(Ordering::SeqCst)
+    }
+}
+
+struct FlushTrackingIo {
+    probe: FlushTrackingIoProbe,
+}
+
+impl FlushTrackingIo {
+    fn new(probe: FlushTrackingIoProbe) -> Self {
+        Self { probe }
+    }
+}
+
+impl AsyncRead for FlushTrackingIo {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Pending
+    }
+}
+
+impl AsyncWrite for FlushTrackingIo {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.probe.writes.fetch_add(1, Ordering::SeqCst);
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.probe.flushes.fetch_add(1, Ordering::SeqCst);
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
 }
 
 const KTP_TLS_TEST_ROOT: &str = r#"-----BEGIN CERTIFICATE-----
