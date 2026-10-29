@@ -133,6 +133,10 @@ impl CnConnectivityState {
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Reconnects resend the same config; keep the last probe and failure streak.
+        if inner.config == config {
+            return;
+        }
         inner.failures = 0;
         inner.result = if config.enabled {
             Some(CnConnectivityProbeResult {

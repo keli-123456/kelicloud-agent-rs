@@ -153,6 +153,87 @@ fn cn_connectivity_state_marks_second_consecutive_failure_blocked_suspected() {
     assert!(recovered.get("consecutive_failures").is_none());
 }
 
+#[test]
+fn repeated_config_preserves_probe_state_and_failure_streak() {
+    let state = CnConnectivityState::default();
+    let configure = || state.update_config(true, Some("223.5.5.5"), 60, 1, 1, 5);
+    configure();
+    state.probe_once_with(|_| Err("unreachable".to_string()), || {});
+    let before_reconnect = state.current_report_value().unwrap();
+    assert_eq!(before_reconnect["status"], "degraded");
+
+    configure();
+    assert_eq!(state.current_report_value().unwrap(), before_reconnect);
+    state.probe_once_with(|_| Err("unreachable".to_string()), || {});
+    let blocked = state.current_report_value().unwrap();
+    assert_eq!(blocked["status"], "blocked_suspected");
+    assert_eq!(blocked["consecutive_failures"], 2);
+
+    configure();
+    assert_eq!(state.current_report_value().unwrap(), blocked);
+    state.probe_once_with(|_| Ok(25), || {});
+    let healthy = state.current_report_value().unwrap();
+    configure();
+    assert_eq!(state.current_report_value().unwrap(), healthy);
+}
+
+#[test]
+fn changed_config_and_reenable_reset_probe_state() {
+    let state = CnConnectivityState::default();
+    state.update_config(true, Some("223.5.5.5"), 60, 1, 1, 5);
+    state.probe_once_with(|_| Err("unreachable".to_string()), || {});
+    state.update_config(true, Some("119.29.29.29"), 60, 1, 1, 5);
+    let pending = state.current_report_value().unwrap();
+    assert_eq!(pending["status"], "unknown");
+    assert_eq!(pending["target"], "119.29.29.29");
+    assert!(pending.get("checked_at").is_none());
+    state.probe_once_with(|_| Err("unreachable".to_string()), || {});
+    assert_eq!(
+        state.current_report_value().unwrap()["consecutive_failures"],
+        1
+    );
+
+    state.update_config(false, Some("119.29.29.29"), 60, 1, 1, 5);
+    assert!(state.current_report_value().is_none());
+    state.update_config(true, Some("119.29.29.29"), 60, 1, 1, 5);
+    assert_eq!(state.current_report_value().unwrap()["status"], "unknown");
+    state.probe_once_with(|_| Err("unreachable".to_string()), || {});
+    assert_eq!(
+        state.current_report_value().unwrap()["consecutive_failures"],
+        1
+    );
+}
+
+#[test]
+fn any_reachable_target_keeps_connectivity_ok() {
+    let state = CnConnectivityState::default();
+    state.update_config(true, Some("223.5.5.5,119.29.29.29,1.2.4.8"), 60, 1, 1, 5);
+    state.probe_once_with(|_| Err("unreachable".to_string()), || {});
+    state.probe_once_with(|_| Err("unreachable".to_string()), || {});
+    assert_eq!(
+        state.current_report_value().unwrap()["status"],
+        "blocked_suspected"
+    );
+
+    let mut visited = Vec::new();
+    state.probe_once_with(
+        |target| {
+            visited.push(target.to_string());
+            if target == "119.29.29.29" {
+                Ok(42)
+            } else {
+                Err("unreachable".to_string())
+            }
+        },
+        || {},
+    );
+    assert_eq!(visited, ["223.5.5.5", "119.29.29.29"]);
+    let healthy = state.current_report_value().unwrap();
+    assert_eq!(healthy["status"], "ok");
+    assert_eq!(healthy["target"], "119.29.29.29");
+    assert!(healthy.get("consecutive_failures").is_none());
+}
+
 struct FixedReportGenerator;
 
 impl ReportGenerator for FixedReportGenerator {
