@@ -39,6 +39,9 @@ jobs:
       - name: Check all targets
         run: cargo check --locked --all-targets
 
+      - name: Test all targets
+        run: cargo test --locked --all-targets
+
       - name: Run tunnel relay smoke
         env:
           KTP_SMOKE_POLICY_GATE: "1"
